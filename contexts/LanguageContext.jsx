@@ -1,0 +1,191 @@
+import { createContext, useContext, useState, useEffect } from 'react';
+
+const LanguageContext = createContext();
+
+export const useLanguage = () => {
+  const context = useContext(LanguageContext);
+  if (!context) {
+    throw new Error('useLanguage must be used within LanguageProvider');
+  }
+  return context;
+};
+
+const translations = {
+  en: {
+    // Navigation
+    home: "Home",
+    forYou: "For You",
+    search: "Search",
+    explore: "Explore",
+    reels: "Reels",
+    followingTab: "Following",
+    inbox: "Inbox",
+    messages: "Messages",
+    notifications: "Notifications",
+    bookmarks: "Bookmarks",
+    create: "Create",
+    profile: "Profile",
+    settings: "Settings",
+    logout: "Logout",
+    login: "Login",
+    signUp: "Sign Up",
+    campaigns: "Campaigns",
+    winners: "Winners",
+    suggestions: "Suggestions",
+    recommended: "Recommended for You",
+
+    // Actions
+    like: "Like",
+    comment: "Comment",
+    share: "Share",
+    save: "Save",
+    saved: "Saved",
+    follow: "Follow",
+    following: "Following",
+    unfollow: "Unfollow",
+    edit: "Edit",
+    delete: "Delete",
+    cancel: "Cancel",
+    confirm: "Confirm",
+    ok: "OK",
+    post: "Post",
+    send: "Send",
+    next: "Next",
+    back: "Back",
+    submit: "Submit",
+    retry: "Retry",
+    close: "Close",
+    refresh: "Refresh",
+
+    // Profile
+    posts: "Posts",
+    followers: "Followers",
+    followingCount: "Following",
+    editProfile: "Edit Profile",
+    bio: "Bio",
+    photo: "Photo",
+
+    // Wallet
+    wallet: "Wallet",
+    coins: "Coins",
+    points: "Points",
+    totalBalance: "Total Balance",
+    earned: "Earned",
+    purchased: "Purchased",
+    buyCoins: "Buy Coins",
+    withdraw: "Withdraw",
+    withdrawToBirr: "Points → Birr",
+    recentActivity: "Recent Activity",
+    overview: "Overview",
+    transactions: "Transactions",
+    withdrawals: "Withdrawals",
+
+    // Subscription
+    subscription: "Subscription",
+    plansAndBilling: "Plans & billing",
+
+    // Settings
+    account: "Account",
+    accountSettings: "Account Settings",
+    manageAccount: "Manage your account information",
+    notificationsSettings: "Notifications",
+    manageNotifications: "Manage your notification preferences",
+    privacy: "Privacy & Security",
+    controlPrivacy: "Control your privacy settings",
+    appearance: "Appearance",
+    customizeAppearance: "Customize how FlipStar looks",
+    language: "Language",
+    chooseLanguage: "Choose your preferred language",
+    help: "Help & Support",
+    getHelp: "Get help and support",
+    darkMode: "Dark Mode",
+    changePassword: "Change PIN",
+    currentPassword: "Current PIN",
+    newPassword: "New PIN (6 digits)",
+    confirmPassword: "Confirm New PIN",
+    updatePassword: "Update PIN",
+    downloadData: "Download Your Data",
+    downloadDataDesc: "Download a copy of all your posts, comments, and profile data",
+    deleteAccount: "Delete Account",
+    dangerZone: "Danger Zone",
+    deleteWarning: "Once you delete your account, there is no going back. Please be certain.",
+    basicInfo: "Basic Information",
+    username: "Username",
+    email: "Email",
+    phoneNumber: "Phone Number",
+    dataManagement: "Data Management",
+    success: "Success",
+    settingsSaved: "Settings saved successfully!",
+    error: "Error",
+    passwordMismatch: "New PINs do not match!",
+    passwordTooShort: "PIN must be exactly 6 digits!",
+    passwordChanged: "PIN changed successfully!",
+    passwordChangeFailed: "Failed to change PIN",
+    deleteConfirm: "Are you sure you want to delete your account? This action cannot be undone!",
+    finalConfirm: "This will permanently delete all your data. Are you absolutely sure?",
+    accountDeleted: "Account Deleted",
+    accountDeleting: "Account deletion initiated. You will be logged out.",
+    downloadInitiated: "Download Initiated",
+    downloadEmail: "Your data download has been initiated. You will receive an email with a download link.",
+    notificationEnabled: "Notification Enabled",
+    willReceive: "You will now receive notifications for",
+    privacyUpdated: "Privacy Updated",
+    privacySettingChanged: "Privacy setting",
+    enabled: "has been enabled",
+    disabled: "has been disabled",
+    darkEnabled: "Dark theme enabled",
+    lightEnabled: "Light theme enabled",
+    receiveNotifications: "Receive notifications for",
+    privateAccountDesc: "Only approved followers can see your posts",
+    showActivityDesc: "Show your activity status to others",
+    allowMessagesDesc: "Allow others to send you messages",
+    helpCenter: "Help Center",
+    reportProblem: "Report a Problem",
+    termsOfService: "Terms of Service",
+    privacyPolicy: "Privacy Policy",
+    version: "Version",
+    likes: "Likes",
+    comments: "Comments",
+    follows: "Follows",
+
+    // Post
+    caption: "Caption",
+    hashtags: "Hashtags",
+    uploadMedia: "Upload Media",
+
+    // Common
+    loading: "Loading...",
+    noResults: "No results found",
+  },
+};
+
+export const LanguageProvider = ({ children }) => {
+  const [language, setLanguage] = useState(() => {
+    const saved = localStorage.getItem('language');
+    // Only allow English; migrate any other stored values to en
+    return saved === 'en' ? 'en' : 'en';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('language', language);
+    document.documentElement.dir = 'ltr';
+    document.documentElement.lang = language;
+  }, [language]);
+
+  const t = (key) => {
+    return translations[language]?.[key] || translations.en[key] || key;
+  };
+
+  const changeLanguage = (lang) => {
+    // Only allow English language
+    if (lang === 'en') {
+      setLanguage(lang);
+    }
+  };
+
+  return (
+    <LanguageContext.Provider value={{ language, changeLanguage, t }}>
+      {children}
+    </LanguageContext.Provider>
+  );
+};

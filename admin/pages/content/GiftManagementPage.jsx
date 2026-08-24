@@ -1,0 +1,1363 @@
+import { useState, useEffect } from 'react';
+import { Upload, X, Plus, Edit2, Trash2, Gift as GiftIcon, Coins, Sparkles, Zap, Shield, Save } from 'lucide-react';
+import api from '../../../api';
+
+export function GiftManagementPage({ theme }) {
+  const [activeTab, setActiveTab] = useState('gifts'); // 'gifts' or 'restrictions'
+  const [gifts, setGifts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [editingGift, setEditingGift] = useState(null);
+  const [previewImage, setPreviewImage] = useState(null);
+  const [previewAnimatedImage, setPreviewAnimatedImage] = useState(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [giftToDelete, setGiftToDelete] = useState(null);
+  
+  // Gift restrictions state
+  const [restrictions, setRestrictions] = useState({
+    min_points_per_transaction: 10,
+    max_points_per_transaction: 5000,
+    max_points_to_recipient_per_day: 5000,
+    max_total_points_sent_per_day: 10000,
+  });
+  const [savingRestrictions, setSavingRestrictions] = useState(false);
+
+  const [formData, setFormData] = useState({
+    name: '',
+    description: '',
+    coin_value: 1,
+    rarity: 'common',
+    category: 'special',
+    is_active: true,
+    sort_order: 0,
+    xp_reward: 0,
+    animation_type: '',
+    animation_duration: 1.0,
+  });
+
+  const [imageFile, setImageFile] = useState(null);
+  const [animatedImageFile, setAnimatedImageFile] = useState(null);
+
+  useEffect(() => {
+    loadGifts();
+    loadRestrictions();
+  }, []);
+
+  const loadRestrictions = async () => {
+    try {
+      const response = await api.request('/admin/wallet/config/');
+      const config = response.config || response;
+      if (config && config.gifting) {
+        setRestrictions({
+          min_points_per_transaction: config.gifting.min_points_per_transaction || 10,
+          max_points_per_transaction: config.gifting.max_points_per_transaction || 5000,
+          max_points_to_recipient_per_day: config.gifting.max_points_to_recipient_per_day || 5000,
+          max_total_points_sent_per_day: config.gifting.max_total_points_sent_per_day || 10000,
+        });
+      }
+    } catch (error) {
+      console.error('Error loading restrictions:', error);
+    }
+  };
+
+  const handleSaveRestrictions = async () => {
+    setSavingRestrictions(true);
+    try {
+      await api.request('/admin/wallet/config/', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          gift_min_points_per_transaction: restrictions.min_points_per_transaction,
+          gift_max_points_per_transaction: restrictions.max_points_per_transaction,
+          gift_max_points_to_recipient_per_day: restrictions.max_points_to_recipient_per_day,
+          gift_max_total_points_sent_per_day: restrictions.max_total_points_sent_per_day,
+        }),
+      });
+      alert('Gift restrictions updated successfully!');
+    } catch (error) {
+      console.error('Error saving restrictions:', error);
+      alert('Error saving restrictions. Please try again.');
+    } finally {
+      setSavingRestrictions(false);
+    }
+  };
+
+  const loadGifts = async () => {
+    try {
+      const response = await api.request('/admin/gifts/', {
+        method: 'GET',
+      });
+      setGifts(response.results || response);
+    } catch (error) {
+      console.error('Error loading gifts:', error);
+      // Try public endpoint as fallback
+      try {
+        const publicResponse = await api.request('/gifts/', {
+          method: 'GET',
+        });
+        setGifts(publicResponse.results || publicResponse);
+      } catch (publicError) {
+        console.error('Error loading gifts from public endpoint:', publicError);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleImageChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setImageFile(file);
+      setPreviewImage(URL.createObjectURL(file));
+    }
+  };
+
+  const handleAnimatedImageChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setAnimatedImageFile(file);
+      setPreviewAnimatedImage(URL.createObjectURL(file));
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    
+    const data = new FormData();
+    Object.keys(formData).forEach(key => {
+      data.append(key, formData[key]);
+    });
+    
+    if (imageFile) {
+      data.append('image', imageFile);
+    }
+    
+    if (animatedImageFile) {
+      data.append('animated_image', animatedImageFile);
+    }
+
+    try {
+      if (editingGift) {
+        await api.request(`/admin/gifts/${editingGift.id}/`, {
+          method: 'PATCH',
+          body: data,
+        });
+      } else {
+        await api.request('/admin/gifts/', {
+          method: 'POST',
+          body: data,
+        });
+      }
+      
+      closeModal();
+      loadGifts();
+    } catch (error) {
+      console.error('Error saving gift:', error);
+      alert('Error saving gift. Please try again.');
+    }
+  };
+
+  const handleEdit = (gift) => {
+    setEditingGift(gift);
+    setFormData({
+      name: gift.name,
+      description: gift.description || '',
+      coin_value: gift.coin_value,
+      rarity: gift.rarity,
+      category: gift.category,
+      is_active: gift.is_active,
+      sort_order: gift.sort_order,
+      xp_reward: gift.xp_reward,
+      animation_type: gift.animation_type || '',
+      animation_duration: gift.animation_duration,
+    });
+    setPreviewImage(gift.image_url || null);
+    setPreviewAnimatedImage(gift.animated_image_url || null);
+    setShowModal(true);
+  };
+
+  const handleDelete = async (giftId) => {
+    setGiftToDelete(giftId);
+    setShowDeleteModal(true);
+  };
+
+  const confirmDelete = async () => {
+    try {
+      await api.request(`/admin/gifts/${giftToDelete}/`, {
+        method: 'DELETE',
+      });
+      setShowDeleteModal(false);
+      setGiftToDelete(null);
+      loadGifts();
+    } catch (error) {
+      console.error('Error deleting gift:', error);
+      alert('Error deleting gift. Please try again.');
+    }
+  };
+
+  const closeModal = () => {
+    setShowModal(false);
+    setEditingGift(null);
+    setFormData({
+      name: '',
+      description: '',
+      coin_value: 1,
+      rarity: 'common',
+      category: 'special',
+      is_active: true,
+      sort_order: 0,
+      xp_reward: 0,
+      animation_type: '',
+      animation_duration: 1.0,
+    });
+    setImageFile(null);
+    setAnimatedImageFile(null);
+    setPreviewImage(null);
+    setPreviewAnimatedImage(null);
+  };
+
+  const getRarityColor = (rarity) => {
+    const colors = {
+      common: theme.sub,
+      rare: theme.blue,
+      epic: theme.purple,
+      legendary: theme.orange,
+    };
+    return colors[rarity] || theme.sub;
+  };
+
+  const getCategoryIcon = (category) => {
+    const icons = {
+      flowers: '🌹',
+      hearts: '❤️',
+      gems: '💎',
+      special: '⭐',
+      animals: '🐻',
+      vehicles: '🚗',
+    };
+    return icons[category] || '🎁';
+  };
+
+  if (loading) {
+    return (
+      <div style={{ color: theme.sub, padding: '32px' }}>
+        Loading gifts...
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: '32px',
+      }}>
+        <div>
+          <h1 style={{
+            fontSize: '32px',
+            fontWeight: '700',
+            color: '#fff',
+            marginBottom: '8px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+          }}>
+            <GiftIcon size={32} />
+            Gift Management
+          </h1>
+          <p style={{ color: theme.sub, fontSize: '14px' }}>
+            Configure virtual gifts with coin values and gamification settings
+          </p>
+        </div>
+      </div>
+
+      {/* Tab Navigation */}
+      <div style={{
+        display: 'flex',
+        gap: '4px',
+        marginBottom: '24px',
+        borderBottom: `1px solid ${theme.border}`,
+        paddingBottom: '4px',
+      }}>
+        <button
+          onClick={() => setActiveTab('gifts')}
+          style={{
+            background: activeTab === 'gifts' ? theme.pri : 'transparent',
+            color: activeTab === 'gifts' ? '#fff' : theme.sub,
+            border: 'none',
+            padding: '12px 24px',
+            borderRadius: '8px',
+            fontSize: '14px',
+            fontWeight: '600',
+            cursor: 'pointer',
+          }}
+        >
+          Gifts
+        </button>
+        <button
+          onClick={() => setActiveTab('restrictions')}
+          style={{
+            background: activeTab === 'restrictions' ? theme.pri : 'transparent',
+            color: activeTab === 'restrictions' ? '#fff' : theme.sub,
+            border: 'none',
+            padding: '12px 24px',
+            borderRadius: '8px',
+            fontSize: '14px',
+            fontWeight: '600',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
+          <Shield size={16} />
+          Restrictions
+        </button>
+      </div>
+
+      {activeTab === 'gifts' && (
+        <div>
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '24px',
+          }}>
+            <button
+              onClick={() => setShowModal(true)}
+              style={{
+                background: theme.pri,
+                color: '#fff',
+                border: 'none',
+                padding: '12px 24px',
+                borderRadius: '8px',
+                fontSize: '14px',
+                fontWeight: '600',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+              }}
+            >
+              <Plus size={18} />
+              Add New Gift
+            </button>
+          </div>
+
+          {/* Gift Grid */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+            gap: '20px',
+          }}>
+            {gifts.map((gift) => (
+              <div key={gift.id} style={{
+                background: theme.bg,
+                borderRadius: '12px',
+                padding: '20px',
+                border: `1px solid ${theme.border}`,
+                position: 'relative',
+              }}>
+                <div style={{
+                  position: 'absolute',
+                  top: '12px',
+                  right: '12px',
+                  display: 'flex',
+                  gap: '8px',
+                }}>
+                  <button
+                    onClick={() => handleEdit(gift)}
+                    style={{
+                      background: theme.pri,
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '6px',
+                      cursor: 'pointer',
+                      color: '#fff',
+                    }}
+                  >
+                    <Edit2 size={16} />
+                  </button>
+                  <button
+                    onClick={() => handleDelete(gift.id)}
+                    style={{
+                      background: theme.red,
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '6px',
+                      cursor: 'pointer',
+                      color: '#fff',
+                    }}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+
+                <div style={{
+                  width: '80px',
+                  height: '80px',
+                  borderRadius: '12px',
+                  overflow: 'hidden',
+                  marginBottom: '16px',
+                  background: theme.bg,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  position: 'relative',
+                }}>
+                  {gift.image_url ? (
+                    <img
+                      src={gift.image_url}
+                      alt={gift.name}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    />
+                  ) : (
+                    <GiftIcon size={32} color={theme.sub} />
+                  )}
+                  <div style={{
+                    position: 'absolute',
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    background: 'rgba(0,0,0,0.7)',
+                    padding: '4px 8px',
+                    fontSize: '10px',
+                    color: '#fff',
+                    fontWeight: '600',
+                    textAlign: 'center',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}>
+                    {gift.name}
+                  </div>
+                </div>
+
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  marginBottom: '8px',
+                }}>
+                  <span style={{ fontSize: '24px' }}>{getCategoryIcon(gift.category)}</span>
+                  <h3 style={{
+                    fontSize: '18px',
+                    fontWeight: '600',
+                    color: theme.text,
+                    margin: 0,
+                  }}>
+                    {gift.name}
+                  </h3>
+                </div>
+
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  marginBottom: '8px',
+                }}>
+                  <Coins size={16} color={theme.pri} />
+                  <span style={{
+                    fontSize: '16px',
+                    fontWeight: '600',
+                    color: theme.pri,
+                  }}>
+                    {gift.coin_value}
+                  </span>
+                  <span style={{ fontSize: '12px', color: theme.sub }}>coins</span>
+                </div>
+
+                <div style={{
+                  display: 'flex',
+                  gap: '8px',
+                  flexWrap: 'wrap',
+                  marginBottom: '12px',
+                }}>
+                  <span style={{
+                    fontSize: '12px',
+                    padding: '4px 8px',
+                    borderRadius: '4px',
+                    background: theme.bg,
+                    color: getRarityColor(gift.rarity),
+                    fontWeight: '500',
+                  }}>
+                    {gift.rarity}
+                  </span>
+                  <span style={{
+                    fontSize: '12px',
+                    padding: '4px 8px',
+                    borderRadius: '4px',
+                    background: theme.bg,
+                    color: theme.sub,
+                  }}>
+                    {gift.category}
+                  </span>
+                </div>
+
+                <div style={{
+                  fontSize: '12px',
+                  color: theme.sub,
+                  marginBottom: '8px',
+                }}>
+                  {gift.description || 'No description'}
+                </div>
+
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  fontSize: '12px',
+                  color: theme.sub,
+                }}>
+                  <Sparkles size={12} />
+                  <span>+{gift.xp_reward} XP</span>
+                  {gift.animation_type && (
+                    <>
+                      <Zap size={12} style={{ marginLeft: '8px' }} />
+                      <span>{gift.animation_type}</span>
+                    </>
+                  )}
+                </div>
+
+                {!gift.is_active && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '0',
+                    left: '0',
+                    right: '0',
+                    bottom: '0',
+                    background: 'rgba(0,0,0,0.5)',
+                    borderRadius: '12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}>
+                    <span style={{
+                      color: '#fff',
+                      fontSize: '14px',
+                      fontWeight: '600',
+                    }}>
+                      Inactive
+                    </span>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'restrictions' && (
+        <div style={{
+          background: theme.bg,
+          borderRadius: '12px',
+          padding: '24px',
+          border: `1px solid ${theme.border}`,
+        }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            marginBottom: '24px',
+          }}>
+            <Shield size={24} color={theme.pri} />
+            <h2 style={{
+              fontSize: '20px',
+              fontWeight: '600',
+              color: theme.text,
+              margin: 0,
+            }}>
+              Gift Transfer Restrictions
+            </h2>
+          </div>
+
+          <div style={{
+            marginBottom: '24px',
+            padding: '16px',
+            background: theme.bg,
+            borderRadius: '8px',
+            border: `1px solid ${theme.border}`,
+          }}>
+            <p style={{ color: theme.sub, fontSize: '14px', margin: 0 }}>
+              These restrictions apply to all gift transactions based on the point transfer rules.
+            </p>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '24px' }}>
+            <div>
+              <label style={{
+                display: 'block',
+                fontSize: '14px',
+                fontWeight: '500',
+                color: theme.text,
+                marginBottom: '8px',
+              }}>
+                Minimum Points per Transaction
+              </label>
+              <input
+                type="number"
+                value={restrictions.min_points_per_transaction}
+                onChange={(e) => setRestrictions({ ...restrictions, min_points_per_transaction: parseInt(e.target.value) })}
+                min="1"
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  borderRadius: '8px',
+                  border: `1px solid ${theme.border}`,
+                  background: '#FFFFFF',
+                  color: '#000000',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                }}
+              />
+              <p style={{ color: theme.sub, fontSize: '12px', marginTop: '4px' }}>
+                Minimum points required per gift transaction
+              </p>
+            </div>
+
+            <div>
+              <label style={{
+                display: 'block',
+                fontSize: '14px',
+                fontWeight: '500',
+                color: theme.text,
+                marginBottom: '8px',
+              }}>
+                Maximum Points per Transaction
+              </label>
+              <input
+                type="number"
+                value={restrictions.max_points_per_transaction}
+                onChange={(e) => setRestrictions({ ...restrictions, max_points_per_transaction: parseInt(e.target.value) })}
+                min="1"
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  borderRadius: '8px',
+                  border: `1px solid ${theme.border}`,
+                  background: '#FFFFFF',
+                  color: '#000000',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                }}
+              />
+              <p style={{ color: theme.sub, fontSize: '12px', marginTop: '4px' }}>
+                Maximum points allowed per single gift
+              </p>
+            </div>
+
+            <div>
+              <label style={{
+                display: 'block',
+                fontSize: '14px',
+                fontWeight: '500',
+                color: theme.text,
+                marginBottom: '8px',
+              }}>
+                Max Points to One Recipient per Day
+              </label>
+              <input
+                type="number"
+                value={restrictions.max_points_to_recipient_per_day}
+                onChange={(e) => setRestrictions({ ...restrictions, max_points_to_recipient_per_day: parseInt(e.target.value) })}
+                min="1"
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  borderRadius: '8px',
+                  border: `1px solid ${theme.border}`,
+                  background: '#FFFFFF',
+                  color: '#000000',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                }}
+              />
+              <p style={{ color: theme.sub, fontSize: '12px', marginTop: '4px' }}>
+                Voting cap - max points to one recipient in 24h
+              </p>
+            </div>
+
+            <div>
+              <label style={{
+                display: 'block',
+                fontSize: '14px',
+                fontWeight: '500',
+                color: theme.text,
+                marginBottom: '8px',
+              }}>
+                Max Total Points Sent per Day
+              </label>
+              <input
+                type="number"
+                value={restrictions.max_total_points_sent_per_day}
+                onChange={(e) => setRestrictions({ ...restrictions, max_total_points_sent_per_day: parseInt(e.target.value) })}
+                min="1"
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  borderRadius: '8px',
+                  border: `1px solid ${theme.border}`,
+                  background: '#FFFFFF',
+                  color: '#000000',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                }}
+              />
+              <p style={{ color: theme.sub, fontSize: '12px', marginTop: '4px' }}>
+                Total outbound points limit per 24h
+              </p>
+            </div>
+          </div>
+
+          <div style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            gap: '12px',
+          }}>
+            <button
+              onClick={handleSaveRestrictions}
+              disabled={savingRestrictions}
+              style={{
+                background: theme.pri,
+                color: '#fff',
+                border: 'none',
+                padding: '12px 24px',
+                borderRadius: '8px',
+                fontSize: '14px',
+                fontWeight: '600',
+                cursor: savingRestrictions ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                opacity: savingRestrictions ? 0.6 : 1,
+              }}
+            >
+              <Save size={16} />
+              {savingRestrictions ? 'Saving...' : 'Save Restrictions'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Add/Edit Modal */}
+      {showModal && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10000,
+          padding: 20,
+          backdropFilter: 'blur(4px)',
+        }} onClick={() => closeModal()}>
+          <div style={{
+            background: theme.bg,
+            borderRadius: 16,
+            padding: 32,
+            width: '100%',
+            maxWidth: 600,
+            maxHeight: '90vh',
+            overflowY: 'auto',
+            border: `1px solid ${theme.border}`,
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+          }} onClick={(e) => e.stopPropagation()}>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '24px',
+            }}>
+              <h2 style={{
+                fontSize: '24px',
+                fontWeight: '700',
+                color: theme.text,
+                margin: 0,
+              }}>
+                {editingGift ? 'Edit Gift' : 'Add New Gift'}
+              </h2>
+              <button
+                onClick={closeModal}
+                style={{
+                  background: theme.bg,
+                  border: `1px solid ${theme.border}`,
+                  borderRadius: '8px',
+                  padding: '8px',
+                  cursor: 'pointer',
+                  color: theme.sub,
+                  transition: 'all 0.2s',
+                }}
+                onMouseEnter={(e) => e.target.style.background = theme.border}
+                onMouseLeave={(e) => e.target.style.background = theme.bg}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit}>
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{
+                  display: 'block',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: theme.text,
+                  marginBottom: '8px',
+                }}>
+                  Gift Name *
+                </label>
+                <input
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  required
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    borderRadius: '8px',
+                    border: `1px solid ${theme.border}`,
+                    background: '#FFFFFF',
+                    color: '#000000',
+                    fontSize: '14px',
+                    fontWeight: 500,
+                  }}
+                  placeholder="e.g., Rose, Diamond Heart"
+                />
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{
+                  display: 'block',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: theme.text,
+                  marginBottom: '8px',
+                }}>
+                  Description
+                </label>
+                <textarea
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  rows={3}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    borderRadius: '8px',
+                    border: `1px solid ${theme.border}`,
+                    background: '#FFFFFF',
+                    color: '#000000',
+                    fontSize: '14px',
+                    fontWeight: 500,
+                    resize: 'vertical',
+                  }}
+                  placeholder="Gift description"
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+                <div>
+                  <label style={{
+                    display: 'block',
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    color: theme.text,
+                    marginBottom: '8px',
+                  }}>
+                    Coin Value *
+                  </label>
+                  <input
+                    type="number"
+                    value={formData.coin_value}
+                    onChange={(e) => setFormData({ ...formData, coin_value: parseInt(e.target.value) })}
+                    required
+                    min="1"
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      borderRadius: '8px',
+                      border: `1px solid ${theme.border}`,
+                      background: '#FFFFFF',
+                      color: '#000000',
+                      fontSize: '14px',
+                      fontWeight: 500,
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{
+                    display: 'block',
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    color: theme.text,
+                    marginBottom: '8px',
+                  }}>
+                    XP Reward
+                  </label>
+                  <input
+                    type="number"
+                    value={formData.xp_reward}
+                    onChange={(e) => setFormData({ ...formData, xp_reward: parseInt(e.target.value) })}
+                    min="0"
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      borderRadius: '8px',
+                      border: `1px solid ${theme.border}`,
+                      background: '#FFFFFF',
+                      color: '#000000',
+                      fontSize: '14px',
+                      fontWeight: 500,
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+                <div>
+                  <label style={{
+                    display: 'block',
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    color: theme.text,
+                    marginBottom: '8px',
+                  }}>
+                    Rarity
+                  </label>
+                  <select
+                    value={formData.rarity}
+                    onChange={(e) => setFormData({ ...formData, rarity: e.target.value })}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      borderRadius: '8px',
+                      border: `1px solid ${theme.border}`,
+                      background: '#FFFFFF',
+                      color: '#000000',
+                      fontSize: '14px',
+                      fontWeight: 500,
+                    }}
+                  >
+                    <option value="common">Common</option>
+                    <option value="rare">Rare</option>
+                    <option value="epic">Epic</option>
+                    <option value="legendary">Legendary</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{
+                    display: 'block',
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    color: theme.text,
+                    marginBottom: '8px',
+                  }}>
+                    Category
+                  </label>
+                  <select
+                    value={formData.category}
+                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      borderRadius: '8px',
+                      border: `1px solid ${theme.border}`,
+                      background: '#FFFFFF',
+                      color: '#000000',
+                      fontSize: '14px',
+                      fontWeight: 500,
+                    }}
+                  >
+                    <option value="special">Special</option>
+                    <option value="flowers">Flowers</option>
+                    <option value="hearts">Hearts</option>
+                    <option value="gems">Gems</option>
+                    <option value="animals">Animals</option>
+                    <option value="vehicles">Vehicles</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+                <div>
+                  <label style={{
+                    display: 'block',
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    color: theme.text,
+                    marginBottom: '8px',
+                  }}>
+                    Sort Order
+                  </label>
+                  <input
+                    type="number"
+                    value={formData.sort_order}
+                    onChange={(e) => setFormData({ ...formData, sort_order: parseInt(e.target.value) })}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      borderRadius: '8px',
+                      border: `1px solid ${theme.border}`,
+                      background: '#FFFFFF',
+                      color: '#000000',
+                      fontSize: '14px',
+                      fontWeight: 500,
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{
+                    display: 'block',
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    color: theme.text,
+                    marginBottom: '8px',
+                  }}>
+                    Animation Duration (s)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={formData.animation_duration}
+                    onChange={(e) => setFormData({ ...formData, animation_duration: parseFloat(e.target.value) })}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      borderRadius: '8px',
+                      border: `1px solid ${theme.border}`,
+                      background: '#FFFFFF',
+                      color: '#000000',
+                      fontSize: '14px',
+                      fontWeight: 500,
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{
+                  display: 'block',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: theme.text,
+                  marginBottom: '8px',
+                }}>
+                  Animation Type
+                </label>
+                <input
+                  type="text"
+                  value={formData.animation_type}
+                  onChange={(e) => setFormData({ ...formData, animation_type: e.target.value })}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    borderRadius: '8px',
+                    border: `1px solid ${theme.border}`,
+                    background: '#FFFFFF',
+                    color: '#000000',
+                    fontSize: '14px',
+                    fontWeight: 500,
+                  }}
+                  placeholder="e.g., particle, bounce, pulse"
+                />
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{
+                  display: 'block',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: theme.text,
+                  marginBottom: '8px',
+                }}>
+                  Gift Image *
+                </label>
+                <div style={{
+                  border: `2px dashed ${theme.border}`,
+                  borderRadius: '8px',
+                  padding: '24px',
+                  textAlign: 'center',
+                  cursor: 'pointer',
+                  position: 'relative',
+                }}>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageChange}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      opacity: 0,
+                      cursor: 'pointer',
+                    }}
+                  />
+                  {previewImage ? (
+                    <img
+                      src={previewImage}
+                      alt="Preview"
+                      style={{ maxWidth: '100%', maxHeight: '200px', borderRadius: '8px' }}
+                    />
+                  ) : (
+                    <div>
+                      <Upload size={32} color={theme.sub} style={{ marginBottom: '8px' }} />
+                      <div style={{ color: theme.sub, fontSize: '14px' }}>
+                        Click to upload gift image
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{
+                  display: 'block',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: theme.text,
+                  marginBottom: '8px',
+                }}>
+                  Animated Image (Optional)
+                </label>
+                <div style={{
+                  border: `2px dashed ${theme.border}`,
+                  borderRadius: '8px',
+                  padding: '24px',
+                  textAlign: 'center',
+                  cursor: 'pointer',
+                  position: 'relative',
+                }}>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleAnimatedImageChange}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      opacity: 0,
+                      cursor: 'pointer',
+                    }}
+                  />
+                  {previewAnimatedImage ? (
+                    <img
+                      src={previewAnimatedImage}
+                      alt="Animated Preview"
+                      style={{ maxWidth: '100%', maxHeight: '200px', borderRadius: '8px' }}
+                    />
+                  ) : (
+                    <div>
+                      <Upload size={32} color={theme.sub} style={{ marginBottom: '8px' }} />
+                      <div style={{ color: theme.sub, fontSize: '14px' }}>
+                        Click to upload animated version
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '24px' }}>
+                <label style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  cursor: 'pointer',
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={formData.is_active}
+                    onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+                    style={{
+                      width: '18px',
+                      height: '18px',
+                      cursor: 'pointer',
+                    }}
+                  />
+                  <span style={{ fontSize: '14px', color: theme.text }}>
+                    Active (available for users)
+                  </span>
+                </label>
+              </div>
+
+              <div style={{
+                display: 'flex',
+                gap: '12px',
+                justifyContent: 'flex-end',
+                marginTop: '32px',
+              }}>
+                <button
+                  type="button"
+                  onClick={closeModal}
+                  style={{
+                    background: theme.bg,
+                    color: theme.text,
+                    border: `1px solid ${theme.border}`,
+                    padding: '12px 24px',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.background = theme.border;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.background = theme.bg;
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  style={{
+                    background: theme.pri,
+                    color: '#fff',
+                    border: 'none',
+                    padding: '12px 24px',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.opacity = '0.9';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.opacity = '1';
+                  }}
+                >
+                  {editingGift ? 'Update Gift' : 'Create Gift'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10001,
+          padding: 20,
+          backdropFilter: 'blur(4px)',
+        }} onClick={() => setShowDeleteModal(false)}>
+          <div style={{
+            background: theme.bg,
+            borderRadius: 16,
+            padding: 32,
+            width: '100%',
+            maxWidth: 400,
+            border: `1px solid ${theme.border}`,
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+          }} onClick={(e) => e.stopPropagation()}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '16px',
+              marginBottom: '24px',
+            }}>
+              <div style={{
+                width: '48px',
+                height: '48px',
+                borderRadius: '50%',
+                background: theme.red + '20',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+                <Trash2 size={24} color={theme.red} />
+              </div>
+              <div>
+                <h3 style={{
+                  fontSize: '18px',
+                  fontWeight: '600',
+                  color: theme.text,
+                  margin: '0 0 4px 0',
+                }}>
+                  Delete Gift
+                </h3>
+                <p style={{
+                  fontSize: '14px',
+                  color: theme.sub,
+                  margin: 0,
+                }}>
+                  Are you sure you want to delete this gift? This action cannot be undone.
+                </p>
+              </div>
+            </div>
+
+            <div style={{
+              display: 'flex',
+              gap: '12px',
+              justifyContent: 'flex-end',
+            }}>
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                style={{
+                  background: theme.bg,
+                  color: theme.text,
+                  border: `1px solid ${theme.border}`,
+                  padding: '12px 24px',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.background = theme.border;
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.background = theme.bg;
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                style={{
+                  background: theme.red,
+                  color: '#fff',
+                  border: 'none',
+                  padding: '12px 24px',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.opacity = '0.9';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.opacity = '1';
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+
+
