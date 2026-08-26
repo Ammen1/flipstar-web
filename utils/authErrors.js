@@ -46,7 +46,65 @@ export function describeAuthError(err, defaultMessage = "Login failed. Please tr
   // Try to surface a sensible field from the parsed body.
   const data = err.data || {};
   if (typeof data.error === "string") return data.error;
-  if (typeof data.detail === "string") return data.detail;
+  if (typeof data.detail === "string") {
+    // Never show raw DRF throttle/technical messages to the user.
+    if (data.detail.includes("throttl")) {
+      return "Too many requests. Please wait a moment and try again.";
+    }
+    return data.detail;
+  }
+
+  // Also check if the error message itself contains throttle info (from JSON.stringify).
+  const msg = err.message || '';
+  if (msg.includes("throttl")) {
+    return "Too many requests. Please wait a moment and try again.";
+  }
+
+  return defaultMessage;
+}
+
+/**
+ * Extract a clean, human-readable error message from any API error.
+ * Handles api.js errors (e.data / e.message), axios-style errors
+ * (e.response.data), and JSON-stringified error messages.
+ */
+export function extractErrorMessage(err, defaultMessage = 'Something went wrong. Please try again.') {
+  if (!err) return defaultMessage;
+
+  // api.js errors: e.data has the parsed body
+  const data = err.data || err.response?.data || {};
+
+  // Check data.error
+  if (typeof data.error === 'string' && data.error) return data.error;
+  // Check data.detail
+  if (typeof data.detail === 'string' && data.detail) {
+    if (data.detail.includes('throttl')) {
+      return 'Too many requests. Please wait a moment and try again.';
+    }
+    return data.detail;
+  }
+
+  // Check e.message — it might be JSON.stringify({error: "..."}) from api.js
+  const raw = err.message || '';
+  if (raw) {
+    try {
+      const parsed = raw.startsWith('{') ? JSON.parse(raw) : raw;
+      if (typeof parsed === 'object') {
+        if (parsed.error) return parsed.error;
+        if (parsed.detail) return parsed.detail;
+      }
+      if (typeof parsed === 'string' && parsed) {
+        if (parsed.includes('throttl')) {
+          return 'Too many requests. Please wait a moment and try again.';
+        }
+        return parsed;
+      }
+    } catch (_) { /* not JSON — use as-is */ }
+    if (raw.includes('throttl')) {
+      return 'Too many requests. Please wait a moment and try again.';
+    }
+    return raw;
+  }
 
   return defaultMessage;
 }

@@ -1,4 +1,12 @@
 import config from './config.js';
+import {
+  initCrypto,
+  getClientPublicKey,
+  isCryptoReady,
+  waitForCrypto,
+  encryptPayload,
+  decryptPayload,
+} from './crypto.js';
 
 const API_BASE_URL = config.API_BASE_URL;
 
@@ -18,6 +26,72 @@ const CACHE_TTL = 60_000; // 60s default TTL for better performance
 const MAX_RETRIES = 2; // Max retries for network errors
 const RETRY_DELAY = 1000; // Delay between retries in ms
 
+// --- E2E encryption state ---
+let _e2eEnabled = false;
+
+// Endpoint prefixes that use @encrypted_endpoint or EncryptedPayloadMixin
+// on the backend. Only these get encrypted request bodies and the
+// X-Client-Public-Key header. Endpoints NOT listed here (auth, reels,
+// profile, posts/create, client-log, health, etc.) receive plaintext.
+const ENCRYPTED_ENDPOINT_PREFIXES = [
+  '/auth/register/',
+  '/auth/login/',
+  '/auth/login-with-phone/',
+  '/auth/login-with-subscription-otp/',
+  '/auth/reset-password/',
+  '/auth/change-password/',
+  '/auth/delete-account/',
+  '/auth/download-data/',
+  '/auth/send-phone-otp/',
+  '/auth/verify-phone-otp/',
+  '/auth/register-with-phone/',
+  '/auth/check-phone-account/',
+  '/auth/forgot-password/',
+  '/auth/forgot-password-phone/',
+  '/auth/dev-create-subscription/',
+  '/messages/',
+  '/reports/',
+  '/wallet/',
+  '/wallet/config/',
+  '/charging/',
+  '/subscription/',
+  '/subscriptions/',
+  '/subscription/status/',
+  '/subscriptions/tiers/',
+  '/coins/',
+  '/campaigns/',
+  '/gifts/',
+  '/gift-stats/',
+  '/boost/',
+  '/gamification/',
+  '/quests/',
+  '/competitions/',
+  '/winners/',
+  '/follows/',
+  '/blocks/',
+  '/notifications/',
+  '/notifications/me/',
+  '/notifications/unread-count/',
+  '/privacy/',
+  '/saved/',
+  '/comments/',
+  '/comment-replies/',
+  '/categories/',
+  '/support/',
+  '/direct-debit/',
+  '/settings/public/',
+];
+
+function isEncryptedEndpoint(endpoint) {
+  // Admin endpoints are never encrypted
+  if (endpoint.startsWith('/admin/')) return false;
+  // Public subscription endpoints without @encrypted_endpoint on backend
+  if (endpoint.startsWith('/subscription/check-superapp/')) return false;
+  // Messaging uses multipart/form-data for media uploads — encryption not compatible
+  if (endpoint.startsWith('/messages/')) return false;
+  return ENCRYPTED_ENDPOINT_PREFIXES.some((prefix) => endpoint.startsWith(prefix));
+}
+
 function getCached(key) {
   const entry = _cache.get(key);
   if (entry && Date.now() - entry.ts < entry.ttl) return entry.data;
@@ -34,7 +108,8 @@ async function retryWithBackoff(fn, retries = MAX_RETRIES) {
     try {
       return await fn();
     } catch (error) {
-      // Only retry on network errors, not on 4xx/5xx HTTP errors
+      // Never retry aborted or network errors
+      if (error.name === 'AbortError') throw error;
       if (error.name === 'TypeError' || error.message.includes('fetch') || error.message.includes('network')) {
         if (i < retries - 1) {
           await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * (i + 1)));
@@ -53,6 +128,19 @@ function invalidateCache(pattern) {
 }
 
 const api = {
+  enableE2E: async () => {
+    _e2eEnabled = true;
+    try {
+      await initCrypto(API_BASE_URL);
+      console.log('🔐 E2E encryption enabled');
+    } catch (e) {
+      console.error('❌ E2E encryption init failed:', e);
+      _e2eEnabled = false;
+    }
+  },
+
+  isE2EEnabled: () => _e2eEnabled,
+
   setAuthToken: (token) => {
     authToken = token;
     if (token) {
@@ -137,6 +225,35 @@ const api = {
         headers['Content-Type'] = 'application/json';
       }
 
+      // --- E2E: encrypt JSON request body and attach public key header ---
+      let encryptedBody = options.body;
+      const isJsonBody =
+        !bodyIsFormData && !options.isFormData && !isGet &&
+        typeof options.body === 'string' &&
+        headers['Content-Type'] === 'application/json';
+
+      // Wait for crypto init if E2E is enabled but still initializing
+      if (_e2eEnabled && !isCryptoReady()) {
+        await waitForCrypto();
+      }
+
+      // Always attach X-Client-Public-Key when crypto is ready.
+      // The backend uses @encrypted_endpoint / EncryptedPayloadMixin on 100+
+      // views. The header is required by all of them (even GET) so the
+      // response can be encrypted back.  Only the request *body* is
+      // encrypted for endpoints in the allowlist.
+      if (_e2eEnabled && isCryptoReady()) {
+        headers['X-Client-Public-Key'] = getClientPublicKey();
+      }
+
+      const shouldEncrypt = _e2eEnabled && isCryptoReady() && isEncryptedEndpoint(endpoint);
+
+      if (shouldEncrypt && isJsonBody) {
+        const parsed = JSON.parse(options.body);
+        const envelope = await encryptPayload(parsed);
+        encryptedBody = JSON.stringify(envelope);
+      }
+
       // Only add token if it exists AND it's not a public endpoint.
       // Auth endpoints that REQUIRE a token (change-password, delete-account, download-data) must
       // be excluded from the "public" classification so the Authorization header is attached.
@@ -148,12 +265,18 @@ const api = {
         headers['Authorization'] = `Token ${currentToken}`;
       }
 
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), options.timeout || 30_000);
+
       const response = await retryWithBackoff(async () => {
         return await fetch(`${API_BASE_URL}${endpoint}`, {
           ...options,
+          body: encryptedBody,
           headers,
+          signal: controller.signal,
         });
       });
+      clearTimeout(timeoutId);
 
       let data;
       // 204 No Content has no body (common for DELETE responses)
@@ -165,6 +288,17 @@ const api = {
         if (responseText) {
           try {
             data = JSON.parse(responseText);
+            // --- E2E: decrypt encrypted response envelope ---
+            if (
+              _e2eEnabled && isCryptoReady() && shouldEncrypt &&
+              data && data.encrypted && data.nonce && data.checksum
+            ) {
+              try {
+                data = await decryptPayload(data);
+              } catch (decErr) {
+                throw new Error(`E2E decryption failed: ${decErr.message}`);
+              }
+            }
           } catch (e) {
             data = response.ok ? { success: true } : { error: responseText || 'Failed to parse response' };
           }
@@ -182,6 +316,7 @@ const api = {
           delete retryHeaders['Authorization'];
           const retryResponse = await fetch(`${API_BASE_URL}${endpoint}`, {
             ...options,
+            body: encryptedBody,
             headers: retryHeaders,
           });
           let retryData;
@@ -318,7 +453,7 @@ const api = {
   getProfile: () => api.request('/profile/me/'),
 
   updateProfile: (data) =>
-    api.request('/profile/1/', {
+    api.request('/profile/me/', {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
@@ -405,12 +540,6 @@ const api = {
   getComments: (reelId) => api.request(`/reels/${reelId}/comments/`),
 
   followUser: (userId) =>
-    api.request('/follows/toggle/', {
-      method: 'POST',
-      body: JSON.stringify({ following_id: userId }),
-    }).then(r => { invalidateCache('/follows'); return r; }),
-
-  unfollowUser: (userId) =>
     api.request('/follows/toggle/', {
       method: 'POST',
       body: JSON.stringify({ following_id: userId }),
@@ -544,9 +673,6 @@ const api = {
   // Get user by ID or username
   getUser: (userId) => api.request(`/profile/${userId}/`),
 
-  // Comments with likes and replies
-  getComments: (reelId) => api.request(`/reels/${reelId}/comments/`),
-
   likeComment: (commentId) =>
     api.request(`/comments/${commentId}/like/`, {
       method: 'POST',
@@ -627,9 +753,7 @@ const api = {
   // Get user's posts
   getUserPosts: (userId) => api.request(`/reels/?user=${userId}`),
 
-  // Get saved posts
-  getSavedPosts: () => api.request('/reels/?saved=true'),
-  getUserSavedPosts: () => api.request('/reels/?saved=true'),
+  getUserSavedPosts: () => api.request('/saved/'),
 
   // Subscription status check
   checkSubscriptionStatus: () => {
@@ -698,6 +822,14 @@ const api = {
 
 // Export config for use in other components
 api.config = { baseURL: API_BASE_URL };
+
+// Start E2E crypto initialization immediately at module load time —
+// before any React component renders or makes API requests.  The previous
+// approach (calling enableE2E() inside App.jsx's useEffect) ran
+// children-first due to React's useEffect ordering, so child components
+// that called encrypted endpoints on mount fired requests BEFORE
+// _e2eEnabled was set to true, missing the X-Client-Public-Key header.
+api.enableE2E();
 
 export default api;
 

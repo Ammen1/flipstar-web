@@ -9,7 +9,7 @@ import {
   ChevronLeft,
 } from 'lucide-react';
 import api from '../../api';
-import { describeAuthError, formatWait } from '../../utils/authErrors';
+import { describeAuthError, extractErrorMessage, formatWait } from '../../utils/authErrors';
 import { useLockoutTimer } from '../../utils/useLockoutTimer';
 import { ForgotPasswordPhone } from './ForgotPasswordPhone';
 import { TermsModal } from './LoginFaqTermsModals';
@@ -154,7 +154,7 @@ export function SubscriptionRegisterModal({
       }
     } catch (e) {
       console.error('[SUBSCRIPTION REGISTRATION JOURNEY] Resend OTP failed:', e);
-      setError(e?.response?.data?.error || e?.message || 'Failed to resend OTP');
+      setError(extractErrorMessage(e, 'Failed to resend OTP. Please try again.'));
     } finally {
       setLoading(false);
       console.log('[SUBSCRIPTION REGISTRATION JOURNEY] Resend OTP completed, loading=false');
@@ -247,12 +247,7 @@ export function SubscriptionRegisterModal({
       window.history.replaceState({}, '', window.location.pathname);
     } catch (e) {
       console.error('[SUBSCRIPTION REGISTRATION JOURNEY] Registration failed:', e);
-      console.error('[SUBSCRIPTION REGISTRATION JOURNEY] Error details:', { response: e?.response?.data, message: e?.message });
-      setError(
-        e?.response?.data?.error ||
-          e?.message ||
-          'Registration failed. Check your OTP and try again.',
-      );
+      setError(extractErrorMessage(e, 'Registration failed. Check your OTP and try again.'));
     } finally {
       setLoading(false);
       console.log('[SUBSCRIPTION REGISTRATION JOURNEY] Registration completed, loading=false');

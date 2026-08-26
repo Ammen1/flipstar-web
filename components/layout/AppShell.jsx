@@ -89,8 +89,8 @@ export function AppShell({
     { item: menuItems[6], label: 'Profile', iconName: 'profile' },
   ];
 
+  const AUTH_REQUIRED_TABS = new Set(['create', 'notifications', 'settings', 'profile', 'messages', 'campaigns']);
   const handleItemClick = (item) => {
-    // If tapping the already-active feed tab (no special action), scroll to top + refresh
     const feedTabs = ['home', 'reels', 'messages', 'following', 'bookmarks'];
     if (item.id === activeTab && feedTabs.includes(item.id) && !item.action) {
       window.dispatchEvent(
@@ -98,8 +98,7 @@ export function AppShell({
       );
       return;
     }
-    // Check auth for messages
-    if (item.id === 'messages' && !user) {
+    if (AUTH_REQUIRED_TABS.has(item.id) && !user) {
       onRequireAuth?.();
       return;
     }
@@ -327,7 +326,7 @@ export function AppShell({
             })}
           </nav>
 
-          {user && (
+          {user ? (
             <div
               style={{
                 marginTop: 'auto',
@@ -434,6 +433,32 @@ export function AppShell({
                   <span>{t('logout')}</span>
                 </button>
               )}
+            </div>
+          ) : (
+            <div
+              style={{
+                marginTop: 'auto',
+                padding: '16px',
+                borderTop: `1px solid ${T.border}`,
+              }}
+            >
+              <button
+                onClick={onRequireAuth}
+                style={{
+                  width: '100%',
+                  padding: '10px 0',
+                  border: 'none',
+                  borderRadius: 10,
+                  background: `linear-gradient(135deg, ${T.pri || '#8fc441'}, ${T.priSec || '#6ba835'})`,
+                  color: '#fff',
+                  fontSize: 14,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  letterSpacing: 0.3,
+                }}
+              >
+                {t('login') || 'Log In'}
+              </button>
             </div>
           )}
         </aside>

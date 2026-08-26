@@ -17,6 +17,12 @@ export const BlockProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   const loadBlockedUsers = useCallback(async () => {
+    if (!api.hasToken()) {
+      setBlockedUsers(new Set());
+      setBlockedUsersList([]);
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       const response = await api.request('/blocks/');
@@ -60,9 +66,8 @@ export const BlockProvider = ({ children }) => {
 
   const unblockUser = useCallback(async (userId) => {
     try {
-      await api.request('/blocks/unblock/', {
-        method: 'POST',
-        body: JSON.stringify({ blocked_id: userId })
+      await api.request(`/blocks/unblock/?blocked_id=${userId}`, {
+        method: 'GET',
       });
       setBlockedUsers(prev => {
         const newSet = new Set(prev);

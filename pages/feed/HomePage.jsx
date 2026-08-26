@@ -3134,7 +3134,7 @@ export function HomePage({ user, onShowProfile, onShowPostPage, onRequireAuth, o
       onClose={() => setShowInsufficientCoinsModal(false)}
       onBuyCoins={() => {
         setShowInsufficientCoinsModal(false);
-        window.location.href = '/wallet';
+        onShowWallet?.();
       }}
     />
     </div>

@@ -86,8 +86,8 @@ export default defineConfig({
     },
     terserOptions: {
       compress: {
-        drop_console: false,
-        drop_debugger: false,
+        drop_console: process.env.NODE_ENV === 'production',
+        drop_debugger: process.env.NODE_ENV === 'production',
         pure_funcs: [],
         passes: 1,
       },

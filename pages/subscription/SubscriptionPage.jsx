@@ -68,9 +68,9 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
   const [termsModalOpen, setTermsModalOpen] = useState(false);
   const [reconciling, setReconciling] = useState(false);
   const [reconcileAttempt, setReconcileAttempt] = useState(0);
+  const [activeSubscriptionModalOpen, setActiveSubscriptionModalOpen] = useState(false);
   const [methodModalOpen, setMethodModalOpen] = useState(false);
   const [selectedTierForMethod, setSelectedTierForMethod] = useState(null);
-  const [activeSubscriptionModalOpen, setActiveSubscriptionModalOpen] = useState(false);
   // Inline toast state — replaces native alert() popups for the on-demand flow
   // so users don't get a system "message box" interrupting them.
   const [toast, setToast] = useState(null); // { type: 'success'|'error'|'info', text: string }
@@ -720,7 +720,7 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
         setSuccessModalOpen(true);
         setTimeout(() => {
           setSuccessModalOpen(false);
-          window.location.href = '/';
+          onBack?.();
         }, 2500);
       } else {
         try {
@@ -739,7 +739,7 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
         setSuccessModalOpen(true);
         setTimeout(() => {
           setSuccessModalOpen(false);
-          window.location.href = '/';
+          onBack?.();
         }, 2500);
       }
     } catch (error) {
@@ -833,7 +833,7 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
                 setSuccessModalOpen(true);
                 setTimeout(() => {
                   setSuccessModalOpen(false);
-                  window.location.href = '/';
+                  onBack?.();
                 }, 3000);
               }
             } else {
@@ -863,13 +863,13 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
                   const is_new_user = payment.is_new_user;
                   clog('info', 'Redirecting based on is_new_user from status endpoint', { phone, is_new_user });
                   if (is_new_user) {
-                    window.location.href = `/subscription-register?phone=${phone}&from_telebirr=true`;
+                    window.location.href = `/?subscription_tp=true&phone=${phone}&from_telebirr=true`;
                   } else {
-                    window.location.href = `/login?phone=${phone}&telebirr_otp_mode=true`;
+                    window.location.href = `/?login=true&phone=${phone}&telebirr_otp_mode=true`;
                   }
                 } else {
-                  clog('error', 'No phone number available for redirect, falling back to /login');
-                  window.location.href = '/login';
+                  clog('error', 'No phone number available for redirect, falling back to login');
+                  window.location.href = '/?login=true';
                 }
               }
             }

@@ -6,6 +6,40 @@ import {
 } from 'lucide-react';
 import api from '../../../api';
 
+// Simple HTML sanitizer: allow only safe formatting tags
+function sanitizeHtml(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const ALLOWED = new Set(['B', 'I', 'U', 'EM', 'STRONG', 'A', 'P', 'BR', 'UL', 'OL', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'PRE', 'CODE', 'HR', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TH', 'TD']);
+  function clean(node) {
+    const children = [...node.childNodes];
+    for (const child of children) {
+      if (child.nodeType === 1) {
+        if (!ALLOWED.has(child.tagName)) {
+          child.replaceWith(...child.childNodes);
+        } else {
+          if (child.tagName === 'A') {
+            const href = child.getAttribute('href') || '';
+            if (!href.startsWith('http://') && !href.startsWith('https://') && !href.startsWith('/')) {
+              child.removeAttribute('href');
+            } else {
+              child.setAttribute('target', '_blank');
+              child.setAttribute('rel', 'noopener noreferrer');
+            }
+          }
+          [...child.attributes].forEach(attr => {
+            if (attr.name !== 'href' && attr.name !== 'target' && attr.name !== 'rel') {
+              child.removeAttribute(attr.name);
+            }
+          });
+          clean(child);
+        }
+      }
+    }
+  }
+  clean(doc.body);
+  return doc.body.innerHTML;
+}
+
 const DOCUMENT_TYPE_ICONS = {
   terms: Scale,
   privacy: Shield,
@@ -742,7 +776,7 @@ function DocumentPreview({ theme, document, onClose }) {
           ) : fullDoc ? (
             <div
               style={{ fontSize: 14, lineHeight: 1.8, color: theme.txt }}
-              dangerouslySetInnerHTML={{ __html: fullDoc.content.replace(/\n/g, '<br/>') }}
+              dangerouslySetInnerHTML={{ __html: sanitizeHtml(fullDoc.content.replace(/\n/g, '<br/>')) }}
             />
           ) : (
             <div style={{ textAlign: 'center', padding: 40, color: theme.sub }}>Failed to load document</div>

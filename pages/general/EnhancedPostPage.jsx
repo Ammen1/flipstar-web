@@ -9,6 +9,7 @@ import {
   Sliders
 } from 'lucide-react';
 import api from '../../api';
+import config from '../../config';
 import { useTheme } from '../../contexts/ThemeContext';
 import realtimeService from '../../services/RealtimeService';
 import { InsufficientCoinsModal } from '../../components/common/InsufficientCoinsModal';
@@ -35,7 +36,7 @@ const EXTENDED_RECORDING_COST = 200;
 // Module-level helper to send logs to backend for server-side debugging
 const logToBackend = (message, level = 'info', source = 'recording') => {
   try {
-    fetch('/api/client-log/', {
+    fetch(`${config.API_BASE_URL.replace('/api/v1', '/api')}/client-log/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ source, level, message, userAgent: navigator.userAgent }),
@@ -319,7 +320,7 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
       // Helper to send logs to backend for server-side debugging
       const logToBackend = (message, level = 'info') => {
         try {
-          fetch('/api/client-log/', {
+          fetch(`${config.API_BASE_URL.replace('/api/v1', '/api')}/client-log/`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ source: 'camera', level, message, userAgent: navigator.userAgent }),

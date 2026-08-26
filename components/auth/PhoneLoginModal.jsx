@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Phone, Lock, Eye, EyeOff, Loader, X, ChevronLeft } from 'lucide-react';
 import api from '../../api';
-import { describeAuthError, formatWait } from '../../utils/authErrors';
+import { describeAuthError, extractErrorMessage, formatWait } from '../../utils/authErrors';
 import { useLockoutTimer } from '../../utils/useLockoutTimer';
 import { ForgotPasswordPhone } from './ForgotPasswordPhone';
 import { FaqModal, TermsModal } from './LoginFaqTermsModals';
@@ -180,7 +180,7 @@ export function PhoneLoginModal({
       setActiveModal('superapp-otp');
     } catch (e) {
       console.error('❌ SuperApp phone error:', e);
-      setSuperappError(e?.response?.data?.error || "Failed to check subscription or send OTP");
+      setSuperappError(extractErrorMessage(e, "Failed to check subscription or send OTP"));
     } finally {
       setSuperappLoading(false);
     }
@@ -225,7 +225,7 @@ export function PhoneLoginModal({
       onSuccess(userData);
     } catch (e) {
       console.error('❌ SuperApp OTP login error:', e);
-      setSuperappError(e?.response?.data?.error || "Invalid OTP or login failed");
+      setSuperappError(extractErrorMessage(e, "Invalid OTP or login failed"));
     } finally {
       setSuperappLoading(false);
     }
