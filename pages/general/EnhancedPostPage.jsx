@@ -36,7 +36,7 @@ const EXTENDED_RECORDING_COST = 200;
 // Module-level helper to send logs to backend for server-side debugging
 const logToBackend = (message, level = 'info', source = 'recording') => {
   try {
-    fetch(`${config.API_BASE_URL.replace('/api/v1', '/api')}/client-log/`, {
+    fetch(`${config.API_BASE_URL}/client-log/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ source, level, message, userAgent: navigator.userAgent }),
@@ -320,7 +320,7 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
       // Helper to send logs to backend for server-side debugging
       const logToBackend = (message, level = 'info') => {
         try {
-          fetch(`${config.API_BASE_URL.replace('/api/v1', '/api')}/client-log/`, {
+          fetch(`${config.API_BASE_URL}/client-log/`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ source: 'camera', level, message, userAgent: navigator.userAgent }),
@@ -1957,7 +1957,7 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
                   </div>
 
                   {/* Flip camera shortcut */}
-                  <button className="ep-btn" 
+                  <button aria-label="Refresh" className="ep-btn" 
                     onClick={flipCamera}
                     onTouchEnd={flipCamera}
                     style={{ background: 'rgba(0,0,0,0.45)', borderRadius: '50%', width: 52, height: 52, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.15)' }}>
@@ -2005,7 +2005,7 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
                 background: 'transparent',
                 position: 'relative', zIndex: 1,
               }}>
-                <button className="ep-btn" onClick={onBack}
+                <button aria-label="Go back" className="ep-btn" onClick={onBack}
                   style={{ background: 'rgba(249,224,139,0.15)', border: '1.5px solid #8fc441', borderRadius: 10, width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <ArrowLeft size={20} color="#8fc441" />
                 </button>
@@ -2172,7 +2172,7 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
                 style={{ background: 'rgba(218,155,42,0.2)', borderRadius: 20, padding: '8px 14px', color: T.txt, fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <Eye size={15} /> Preview
               </button>
-              <button className="ep-btn" onClick={saveDraft}
+              <button aria-label="Save" className="ep-btn" onClick={saveDraft}
                 style={{ background: 'rgba(218,155,42,0.2)', borderRadius: 20, padding: '8px', color: T.txt, display: 'flex', alignItems: 'center' }}>
                 <Bookmark size={17} />
               </button>

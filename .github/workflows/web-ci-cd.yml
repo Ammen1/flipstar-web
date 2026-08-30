@@ -1,0 +1,143 @@
+# Build, scan and ship the FlipStar web SPA.
+#
+# The Kubernetes manifests for this app do NOT live here -- they are in
+# Ammen1/flip-star under k8s/base/web, because that is the repository Argo CD
+# watches. This workflow therefore ends by pushing a one-line image-tag change
+# to that repo, which is what actually triggers the deploy. That cross-repo
+# push is the only reason a PAT is needed; everything else uses GITHUB_TOKEN.
+name: web-ci-cd
+
+on:
+  push:
+    branches: [main, dev]
+    paths-ignore:
+      - "**/*.md"
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+# A second push while the first is mid-flight would race on the GitOps commit
+# and could deploy the older SHA. Queue instead of cancelling: a build that
+# has already pushed an image should finish recording it.
+concurrency:
+  group: web-ci-cd-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_WEB: ghcr.io/skykin-technologies/flipstar-web
+  GITOPS_REPO: Ammen1/flip-star
+  GITOPS_BRANCH: main
+  KUSTOMIZE_VERSION: "5.4.3"
+  # Buildx otherwise uploads a build record to the Actions artifact store on
+  # every run. Actions artifacts and Packages share ONE storage quota, and
+  # exhausting it fails the run with "Artifact storage quota has been hit" --
+  # which is what broke the backend pipeline. These records are never read.
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
+
+jobs:
+  build-scan-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-tag: ${{ steps.meta.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: meta
+        run: echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Built with load, NOT push. The image has to exist locally so Trivy can
+      # scan the exact artifact that will be published -- scanning after the
+      # push would mean a vulnerable image is already in the registry and
+      # pullable, which defeats the gate.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          push: false
+          tags: ${{ env.IMAGE_WEB }}:${{ github.sha }}
+          build-args: |
+            VITE_API_BASE_URL=https://api.uat.flipstar.et/api/v1
+            VITE_ENVIRONMENT=staging
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # No continue-on-error. A CRITICAL or HIGH finding fails the job, and
+      # every step below it -- including the push and the GitOps bump -- is
+      # skipped. If the base image carries an unfixable finding, raise the
+      # nginx/node tag in the Dockerfile; do not relax this gate.
+      - name: Scan image (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE_WEB }}:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          vuln-type: os,library
+
+      # Everything below runs only on a real push -- a pull_request build is
+      # verified and thrown away, never published.
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image
+        if: github.event_name != 'pull_request'
+        run: docker push "${IMAGE_WEB}:${GITHUB_SHA}"
+
+  update-gitops-staging:
+    needs: [build-scan-push]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # GITOPS_TOKEN is a PAT with `contents: write` on Ammen1/flip-star.
+      # GITHUB_TOKEN cannot be used: its scope stops at this repository, and
+      # the manifests live in another one.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GITOPS_REPO }}
+          ref: ${{ env.GITOPS_BRANCH }}
+          token: ${{ secrets.GITOPS_TOKEN }}
+
+      - name: Install kustomize
+        # Into RUNNER_TEMP, not /usr/local/bin: the runner image ships its own
+        # kustomize there and upstream's installer refuses to overwrite it,
+        # exiting 1. Prepending to PATH also guarantees the pinned version runs
+        # rather than the runner's bundled copy.
+        run: |
+          mkdir -p "${RUNNER_TEMP}/bin"
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- "${KUSTOMIZE_VERSION}" "${RUNNER_TEMP}/bin"
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+
+      - name: Set web image tag in the staging overlay
+        working-directory: k8s/overlays/staging
+        env:
+          SHA: ${{ needs.build-scan-push.outputs.image-tag }}
+        run: kustomize edit set image "${IMAGE_WEB}=${IMAGE_WEB}:${SHA}"
+
+      - name: Commit and push
+        env:
+          SHA: ${{ needs.build-scan-push.outputs.image-tag }}
+        run: |
+          git config user.name "flipstar-ci-bot"
+          git config user.email "ci-bot@users.noreply.github.com"
+          git add k8s/overlays/staging/kustomization.yaml
+          if git diff --cached --quiet; then
+            echo "No change -- web image tag already at ${SHA}."
+          else
+            git commit -m "chore(gitops): deploy web ${SHA} to staging"
+            git push origin "${GITOPS_BRANCH}"
+          fi
