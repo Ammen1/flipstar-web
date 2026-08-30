@@ -5,6 +5,13 @@
 # watches. This workflow therefore ends by pushing a one-line image-tag change
 # to that repo, which is what actually triggers the deploy. That cross-repo
 # push is the only reason a PAT is needed; everything else uses GITHUB_TOKEN.
+#
+# DELIBERATELY USES ONLY actions/checkout.
+# Everything docker/build-push-action, docker/login-action,
+# docker/setup-buildx-action and aquasecurity/trivy-action would do is a few
+# shell commands against tools ubuntu-latest already ships. Keeping the
+# dependency surface at one first-party action means no Actions allow-list,
+# no third-party tag moving under us, and nothing to audit but this file.
 name: web-ci-cd
 
 on:
@@ -24,11 +31,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_WEB: ghcr.io/skykin-technologies/flipstar-web
+  IMAGE_WEB: ghcr.io/ammen1/flipstar-web
   GITOPS_REPO: Ammen1/flip-star
   GITOPS_BRANCH: main
   KUSTOMIZE_VERSION: "5.4.3"
+  TRIVY_VERSION: "v0.56.2"
   # Buildx otherwise uploads a build record to the Actions artifact store on
   # every run. Actions artifacts and Packages share ONE storage quota, and
   # exhausting it fails the run with "Artifact storage quota has been hit" --
@@ -43,55 +50,47 @@ jobs:
       contents: read
       packages: write
     outputs:
-      image-tag: ${{ steps.meta.outputs.sha }}
+      image-tag: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
 
-      - id: meta
-        run: echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-
-      - uses: docker/setup-buildx-action@v3
-
-      # Built with load, NOT push. The image has to exist locally so Trivy can
-      # scan the exact artifact that will be published -- scanning after the
-      # push would mean a vulnerable image is already in the registry and
-      # pullable, which defeats the gate.
+      # Built locally, NOT pushed. The image has to exist on the runner so
+      # Trivy can scan the exact artifact that will be published -- scanning
+      # after the push would mean a vulnerable image is already in the registry
+      # and pullable, which defeats the gate.
       - name: Build image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          load: true
-          push: false
-          tags: ${{ env.IMAGE_WEB }}:${{ github.sha }}
-          build-args: |
-            VITE_API_BASE_URL=https://api.uat.flipstar.et/api/v1
-            VITE_ENVIRONMENT=staging
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+        run: |
+          docker build \
+            --build-arg VITE_API_BASE_URL=https://api.uat.flipstar.et/api/v1 \
+            --build-arg VITE_ENVIRONMENT=staging \
+            --tag "${IMAGE_WEB}:${GITHUB_SHA}" \
+            .
 
-      # No continue-on-error. A CRITICAL or HIGH finding fails the job, and
-      # every step below it -- including the push and the GitOps bump -- is
-      # skipped. If the base image carries an unfixable finding, raise the
-      # nginx/node tag in the Dockerfile; do not relax this gate.
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b /usr/local/bin "${TRIVY_VERSION}"
+          trivy --version
+
+      # No continue-on-error, and no `|| true`. A CRITICAL or HIGH finding
+      # fails the step, and every step below it -- including the push and the
+      # whole GitOps job -- is skipped. If a base image carries an unfixable
+      # finding, raise the nginx/node tag in the Dockerfile; do not relax this.
       - name: Scan image (Trivy)
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: ${{ env.IMAGE_WEB }}:${{ github.sha }}
-          format: table
-          exit-code: "1"
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          vuln-type: os,library
+        run: |
+          trivy image \
+            --exit-code 1 \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --scanners vuln \
+            --no-progress \
+            "${IMAGE_WEB}:${GITHUB_SHA}"
 
       # Everything below runs only on a real push -- a pull_request build is
       # verified and thrown away, never published.
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
 
       - name: Push image
         if: github.event_name != 'pull_request'
@@ -103,9 +102,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # GITOPS_TOKEN is a PAT with `contents: write` on Ammen1/flip-star.
-      # GITHUB_TOKEN cannot be used: its scope stops at this repository, and
-      # the manifests live in another one.
+      # GITOPS_TOKEN is a fine-grained PAT owned by Ammen1, scoped to
+      # Ammen1/flip-star with Contents: read and write. GITHUB_TOKEN cannot be
+      # used: its scope stops at this repository, and the manifests live in
+      # another one owned by a different account entirely.
       - uses: actions/checkout@v4
         with:
           repository: ${{ env.GITOPS_REPO }}
@@ -119,7 +119,8 @@ jobs:
         # rather than the runner's bundled copy.
         run: |
           mkdir -p "${RUNNER_TEMP}/bin"
-          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- "${KUSTOMIZE_VERSION}" "${RUNNER_TEMP}/bin"
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" \
+            | bash -s -- "${KUSTOMIZE_VERSION}" "${RUNNER_TEMP}/bin"
           echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
 
       - name: Set web image tag in the staging overlay
