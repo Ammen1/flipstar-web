@@ -6,7 +6,7 @@ import {
   Play, Pause, RotateCw, RefreshCw, Camera, Mic, MicOff, Sparkles, Palette, 
   ChevronDown, ChevronLeft, ChevronRight, Check, AlertCircle, Trash2,
   Zap, ZapOff, Square, FileText, Eye, Bookmark, Share2, ArrowLeft, Heart, Coins,
-  Sliders
+  Sliders, Crown
 } from 'lucide-react';
 import api from '../../api';
 import config from '../../config';
@@ -75,6 +75,11 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
 
   // File
   const [selectedFile, setSelectedFile] = useState(null);
+  // Shown instead of navigating away, so the video, caption, hashtags and
+  // overlays all stay exactly where the user left them.
+  const [showSubscriptionModal, setShowSubscriptionModal] = useState(false);
+  const [savingDraftForSub, setSavingDraftForSub] = useState(false);
+  const [subDraftError, setSubDraftError] = useState('');
   const [preview, setPreview] = useState(null);
   const [isVideoFile, setIsVideoFile] = useState(false);
 
@@ -1124,7 +1129,11 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
   };
 
   // ── Draft helpers ─────────────────────────────────────────────────────
-  const saveDraft = async () => {
+  // Returns true only when the draft reached the server. The subscription
+  // prompt relies on that answer: navigating away on a failed save would
+  // destroy the very video this flow exists to protect.
+  // `silent` suppresses the toast/modal so the caller can own the messaging.
+  const saveDraft = async ({ silent = false } = {}) => {
     try {
       const formData = new FormData();
       if (isVideoFile && selectedFile) {
@@ -1153,12 +1162,18 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
 
       // Refresh drafts list
       loadDrafts();
-      setSuccessMsg('Draft saved!');
-      setTimeout(() => { setSuccessMsg(''); }, 1200);
+      if (!silent) {
+        setSuccessMsg('Draft saved!');
+        setTimeout(() => { setSuccessMsg(''); }, 1200);
+      }
+      return true;
     } catch (err) {
       console.error('[DRAFT] Failed to save:', err);
-      setErrorMessage('Failed to save draft. Please try again.');
-      setShowErrorModal(true);
+      if (!silent) {
+        setErrorMessage('Failed to save draft. Please try again.');
+        setShowErrorModal(true);
+      }
+      return false;
     }
   };
 
@@ -1317,10 +1332,16 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
   const handlePost = async () => {
     if (!preview || isUploading) return;
 
-    // Block non-subscribers from posting
-    const hasSubscription = subscriptionStatus?.has_subscription;
-    if (!hasSubscription) {
-      onShowSubscription?.();
+    // Subscriber-only. This used to call onShowSubscription() straight
+    // away, which navigated off the page and threw away the recording,
+    // the caption and everything else the user had entered. Ask instead,
+    // and leave the draft untouched.
+    //
+    // `false` means we know they are not subscribed. `undefined`/`null`
+    // means the status request has not answered (or failed) -- that is not
+    // a refusal, so let it through and let the backend be the authority.
+    if (subscriptionStatus && subscriptionStatus.has_subscription === false) {
+      setShowSubscriptionModal(true);
       return;
     }
 
@@ -1419,6 +1440,15 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
       }).catch(err => {
         console.error('[POST] Upload error:', err);
         setIsUploading(false);
+
+        // The backend is the final authority: the subscription can lapse
+        // between opening this page and pressing Publish. Branch on the code,
+        // not the prose, and keep the draft exactly as it is -- no generic
+        // "something went wrong", no navigation.
+        if (err?.code === 'SUBSCRIPTION_REQUIRED') {
+          setShowSubscriptionModal(true);
+          return null;
+        }
 
         // Check if error is due to insufficient coins
         if (err?.error && err.error.includes('Insufficient') || err?.required_coins) {
@@ -2680,6 +2710,126 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
       )}
 
       {/* ── ERROR MODAL ─────────────────────────────────────────────────────── */}
+      {/* Subscription required.
+          Rendered over the post page rather than replacing it: the component
+          stays mounted, so the video, caption, hashtags, overlays and chosen
+          filter are all still there when the user dismisses it. */}
+      {showSubscriptionModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="ep-sub-title"
+          onClick={(e) => { if (e.target === e.currentTarget && !savingDraftForSub) { setSubDraftError(''); setShowSubscriptionModal(false); } }}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.82)', zIndex: 10000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 16, animation: 'ep-fade-in 0.25s ease',
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%', maxWidth: 380, boxSizing: 'border-box',
+              background: T.card || '#1A1A1A',
+              border: `1px solid ${T.border || '#262626'}`,
+              borderRadius: 20, padding: '26px 22px 22px',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14,
+              boxShadow: '0 24px 60px rgba(0,0,0,0.6)',
+            }}
+          >
+            <div style={{
+              width: 62, height: 62, borderRadius: '50%', flexShrink: 0,
+              background: 'linear-gradient(135deg, #8fc441, #6ba835)',
+              display: 'grid', placeItems: 'center',
+            }}>
+              <Crown size={30} color="#0B1207" strokeWidth={2.5} />
+            </div>
+
+            <div id="ep-sub-title" style={{
+              fontSize: 19, fontWeight: 800, color: T.white || '#fff', textAlign: 'center',
+            }}>
+              Subscription Required
+            </div>
+
+            <div style={{
+              fontSize: 14.5, lineHeight: 1.5, color: T.sub || '#8A8A8A',
+              textAlign: 'center', maxWidth: 300,
+            }}>
+              Your subscription is not active. Activate it to post
+              {isVideoFile ? ' this video' : ' this post'} — your
+              {isVideoFile ? ' recording' : ' photo'} and caption are saved.
+            </div>
+
+            {subDraftError && (
+              <div role="alert" style={{
+                width: '100%', boxSizing: 'border-box',
+                background: 'rgba(239,68,68,0.12)',
+                border: '1px solid rgba(239,68,68,0.35)',
+                borderRadius: 12, padding: '10px 12px',
+                fontSize: 13.5, lineHeight: 1.45, color: '#FCA5A5', textAlign: 'center',
+              }}>
+                {subDraftError}
+              </div>
+            )}
+
+            <button
+              type="button"
+              disabled={savingDraftForSub}
+              onClick={async () => {
+                // Navigating unmounts this page, and the selected file lives
+                // only in memory. Save the draft through the existing /drafts/
+                // endpoint first so the video survives the round trip, then go.
+                setSavingDraftForSub(true);
+                setSubDraftError('');
+                let saved = false;
+                try {
+                  saved = await saveDraft({ silent: true });
+                } catch (err) {
+                  console.error('[POST] Could not save draft before subscribing:', err);
+                }
+                setSavingDraftForSub(false);
+
+                if (!saved) {
+                  // Stay put. Leaving now would take the video with it.
+                  setSubDraftError(
+                    "We couldn't save your video as a draft, so we've kept you here. " +
+                    'Check your connection and try again.'
+                  );
+                  return;
+                }
+                setShowSubscriptionModal(false);
+                onShowSubscription?.();
+              }}
+              style={{
+                width: '100%', minHeight: 50, marginTop: 4,
+                background: savingDraftForSub ? 'rgba(143,196,65,0.5)' : '#8fc441',
+                color: '#0B1207', border: 'none', borderRadius: 14,
+                fontSize: 15.5, fontWeight: 800,
+                cursor: savingDraftForSub ? 'wait' : 'pointer',
+                WebkitTapHighlightColor: 'transparent',
+              }}
+            >
+              {savingDraftForSub ? 'Saving your video…' : 'Activate Subscription'}
+            </button>
+
+            <button
+              type="button"
+              disabled={savingDraftForSub}
+              onClick={() => { setSubDraftError(''); setShowSubscriptionModal(false); }}
+              style={{
+                width: '100%', minHeight: 46,
+                background: 'transparent', color: T.white || '#fff',
+                border: 'none', borderRadius: 14,
+                fontSize: 14.5, fontWeight: 600, cursor: 'pointer',
+                WebkitTapHighlightColor: 'transparent',
+              }}
+            >
+              Continue Editing
+            </button>
+          </div>
+        </div>
+      )}
+
       {showErrorModal && (
         <div 
           onClick={(e) => {
