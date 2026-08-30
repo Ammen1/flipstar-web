@@ -119,7 +119,7 @@ export function FollowersListPage({ user, userId, type = "followers", onBack, on
         gap: 16,
         zIndex: 10,
       }}>
-        <button
+        <button aria-label="Go back"
           onClick={onBack}
           style={{
             background: "none",

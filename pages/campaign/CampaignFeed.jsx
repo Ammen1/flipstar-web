@@ -414,7 +414,7 @@ const PostCard = ({ post, rank, onVote, campaignType, isVotingOpen }) => {
           <Heart size={16} fill={userLiked ? T.red : 'none'} color={userLiked ? T.red : T.sub} />
           {likes === 0 ? 1 : likes}
         </button>
-        <button style={{
+        <button aria-label="Comments" style={{
           display: 'flex', alignItems: 'center', gap: 6,
           background: 'transparent', border: 'none', cursor: 'default',
           fontSize: 14, fontWeight: 600, color: T.sub,

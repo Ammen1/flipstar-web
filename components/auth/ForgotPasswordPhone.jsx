@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Phone, Lock, Eye, EyeOff, Loader, X, ChevronLeft, MessageSquare } from "lucide-react";
 import api from "../../api";
 import { useLegacyT } from "../../contexts/ThemeContext";
+import { sanitizePhoneInput, toE164, PHONE_MAX_DIGITS, INVALID_PHONE_MESSAGE } from '../../utils/phone';
 
 const GOLD = "linear-gradient(to bottom, #8fc441 0%, #b8d97a 50%, #6fa32e 100%)";
 
@@ -44,14 +45,13 @@ export function ForgotPasswordPhone({ onClose, onSuccess }) {
 
   const sendCode = async () => {
     setError(""); setMsg(""); setDevCode("");
-    if (!phone) { setError("Enter your phone number"); return; }
-    const cleanPhone = phone.replace(/[^\d]/g, '');
-    if (cleanPhone.length === 0) { setError("Phone number must contain only numbers"); return; }
-    if (cleanPhone.length !== 10) { setError("Phone number must be exactly 10 digits"); return; }
-    if (!/^\d+$/.test(phone)) { setError("Phone number must contain only numbers"); return; }
+    // The field holds the nine-digit subscriber number; +251 is a fixed
+    // prefix added on submit. The old rule here demanded ten digits, which
+    // this field can no longer contain.
+    if (!toE164(phone)) { setError(INVALID_PHONE_MESSAGE); return; }
     setLoading(true);
     try {
-      const res = await api.forgotPasswordPhoneRequest(phone);
+      const res = await api.forgotPasswordPhoneRequest(toE164(phone));
       const data = res.data || res;
       setMsg("Reset code sent via SMS!");
       if (data.dev_code) {
@@ -71,7 +71,7 @@ export function ForgotPasswordPhone({ onClose, onSuccess }) {
     setError(""); setMsg(""); setDevCode("");
     setLoading(true);
     try {
-      const res = await api.forgotPasswordPhoneRequest(phone);
+      const res = await api.forgotPasswordPhoneRequest(toE164(phone));
       const data = res.data || res;
       setMsg("A new reset code has been sent via SMS!");
       if (data.dev_code) {
@@ -92,7 +92,7 @@ export function ForgotPasswordPhone({ onClose, onSuccess }) {
     if (pwd !== confirm) { setError("PINs do not match"); return; }
     setLoading(true);
     try {
-      await api.forgotPasswordPhoneVerify(phone, code, pwd);
+      await api.forgotPasswordPhoneVerify(toE164(phone), code, pwd);
       setStep(3);
     } catch (e) {
       const err = e?.response?.data?.error || e?.message || "Invalid or expired code";
@@ -116,13 +116,16 @@ export function ForgotPasswordPhone({ onClose, onSuccess }) {
           <>
             <div style={{ fontSize: 13, color: "#aaa", marginBottom: 16 }}>Enter your registered phone number. A 6-digit reset code will be sent via SMS.</div>
             <div style={{ position: "relative", marginBottom: 16 }}>
-              <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#b8d97a", display: "flex" }}><Phone size={17} /></div>
+              <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", display: "flex", alignItems: "center", gap: 6, pointerEvents: "none", color: "#b8d97a" }}><Phone size={17} /><span style={{ fontSize: 14, fontWeight: 700, letterSpacing: 0.2 }}>+251</span></div>
               <input
                 type="tel"
-                placeholder="09XXXXXXXX or +251XXXXXXXXX"
+                placeholder="9XXXXXXXX"
                 value={phone}
-                onChange={e => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
-                style={inp(focusPhone)}
+                onChange={e => setPhone(sanitizePhoneInput(e.target.value))}
+                inputMode="numeric"
+                maxLength={PHONE_MAX_DIGITS}
+                aria-label="Ethiopian phone number without country code"
+                style={{ ...inp(focusPhone), paddingLeft: 74 }}
                 onFocus={() => setFocusPhone(true)}
                 onBlur={() => setFocusPhone(false)}
                 onKeyDown={e => e.key === "Enter" && sendCode()}
@@ -164,7 +167,7 @@ export function ForgotPasswordPhone({ onClose, onSuccess }) {
                 onFocus={() => setFocusPwd(true)}
                 onBlur={() => setFocusPwd(false)}
               />
-              <button type="button" onClick={() => setShowPwd(v => !v)} style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#b8d97a" }}>{showPwd ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+              <button aria-label="Toggle password visibility" type="button" onClick={() => setShowPwd(v => !v)} style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#b8d97a" }}>{showPwd ? <EyeOff size={16} /> : <Eye size={16} />}</button>
             </div>
             <div style={{ position: "relative", marginBottom: 16 }}>
               <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#b8d97a", display: "flex" }}><Lock size={17} /></div>

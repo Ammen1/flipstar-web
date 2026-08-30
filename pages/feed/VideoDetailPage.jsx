@@ -3,6 +3,7 @@ import { ChevronLeft, Heart, MessageCircle, Share2, Bookmark, MoreVertical, Volu
 import api from '../../api';
 import config from '../../config';
 import { useLegacyT } from '../../contexts/ThemeContext';
+import { isVideoUrl } from '../../utils/media';
 
 export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscriptionStatus, onShowSubscription }) {
   const T = useLegacyT();
@@ -262,7 +263,7 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
 
   const mediaUrl = reel.media || reel.image;
   const fullUrl = mediaUrl?.startsWith('http') ? mediaUrl : `${config.API_BASE_URL.replace('/api', '')}${mediaUrl}`;
-  const isVideo = (reel.media || '').match(/\.(mp4|webm|ogg|mov)$/i) || (reel.media || '').includes('video');
+  const isVideo = isVideoUrl(reel.media);
 
   return (
     <div style={{
@@ -276,7 +277,7 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
         gap: 12, background: 'rgba(0,0,0,0.5)', position: 'absolute',
         top: 0, left: 0, right: 0, zIndex: 10,
       }}>
-        <button
+        <button aria-label="Go back"
           onClick={onBack}
           style={{
             background: 'none', border: 'none', cursor: 'pointer',
@@ -340,7 +341,7 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
         }}>
           {isVideo && (
             <div style={{ textAlign: 'center' }}>
-              <button
+              <button aria-label="Toggle sound"
                 onClick={handleAudioToggle}
                 style={{
                   background: 'none', border: 'none', cursor: 'pointer',
@@ -357,7 +358,7 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
           )}
 
           <div style={{ textAlign: 'center' }}>
-            <button
+            <button aria-label="Like"
               onClick={handleLike}
               style={{
                 background: 'none', border: 'none', cursor: 'pointer',
@@ -393,7 +394,7 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
           </div>
 
           <div style={{ textAlign: 'center' }}>
-            <button
+            <button aria-label="Save"
               onClick={handleSave}
               style={{
                 background: 'none', border: 'none', cursor: 'pointer',
@@ -409,7 +410,7 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
           </div>
 
           <div style={{ textAlign: 'center' }}>
-            <button
+            <button aria-label="Share"
               onClick={handleShare}
               style={{
                 background: 'none', border: 'none', cursor: 'pointer',

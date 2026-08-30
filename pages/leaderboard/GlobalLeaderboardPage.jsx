@@ -120,7 +120,59 @@ const PERIODS = [
   { id: 'grand',   label: 'Grand Final', icon: Crown },
 ];
 
-export function GlobalLeaderboardPage({ onBack }) {
+// Bottom nav is 60px tall (AppShell), so the last row must clear it plus the
+// device safe area. Everything is scoped under .glb-page so no other page is
+// affected — the app ships no global box-sizing reset, hence the local one.
+const GLB_CSS = (T) => `
+  .glb-page{
+    min-height:100vh; min-height:100dvh;
+    width:100%; overflow-x:hidden;
+    display:flex; flex-direction:column;
+  }
+  .glb-page, .glb-page *, .glb-page *::before, .glb-page *::after{ box-sizing:border-box; }
+
+  .glb-inner{ width:100%; max-width:760px; margin:0 auto; padding-left:12px; padding-right:12px; }
+  .glb-head{ position:sticky; top:0; z-index:10; padding:10px 0 8px; }
+  .glb-body{ flex:1 1 auto; padding-top:12px;
+    padding-bottom:calc(60px + 24px + env(safe-area-inset-bottom, 0px)); }
+
+  /* Tabs scroll inside their own bar; the page never scrolls sideways. */
+  .glb-tabs{ width:100%; overflow-x:auto; overflow-y:hidden;
+    -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+  .glb-tabs::-webkit-scrollbar{ display:none; }
+  .glb-tablist{ display:flex; gap:6px; min-width:100%; }
+  .glb-tab{
+    flex:1 0 auto; display:inline-flex; align-items:center; justify-content:center; gap:5px;
+    min-height:38px; padding:8px 12px; border-radius:10px; border:none; cursor:pointer;
+    background:${BRAND}15; color:${T.sub}; font-size:12px; font-weight:700;
+    white-space:nowrap; -webkit-tap-highlight-color:transparent;
+    transition:background .18s ease, color .18s ease;
+  }
+  .glb-tab.is-active{ background:${BRAND}; color:#000; box-shadow:0 4px 12px ${BRAND}40; }
+  .glb-tab:focus-visible{ outline:2px solid ${BRAND}; outline-offset:2px; }
+
+  /* Date navigation */
+  .glb-date{ display:flex; align-items:center; gap:8px; margin-top:10px;
+    padding:6px; border-radius:10px; border:1px solid ${T.border}; }
+  .glb-date-btn{
+    flex:0 0 auto; min-width:44px; min-height:44px; display:inline-flex;
+    align-items:center; justify-content:center; border:none; border-radius:8px;
+    font-size:16px; font-weight:700; cursor:pointer;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .glb-date-label{
+    flex:1 1 auto; min-width:0; text-align:center; font-size:14px; font-weight:700;
+    color:${T.txt}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+
+  @media (min-width:768px){
+    .glb-inner{ padding-left:20px; padding-right:20px; }
+    .glb-tab{ font-size:13px; }
+  }
+  @media (prefers-reduced-motion: reduce){ .glb-tab{ transition:none; } }
+`;
+
+export function GlobalLeaderboardPage({ onBack, onShowProfile }) {
   const { colors: T } = useTheme();
   const [period, setPeriod] = useState('daily');
   const [selectedDate, setSelectedDate] = useState(getTodayStr());
@@ -148,16 +200,16 @@ export function GlobalLeaderboardPage({ onBack }) {
   const campaigns = data?.campaigns || [];
 
   return (
-    <div style={{ minHeight: '100vh', background: T.bg, color: T.txt }}>
+    <div className="glb-page" style={{ background: T.bg, color: T.txt }}>
+      <style>{GLB_CSS(T)}</style>
       {/* Header */}
-      <div style={{
-        position: 'sticky', top: 0, zIndex: 10,
+      <div className="glb-head" style={{
         background: T.bg, borderBottom: `1px solid ${T.border}`,
-        padding: '10px 12px 8px',
       }}>
+        <div className="glb-inner">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
           {onBack && (
-            <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.txt, padding: 2, display: 'flex' }}>
+            <button aria-label="Go back" onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.txt, padding: 2, display: 'flex' }}>
               <ChevronLeft size={20} strokeWidth={2.5} />
             </button>
           )}
@@ -178,58 +230,43 @@ export function GlobalLeaderboardPage({ onBack }) {
         </div>
 
         {/* Period tabs */}
-        <div style={{ display: 'flex', gap: 4 }}>
-          {PERIODS.map(p => {
-            const Icon = p.icon;
-            const active = period === p.id;
-            return (
-              <button key={p.id} onClick={() => setPeriod(p.id)} style={{
-                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3,
-                padding: '6px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
-                background: active ? BRAND : `${BRAND}15`,
-                color: active ? '#000' : T.sub,
-                fontSize: 10, fontWeight: 700,
-                boxShadow: active ? `0 4px 12px ${BRAND}40` : 'none',
-                whiteSpace: 'nowrap',
-              }}>
-                <Icon size={11} /> {p.label}
-              </button>
-            );
-          })}
+        <div className="glb-tabs">
+          <div className="glb-tablist" role="tablist">
+            {PERIODS.map(p => {
+              const Icon = p.icon;
+              const active = period === p.id;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setPeriod(p.id)}
+                  className={active ? 'glb-tab is-active' : 'glb-tab'}
+                >
+                  <Icon size={13} /> {p.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Date picker for daily */}
         {period === 'daily' && (
-          <div style={{
-            marginTop: 10,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '8px 12px',
-            borderRadius: 8,
-            border: `1px solid ${T.border}`,
-            background: T.bg,
-          }}>
+          <div className="glb-date" style={{ background: T.bg }}>
             <button
               onClick={() => {
                 const d = new Date(selectedDate);
                 d.setDate(d.getDate() - 1);
                 setSelectedDate(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`);
               }}
-              style={{
-                padding: '6px 12px',
-                background: `${BRAND}20`,
-                border: 'none',
-                borderRadius: 6,
-                color: BRAND,
-                cursor: 'pointer',
-                fontSize: 14,
-                fontWeight: 600,
-              }}
+              className="glb-date-btn"
+              aria-label="Previous day"
+              style={{ background: `${BRAND}20`, color: BRAND }}
             >
               ←
             </button>
-            <div style={{ flex: 1, textAlign: 'center', fontSize: 14, fontWeight: 600, color: T.txt }}>
+            <div className="glb-date-label">
               {new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
             </div>
             <button
@@ -242,25 +279,23 @@ export function GlobalLeaderboardPage({ onBack }) {
                 }
               }}
               disabled={selectedDate >= getTodayStr()}
+              className="glb-date-btn"
+              aria-label="Next day"
               style={{
-                padding: '6px 12px',
                 background: selectedDate >= getTodayStr() ? `${T.border}30` : `${BRAND}20`,
-                border: 'none',
-                borderRadius: 6,
                 color: selectedDate >= getTodayStr() ? T.sub : BRAND,
                 cursor: selectedDate >= getTodayStr() ? 'not-allowed' : 'pointer',
-                fontSize: 14,
-                fontWeight: 600,
               }}
             >
               →
             </button>
           </div>
         )}
+        </div>
       </div>
 
       {/* Content */}
-      <div style={{ padding: '12px 10px 80px' }}>
+      <div className="glb-inner glb-body">
         {loading ? (
           <div style={{ textAlign: 'center', padding: 60, color: T.sub }}>Loading...</div>
         ) : period === 'daily' ? (

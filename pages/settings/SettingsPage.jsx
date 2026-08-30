@@ -534,7 +534,7 @@ export function SettingsPage({ user, onClose, onLogout, onShowWallet, onShowSubs
           padding: '12px 16px', background: T.cardBg,
           borderBottom: `1px solid ${T.border}`, flexShrink: 0,
         }}>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', color: T.txt }}>
+          <button aria-label="Go back" onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', color: T.txt }}>
             <ChevronLeft size={26} />
           </button>
           <div style={{ fontSize: 17, fontWeight: 700, color: T.txt }}>{t('settings')}</div>
@@ -754,44 +754,74 @@ export function SettingsPage({ user, onClose, onLogout, onShowWallet, onShowSubs
     );
   }
 
+// Settings is routed at /settings, so it is a page — it used to render as a
+// fixed, scrimmed modal centred over the app, which is why it floated in the
+// middle of the main area with a hardcoded `left: 260` to dodge the global
+// sidebar. Scoped under .stg-page; the app has no global box-sizing reset.
+const STG_CSS = (T) => `
+  .stg-page{
+    width:100%; min-height:100vh; min-height:100dvh;
+    overflow-x:hidden; padding:24px;
+    background:${T.bg};
+  }
+  .stg-page, .stg-page *, .stg-page *::before, .stg-page *::after{ box-sizing:border-box; }
+
+  .stg-shell{
+    width:100%; max-width:1100px; margin:0 auto;
+    display:flex; align-items:stretch;
+    min-height:calc(100dvh - 48px);
+    background:${T.cardBg};
+    border:1px solid ${T.border};
+    border-radius:18px; overflow:hidden;
+    box-shadow:0 18px 44px rgba(0,0,0,.32);
+  }
+
+  .stg-side{
+    flex:0 0 268px; width:268px; min-width:0;
+    display:flex; flex-direction:column;
+    background:${T.bg}; border-right:1px solid ${T.border};
+  }
+
+  /* min-width:0 is the fix for the horizontal scrollbar: without it this flex
+     item defaults to min-width:auto and its widest child (the inputs) pushes
+     the whole card past its own bounds. */
+  .stg-main{
+    flex:1 1 auto; min-width:0;
+    overflow-y:auto; overflow-x:hidden;
+    padding:28px 32px 40px;
+  }
+  .stg-main input, .stg-main select, .stg-main textarea{ max-width:100%; }
+
+  /* A flex child defaults to min-height:auto, so this list would not shrink
+     below its content and pushed the logout button past the clipped edge. */
+  .stg-nav{ flex:1 1 auto; min-height:0; overflow-y:auto; padding:12px 0; }
+  .stg-foot{ flex:0 0 auto; }
+
+  /* Tablet and below: stack, so neither column is squeezed. */
+  @media (max-width:900px){
+    .stg-page{ padding:0; }
+    .stg-shell{
+      flex-direction:column; max-width:none;
+      border:none; border-radius:0; box-shadow:none;
+      min-height:100dvh;
+    }
+    .stg-side{
+      flex:0 0 auto; width:100%;
+      border-right:none; border-bottom:1px solid ${T.border};
+    }
+    .stg-main{
+      padding:20px 16px calc(60px + 24px + env(safe-area-inset-bottom, 0px));
+    }
+  }
+`;
+
   // ─── DESKTOP UI ──────────────────────────────────────────────────────────────
   return (
-    <div style={{
-      position: "fixed",
-      top: 0,
-      left: isDesktop ? 260 : 0,
-      right: 0,
-      bottom: 0,
-      background: "rgba(0,0,0,0.7)",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      zIndex: 4000,
-    }}
-    onClick={onClose}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: isMobile ? "100%" : "100%",
-          maxWidth: isMobile ? "100%" : 900,
-          height: isMobile ? "100vh" : "auto",
-          maxHeight: isMobile ? "100vh" : "90vh",
-          background: T.cardBg,
-          borderRadius: isMobile ? 0 : 20,
-          display: "flex",
-          overflow: "hidden",
-        }}
-      >
+    <div className="stg-page">
+      <style>{STG_CSS(T)}</style>
+      <div className="stg-shell">
         {/* Sidebar */}
-        <div style={{
-          width: isSmallMobile ? 60 : (isMobile ? 80 : 280),
-          background: T.bg,
-          borderRight: `1px solid ${T.border}`,
-          display: "flex",
-          flexDirection: "column",
-          flexShrink: 0,
-        }}>
+        <div className="stg-side">
           <div style={{
             padding: isSmallMobile ? "12px 4px" : (isMobile ? "16px 8px" : "20px"),
             borderBottom: `1px solid ${T.border}`,
@@ -815,7 +845,7 @@ export function SettingsPage({ user, onClose, onLogout, onShowWallet, onShowSubs
             </button>
           </div>
 
-          <div style={{ flex: 1, overflowY: "auto", padding: isSmallMobile ? "8px 0" : "12px 0" }}>
+          <div className="stg-nav">
             {sections.map(section => {
               const Icon = section.icon;
               const isActive = activeSection === section.id;
@@ -862,7 +892,7 @@ export function SettingsPage({ user, onClose, onLogout, onShowWallet, onShowSubs
             })}
           </div>
 
-          <div style={{ padding: isSmallMobile ? 6 : (isMobile ? 8 : 20), borderTop: `1px solid ${T.border}`, paddingBottom: isSmallMobile ? 12 : (isMobile ? 16 : 20) }}>
+          <div className="stg-foot" style={{ padding: 16, borderTop: `1px solid ${T.border}` }}>
             <button
               onClick={onLogout}
               style={{
@@ -890,7 +920,7 @@ export function SettingsPage({ user, onClose, onLogout, onShowWallet, onShowSubs
         </div>
 
         {/* Content */}
-        <div style={{ flex: 1, overflowY: "auto", padding: isSmallMobile ? 16 : (isMobile ? 24 : 32) }}>
+        <div className="stg-main">
           {activeSection === "account" && (
             <div>
               <h2 style={{ fontSize: isSmallMobile ? 18 : 24, fontWeight: 700, marginBottom: 8, color: T.txt }}>{t('accountSettings')}</h2>

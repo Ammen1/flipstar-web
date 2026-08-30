@@ -118,12 +118,29 @@ function normalizeColors(raw) {
   // Legacy components reference T.dark for gradient endpoints — provide a sensible default
   // so gradients stay valid. Use a dark contrast color that works for both light & dark themes.
   const darkAccent = raw.dark || '#0C1A12';
+  // `card` and `mode` are read by 40+ call sites across the app (SearchBar,
+  // ProfilePage, the campaign pages, the leaderboards, EnhancedPostPage...).
+  // `useLegacyT` already mapped `card`, but `useTheme().colors` did not, so in
+  // every component that destructures `const { colors: T } = useTheme()` the
+  // value was undefined — those backgrounds rendered transparent, and any
+  // `T.mode === 'dark'` check silently took its light-theme branch. Deriving
+  // both here fixes every consumer at once instead of patching each file.
+  const bgHex = String(raw.bg || '#0D0D0D').trim().replace('#', '');
+  const isDark = (() => {
+    if (bgHex.length !== 6 || /[^0-9a-f]/i.test(bgHex)) return true;
+    const n = parseInt(bgHex, 16);
+    const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    return (0.299 * r + 0.587 * g + 0.114 * b) < 140;
+  })();
+
   return {
     ...raw,
     pri: solid,                                   // solid color — always safe
     priGradient: isGradient ? rawPri : null,      // gradient if present
     priFallback: solid,                           // backwards-compat alias
     dark: darkAccent,                             // legacy fallback for gradient endpoints
+    card: raw.card || raw.cardBg,                 // alias — many call sites use `card`
+    mode: raw.mode || (isDark ? 'dark' : 'light'),
   };
 }
 

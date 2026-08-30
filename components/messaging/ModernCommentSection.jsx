@@ -273,7 +273,11 @@ const CommentItem = ({ comment, T, user, onLike, onReply, onReport, replyTo, rep
   );
 };
 
-export function ModernCommentSection({ reelId, user, onClose, onCommentPosted, onShowProfile, onShowCoinPurchase, subscriptionStatus, onShowSubscription }) {
+// `variant`:
+//   'sheet' (default) — the full-screen bottom sheet used on mobile.
+//   'panel'           — a docked right-hand column, TikTok's desktop layout.
+// Only the two wrapper elements differ; all comment behaviour is shared.
+export function ModernCommentSection({ reelId, user, onClose, onCommentPosted, onShowProfile, onShowCoinPurchase, subscriptionStatus, onShowSubscription, variant = 'sheet' }) {
   const { colors: T } = useTheme();
   const { t } = useLanguage();
   const [comments, setComments] = useState([]);
@@ -528,8 +532,23 @@ export function ModernCommentSection({ reelId, user, onClose, onCommentPosted, o
   return (
     <>
       <div
-        className="modern-comment-overlay"
-        style={{
+        className={`modern-comment-overlay${variant === 'panel' ? ' is-panel' : ''}`}
+        style={variant === 'panel' ? {
+          // Docked column on the right; no scrim, so the video stays visible
+          // and clickable beside it.
+          position: "fixed",
+          top: 0,
+          right: 0,
+          bottom: 0,
+          left: "auto",
+          width: 400,
+          maxWidth: "38vw",
+          background: "transparent",
+          display: "flex",
+          alignItems: "stretch",
+          justifyContent: "flex-end",
+          zIndex: 4000,
+        } : {
           position: "fixed",
           top: 0,
           left: window.innerWidth <= 1024 ? 0 : 260,
@@ -541,19 +560,21 @@ export function ModernCommentSection({ reelId, user, onClose, onCommentPosted, o
           justifyContent: "center",
           zIndex: 4000,
         }}
-        onClick={onClose}
+        onClick={variant === 'panel' ? undefined : onClose}
       >
         <div
           className="modern-comment-modal"
           onClick={(e) => e.stopPropagation()}
           style={{
             width: "100%",
-            maxWidth: 600,
             background: T.cardBg || '#1A1A1A',
-            borderRadius: "20px 20px 0 0",
             display: "flex",
             flexDirection: "column",
             overflow: "hidden",
+            ...(variant === 'panel'
+              ? { maxWidth: "none", height: "100%", borderRadius: 0,
+                  borderLeft: `1px solid ${T.border || 'rgba(255,255,255,0.1)'}` }
+              : { maxWidth: 600, borderRadius: "20px 20px 0 0" }),
           }}
         >
         {/* Header */}

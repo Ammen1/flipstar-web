@@ -186,7 +186,7 @@ export function VideoCard({ video, onLike, onComment, onShare, onGift, currentUs
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', gap: 2 }}>
             {/* Like */}
-            <button
+            <button aria-label="Like"
               onClick={handleLike}
               style={{
                 background: 'none', border: 'none', cursor: 'pointer',
@@ -214,7 +214,7 @@ export function VideoCard({ video, onLike, onComment, onShare, onGift, currentUs
               <span style={{ fontSize: 11, color: '#fff', fontWeight: 600 }}>{video?.comments || 0}</span>
             </button>
             {/* Share */}
-            <button
+            <button aria-label="Share"
               onClick={handleShare}
               style={{
                 background: 'none', border: 'none', cursor: 'pointer',
@@ -226,7 +226,7 @@ export function VideoCard({ video, onLike, onComment, onShare, onGift, currentUs
               <span style={{ fontSize: 11, color: '#fff', fontWeight: 600 }}>{video?.shares || 0}</span>
             </button>
             {/* Gift */}
-            <button
+            <button aria-label="Send gift"
               onClick={onGift}
               style={{
                 background: 'none', border: 'none', cursor: 'pointer',
@@ -239,7 +239,7 @@ export function VideoCard({ video, onLike, onComment, onShare, onGift, currentUs
             </button>
           </div>
           {/* Save */}
-          <button
+          <button aria-label="Save"
             style={{
               background: 'none', border: 'none', cursor: 'pointer',
               padding: '4px 6px', borderRadius: 8,

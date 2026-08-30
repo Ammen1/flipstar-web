@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, startTransition, memo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, startTransition, memo } from 'react';
 import {
   MessageCircle,
   Share2,
@@ -40,6 +40,9 @@ import { useLanguage } from '../../contexts/LanguageContext';
 import realtimeService from '../../services/RealtimeService';
 import { InsufficientCoinsModal } from '../common/InsufficientCoinsModal';
 import './ReelLayout.css';
+import { isVideoUrl, hasVideoExtension } from '../../utils/media';
+import { DesktopReelViewer } from './DesktopReelViewer';
+import { dedupeById } from '../../utils/collections';
 const ShareIconFilled = ({ size = 26, color = '#fff', style = {} }) => (
   <Share2 size={size} color={color} style={style} />
 );
@@ -163,13 +166,20 @@ export const ReelLayout = memo(function ReelLayout({
   const [showReportModal, setShowReportModal] = useState(null);
   const [showBoostModal, setShowBoostModal] = useState(null);
   const [showComments, setShowComments] = useState(null);
+  // Desktop plays one clip at a time through the shared TikTok-style viewer.
+  const [viewerIndex, setViewerIndex] = useState(0);
   const [showGiftModal, setShowGiftModal] = useState(null);
   const [giftReelId, setGiftReelId] = useState(null);
   const [playingVideos, setPlayingVideos] = useState({});
   const [showPauseIcon, setShowPauseIcon] = useState({});
   const [manuallyPaused, setManuallyPaused] = useState({}); // Track user-paused videos
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 1024);
-  const [audioEnabled, setAudioEnabled] = useState(true);
+  // Starts false because autoplay is only permitted while muted, so the reel
+  // genuinely begins with no sound. Initialising this to true left the flag
+  // out of step with reality: the label read "On" over a muted clip and the
+  // first tap of the sound button only corrected the flag, appearing to do
+  // nothing.
+  const [audioEnabled, setAudioEnabled] = useState(false);
   const [likeAnimations, setLikeAnimations] = useState({});
   const [doubleTapLike, setDoubleTapLike] = useState({});
   const [alertModal, setAlertModal] = useState({
@@ -312,8 +322,7 @@ export const ReelLayout = memo(function ReelLayout({
               console.log('[ReelLayout] Filtered out (no media):', reel.id, reel.media);
               return false;
             }
-            const isVideoFile = /\.(mp4|webm|ogg|mov|avi|mkv)(\?|$)/i.test(reel.media) ||
-                                reel.media.includes('/video/upload/');
+            const isVideoFile = isVideoUrl(reel.media);
             if (!isVideoFile) {
               console.log('[ReelLayout] Filtered out (not video):', reel.id, reel.media);
             }
@@ -347,10 +356,7 @@ export const ReelLayout = memo(function ReelLayout({
           imageUrl: (() => {
             const url = reel.media || reel.image;
             if (!url) return null;
-            if (
-              url.includes('/video/upload/') &&
-              !url.match(/\.(mp4|webm|ogg|mov)(\?|$)/i)
-            ) {
+            if (url.includes('/video/upload/') && !hasVideoExtension(url)) {
               return url + '.mp4';
             }
             return url;
@@ -372,8 +378,7 @@ export const ReelLayout = memo(function ReelLayout({
       const filteredVideos = videosOnly
         ? formattedVideos.filter(v => {
             const url = v.imageUrl || '';
-            return url.match(/\.(mp4|webm|ogg|mov)(\?|$)/i) ||
-                   url.includes('/video/upload/');
+            return isVideoUrl(url);
           })
         : formattedVideos;
       
@@ -385,7 +390,11 @@ export const ReelLayout = memo(function ReelLayout({
         ? videosRef.current.find((video) => String(video.id) === targetVideoId)
         : null;
       const reorderedVideos = (() => {
-        const nextVideos = append ? [...videosRef.current, ...shuffledVideos] : shuffledVideos;
+        // Pages are not guaranteed disjoint and each batch is shuffled, so an
+        // append can re-add clips already on screen.
+        const nextVideos = append
+          ? dedupeById([...videosRef.current, ...shuffledVideos])
+          : dedupeById(shuffledVideos);
         if (!targetVideoId) return nextVideos;
 
         const targetVideo = existingTargetVideo || nextVideos.find((video) => String(video.id) === targetVideoId);
@@ -513,10 +522,7 @@ export const ReelLayout = memo(function ReelLayout({
             imageUrl: (() => {
               const url = reel.media || reel.image;
               if (!url) return null;
-              if (
-                url.includes('/video/upload/') &&
-                !url.match(/\.(mp4|webm|ogg|mov)(\?|$)/i)
-              ) {
+              if (url.includes('/video/upload/') && !hasVideoExtension(url)) {
                 return url + '.mp4';
               }
               return url;
@@ -857,14 +863,20 @@ export const ReelLayout = memo(function ReelLayout({
     );
   };
 
-  const toggleAudio = () => {
-    const next = !audioEnabled;
-    setAudioEnabled(next);
-    // Only unmute the currently active video — all others stay muted
-    Object.entries(videoRefs.current).forEach(([id, video]) => {
-      if (video) video.muted = id === activeVideoIdRef.current ? !next : true;
+  // Flip the flag only. `muted` is a controlled prop on the <video> and the
+  // effect below syncs every element, so React and the DOM can never disagree.
+  //
+  // The previous version inverted itself: `audioEnabled` starts true, so the
+  // first tap computed next=false and then set `muted = !next` — i.e. true —
+  // muting the video it was meant to unmute, with no way back.
+  const toggleAudio = () => setAudioEnabled((v) => !v);
+
+  useEffect(() => {
+    Object.entries(videoRefs.current).forEach(([id, el]) => {
+      if (!el) return;
+      el.muted = !(audioEnabled && String(id) === String(activeVideoIdRef.current));
     });
-  };
+  }, [audioEnabled, activeVideoId]);
 
   const handleDoubleTap = (videoId) => {
     if (!user) {
@@ -979,6 +991,21 @@ export const ReelLayout = memo(function ReelLayout({
       setShowPauseIcon((prev) => ({ ...prev, [videoId]: true }));
     }
   };
+
+  // ReelLayout keeps its own display shape; the shared viewer speaks the raw
+  // post shape, so translate rather than teaching the viewer two dialects.
+  const viewerPosts = useMemo(() => videos.map((v) => ({
+    id: v.id,
+    user: v.user,
+    media: v.imageUrl,
+    caption: v.caption,
+    votes: v.likes,
+    comment_count: v.comments,
+    shares_count: v.shares,
+    is_liked: v.liked,
+    is_saved: v.saved,
+    created_at: v.created_at,
+  })), [videos]);
 
   const handleLike = async (videoId) => {
     if (!user) {
@@ -1373,6 +1400,24 @@ export const ReelLayout = memo(function ReelLayout({
   };
 
   // Long-press handlers for Reel-style context menu (separate from 3-dots menu)
+  // Any control drawn over or around the video owns its gesture completely.
+  // Play/pause lives only on the <video> element, but the card still listens
+  // for long-press, so a control's touch must not reach it. Wrap a control's
+  // handler in this rather than relying on the card to guess what is
+  // interactive.
+  const controlTap = (fn) => (e) => {
+    e.stopPropagation();
+    fn?.(e);
+  };
+
+  // Same idea for the raw touch/pointer phases, spread onto a control or the
+  // container that holds a group of them.
+  const stopControlGestures = {
+    onTouchStart: (e) => e.stopPropagation(),
+    onTouchEnd: (e) => e.stopPropagation(),
+    onPointerDown: (e) => e.stopPropagation(),
+  };
+
   const handleLongPressStart = (videoId, e) => {
     longPressTimer.current = setTimeout(() => {
       setShowMenu(null); // Close dropdown menu if open
@@ -1808,16 +1853,36 @@ export const ReelLayout = memo(function ReelLayout({
               </p>
             </div>
           </div>
+        ) : !isMobile ? (
+          <DesktopReelViewer
+            posts={viewerPosts}
+            index={Math.min(viewerIndex, Math.max(0, viewerPosts.length - 1))}
+            onIndexChange={setViewerIndex}
+            currentUser={user}
+            T={T}
+            chromeHeight={64}
+            onOpenProfile={(id) => onShowProfile?.(id)}
+            commentsOpen={!!showComments}
+            onOpenComments={(p) => setShowComments((cur) => (cur === p.id ? null : p.id))}
+            onFollow={(id) => handleFollow(id)}
+          />
         ) : (
           <div
             className="video-list-container"
             style={{
               width: '100%',
               maxWidth: 600,
+              // The app ships no global box-sizing reset, so width:100% plus
+              // horizontal padding measured as content-box and pushed this
+              // container 20px past each screen edge — taking the absolutely
+              // positioned action rail off-screen with it.
+              boxSizing: 'border-box',
               display: 'flex',
               flexDirection: 'column',
-              gap: 20,
-              padding: '0 20px',
+              gap: isMobile ? 0 : 20,
+              // Reels are full-bleed on a phone; the padding is only for the
+              // narrow desktop card presentation.
+              padding: isMobile ? 0 : '0 20px',
             }}
           >
             {!mounted || loading ? (
@@ -1841,7 +1906,11 @@ export const ReelLayout = memo(function ReelLayout({
                       <div style={{ width: 180, height: 12, background: 'rgba(255,255,255,0.08)', borderRadius: 6, marginBottom: 6 }} />
                       <div style={{ width: 140, height: 12, background: 'rgba(255,255,255,0.05)', borderRadius: 6 }} />
                     </div>
-                    <div style={{ position: 'absolute', bottom: 80, right: 12, display: 'flex', flexDirection: 'column', gap: 20, alignItems: 'center' }}>
+                    <div
+                      data-control
+                      {...stopControlGestures}
+                      style={{ position: 'absolute', bottom: 80, right: 12, display: 'flex', flexDirection: 'column', gap: 20, alignItems: 'center' }}
+                    >
                       {[0,1,2].map(j => (
                         <div key={j} style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(255,255,255,0.1)' }} />
                       ))}
@@ -1895,8 +1964,13 @@ export const ReelLayout = memo(function ReelLayout({
                 <div
                   className="video-card-snap"
                   onTouchStart={(e) => {
-                    // Only trigger long-press on mobile, not when tapping buttons
-                    if (e.target.closest('button')) return;
+                    // Never arm a long-press from an interactive control. This
+                    // used to check for <button> only, so menu rows, icons
+                    // inside divs and the caption "more" link still triggered
+                    // it while the user was aiming at a control.
+                    if (e.target.closest(
+                      'button, a, input, textarea, select, label, [role="button"], [role="menuitem"], [data-control]'
+                    )) return;
                     handleLongPressStart(video.id, e);
                   }}
                   onTouchEnd={handleLongPressEnd}
@@ -1974,7 +2048,9 @@ export const ReelLayout = memo(function ReelLayout({
                       </button>
                       <div style={{ position: 'relative' }}>
                         <button
-                          onClick={() => setShowMenu(showMenu === video.id ? null : video.id)}
+                          data-control
+                          {...stopControlGestures}
+                          onClick={controlTap(() => setShowMenu(showMenu === video.id ? null : video.id))}
                           style={{
                             background: 'none',
                             border: 'none',
@@ -2019,7 +2095,8 @@ export const ReelLayout = memo(function ReelLayout({
                             >
                               {user?.id === video.user?.id && (
                                 <button
-                                  onClick={() => { setShowMenu(null); setShowBoostModal(video.id); }}
+                                  data-control
+                                  onClick={controlTap(() => { setShowMenu(null); setShowBoostModal(video.id); })}
                                   style={{
                                     width: '100%',
                                     padding: '14px 16px',
@@ -2038,7 +2115,8 @@ export const ReelLayout = memo(function ReelLayout({
                                 </button>
                               )}
                               <button
-                                onClick={() => handleShare(video.id)}
+                                data-control
+                                onClick={controlTap(() => handleShare(video.id))}
                                 style={{
                                   width: '100%',
                                   padding: '14px 16px',
@@ -2056,7 +2134,8 @@ export const ReelLayout = memo(function ReelLayout({
                                 <ShareIconFilled size={18} color="#8fc441" /> Share
                               </button>
                               <button
-                                onClick={() => handleNotInterested(video.id)}
+                                data-control
+                                onClick={controlTap(() => handleNotInterested(video.id))}
                                 style={{
                                   width: '100%',
                                   padding: '14px 16px',
@@ -2074,7 +2153,8 @@ export const ReelLayout = memo(function ReelLayout({
                                 <EyeOff size={18} style={{ color: '#78716C' }} /> Not Interested
                               </button>
                               <button
-                                onClick={() => { setShowMenu(null); setShowReportModal(video.id); }}
+                                data-control
+                                onClick={controlTap(() => { setShowMenu(null); setShowReportModal(video.id); })}
                                 style={{
                                   width: '100%',
                                   padding: '14px 16px',
@@ -2285,7 +2365,7 @@ export const ReelLayout = memo(function ReelLayout({
                           loop
                           playsInline
                           autoPlay
-                          muted={true}
+                          muted={!(audioEnabled && String(video.id) === String(activeVideoId))}
                           onLoadedMetadata={(e) => {
                             const w = e.target.videoWidth;
                             const h = e.target.videoHeight;
@@ -2909,7 +2989,7 @@ export const ReelLayout = memo(function ReelLayout({
                         gap: 4,
                       }}
                     >
-                      <button
+                      <button aria-label="Toggle sound"
                         onClick={toggleAudio}
                         style={{
                           background: 'none',
@@ -3094,12 +3174,14 @@ export const ReelLayout = memo(function ReelLayout({
                 {vIdx === 2 && showCampaignSuggestions && (
                   <HorizontalCampaignSuggestions
                     onCampaignClick={onCampaignClick || onShowCampaigns}
+                    onViewAll={onShowCampaigns}
                     onDismiss={() => setShowCampaignSuggestions(false)}
                   />
                 )}
                 {vIdx === 6 && showCampaignSuggestions && (
                   <HorizontalCampaignSuggestions
                     onCampaignClick={onCampaignClick || onShowCampaigns}
+                    onViewAll={onShowCampaigns}
                     onDismiss={() => setShowCampaignSuggestions(false)}
                   />
                 )}
@@ -3147,6 +3229,7 @@ export const ReelLayout = memo(function ReelLayout({
       {showComments && (
         <div key={showComments}>
           <ModernCommentSection
+            variant={isMobile ? 'sheet' : 'panel'}
             reelId={showComments}
             user={user}
             onClose={() => setShowComments(null)}

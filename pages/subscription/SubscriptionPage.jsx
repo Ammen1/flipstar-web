@@ -7,6 +7,7 @@ import api from '../../api';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import telebirrH5 from '../../services/TelebirrH5Service';
+import { sanitizePhoneInput, toE164, PHONE_MAX_DIGITS, INVALID_PHONE_MESSAGE } from '../../utils/phone';
 
 const getFallbackTiers = () => [
   {
@@ -482,7 +483,7 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
   };
 
   const handleTelebirrPhoneSubmit = () => {
-    if (!telebirrPhone || telebirrPhone.length < 10) {
+    if (!toE164(telebirrPhone)) {
       showToast('error', 'Please enter a valid phone number');
       return;
     }
@@ -788,7 +789,7 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
       
       // Add phone number if user is not authenticated
       if (!isAuthed) {
-        if (!telebirrPhone || telebirrPhone.length < 10) {
+        if (!toE164(telebirrPhone)) {
           clog('error', 'Invalid phone number entered', { telebirrPhone });
           showToast('error', 'Please enter a valid phone number');
           setProcessing(false);
@@ -903,7 +904,7 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
   // auto-charges). Kept for reference; replaced by the one-off flow above.
   // ============================================================================
   // const handleTelebirrProceed = async () => {
-  //   if (!telebirrPhone || telebirrPhone.length < 10) {
+  //   if (!toE164(telebirrPhone)) {
   //     showToast('error', 'Please enter a valid phone number');
   //     return;
   //   }
@@ -1675,9 +1676,12 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
             <div style={{ marginBottom: isMobile ? 24 : 20 }}>
               <input
                 type="tel"
-                placeholder="0911 234 567"
+                placeholder="9XXXXXXXX"
+                inputMode="numeric"
+                maxLength={PHONE_MAX_DIGITS}
+                aria-label="Ethiopian phone number without country code"
                 value={telebirrPhone}
-                onChange={(e) => setTelebirrPhone(e.target.value)}
+                onChange={(e) => setTelebirrPhone(sanitizePhoneInput(e.target.value))}
                 style={{
                   width: '100%',
                   padding: isMobile ? '18px' : '16px',

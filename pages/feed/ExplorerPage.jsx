@@ -8,6 +8,7 @@ import api from '../../api';
 import { useTheme } from '../../contexts/ThemeContext';
 import config from '../../config';
 import realtimeService from '../../services/RealtimeService';
+import { isVideoUrl } from '../../utils/media';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const CATEGORIES = [
@@ -75,7 +76,7 @@ function VideoThumb({ reel, rank, index = 0, hero = false, onOpen, T }) {
   const [hovered, setHovered] = useState(false);
   const videoUrl = reel.file_url || reel.media;
   const imageUrl = reel.image || reel.media;
-  const isVid = !!(videoUrl || '').match(/\.(mp4|webm|ogg|mov)/i) || (videoUrl && videoUrl.includes('/video/'));
+  const isVid = isVideoUrl(videoUrl);
   const isBoosted = Boolean(reel.is_boosted);
 
   // Priority: 1) explicit thumbnail_url, 2) Cloudinary video poster, 3) image URL, 4) video URL
@@ -404,9 +405,7 @@ export function ExplorerPage({ user, onBack, onShowProfile, onShowVideoDetail, o
     const raw = reel.file_url || reel.media || reel.image || '';
     const isVideo =
       !!(reel.file_url || reel.media) && (
-        /\.(mp4|webm|ogg|mov)(\?|$)/i.test(raw) ||
-        raw.includes('/video/upload/') ||
-        raw.includes('/video/')
+        isVideoUrl(raw)
       );
     if (onShowPostDetail) {
       onShowPostDetail(reel.id, isVideo);
@@ -433,7 +432,7 @@ export function ExplorerPage({ user, onBack, onShowProfile, onShowVideoDetail, o
         {/* Row 1 – title + search bar */}
         <div style={{ padding: '12px 16px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
           {/* Back button */}
-          <button
+          <button aria-label="Go back"
             onClick={onBack}
             style={{
               background: 'none', border: 'none', cursor: 'pointer',
@@ -503,7 +502,7 @@ export function ExplorerPage({ user, onBack, onShowProfile, onShowVideoDetail, o
           {!inSearchMode && !searchFocused && (
             <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
               {TIME_RANGES.map(r => (
-                <button key={r.id} onClick={() => { setTimeRange(r.id); setHashtagView(null); }} style={{
+                <button key={r.id} onClick={() => { setTimeRange(r.id); setHashtagView(null); }} style={{ minHeight: 32, 
                   padding: '4px 8px', borderRadius: 16,
                   border: `1px solid ${timeRange === r.id ? T.pri : T.border}`,
                   background: timeRange === r.id ? T.pri : 'transparent',

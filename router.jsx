@@ -18,10 +18,12 @@ const FollowersListPage = lazy(() => import('./pages/profile/FollowersListPage')
 const NotificationsPage = lazy(() => import('./pages/general/NotificationsPage').then(m => ({ default: m.NotificationsPage })));
 const SettingsPage = lazy(() => import('./pages/settings/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const WalletPage = lazy(() => import('./pages/subscription/WalletPage').then(m => ({ default: m.WalletPage })));
+const BuyCoinsPage = lazy(() => import('./pages/wallet/BuyCoinsPage'));
 const SubscriptionPage = lazy(() => import('./pages/subscription/SubscriptionPage').then(m => ({ default: m.SubscriptionPage })));
 const CampaignsPage = lazy(() => import('./pages/campaign/CampaignsPage').then(m => ({ default: m.CampaignsPage })));
 const CampaignDetailPage = lazy(() => import('./pages/campaign/CampaignDetailPage').then(m => ({ default: m.CampaignDetailPage })));
 const CampaignLeaderboard = lazy(() => import('./pages/campaign/CampaignLeaderboard'));
+const GlobalLeaderboardPage = lazy(() => import('./pages/leaderboard/GlobalLeaderboardPage').then(m => ({ default: m.GlobalLeaderboardPage })));
 const CampaignFeed = lazy(() => import('./pages/campaign/CampaignFeed'));
 const VideoDetailPage = lazy(() => import('./pages/feed/VideoDetailPage').then(m => ({ default: m.VideoDetailPage })));
 const AdminApp = lazy(() => import('./admin/AdminApp').then(m => ({ default: m.AdminApp })));
@@ -75,8 +77,10 @@ function HomePageWrapper() {
       onShowPostPage={() => h.navigate('/create')}
       onRequireAuth={h.openLoginModal}
       onShowExplorer={() => h.navigate('/explore')}
+      onShowLeaderboard={() => h.navigate('/leaderboard')}
       onShowVideoDetail={(reelId) => h.navigate(`/post/${reelId}`)}
       onShowCampaigns={() => h.navigate('/campaigns')}
+      onShowCampaignDetail={(campaignId) => h.navigate(`/campaigns/${campaignId}`)}
       onShowWallet={() => h.navigate('/wallet')}
       onShowCoinPurchase={h.openTopUpModal}
       onShowSubscription={() => h.navigate('/subscription')}
@@ -98,6 +102,7 @@ function ReelLayoutWrapper() {
       onShowProfile={(userId) => h.navigate(userId ? `/profile/${userId}` : '/profile')}
       onShowSettings={() => h.navigate('/settings')}
       onShowCampaigns={() => h.navigate('/campaigns')}
+      onCampaignClick={(campaignId) => h.navigate(`/campaigns/${campaignId}`)}
       onShowNotifications={() => h.navigate('/notifications')}
       onShowVideoDetail={(reelId) => h.navigate(`/post/${reelId}`)}
       onShowExplorer={() => h.navigate('/explore')}
@@ -248,6 +253,27 @@ function WalletPageWrapper() {
   );
 }
 
+// Buy Coins is a full page now (it replaced the old top-up modal). `returnTo`
+// is set by AppLayout when the page is opened from a "buy coins" call site so
+// the user lands back where they started.
+function BuyCoinsPageWrapper() {
+  const h = useNavHelpers();
+  const location = useLocation();
+  const returnTo = location.state && location.state.returnTo;
+  const goBack = useCallback(() => {
+    if (returnTo) h.navigate(returnTo);
+    else if (window.history.length > 1) h.navigate(-1);
+    else h.navigate('/wallet');
+  }, [returnTo, h.navigate]);
+  return (
+    <BuyCoinsPage
+      theme={h.colors}
+      onBack={goBack}
+      onDone={goBack}
+    />
+  );
+}
+
 function SubscriptionPageWrapper() {
   const h = useNavHelpers();
   return (
@@ -281,6 +307,19 @@ function CampaignDetailPageWrapper() {
       onBack={() => h.navigate('/campaigns')}
       onShowLeaderboard={() => h.navigate(`/campaigns/${campaignId}/leaderboard`)}
       onShowFeed={() => h.navigate(`/campaigns/${campaignId}/feed`)}
+    />
+  );
+}
+
+// The global leaderboard used to render inside HomePage's flex row, which
+// made it a sibling of the feed rather than a page of its own. It is a real
+// route now, so it fills the main area and browser back works.
+function GlobalLeaderboardPageWrapper() {
+  const h = useNavHelpers();
+  return (
+    <GlobalLeaderboardPage
+      onBack={() => (window.history.length > 1 ? h.navigate(-1) : h.navigate('/'))}
+      onShowProfile={(userId) => h.navigate(userId ? `/profile/${userId}` : '/profile')}
     />
   );
 }
@@ -355,7 +394,10 @@ function LoginPageWrapper() {
           localStorage.setItem('authToken', u.token || localStorage.getItem('authToken'));
           h.navigate('/', { replace: true });
         }}
-        onSignUp={() => h.navigate('/register')}
+        // "Subscribe" belongs on the plans page. /register is the OTP
+        // registration form, which assumes the user already has a
+        // subscription to verify against.
+        onSignUp={() => h.navigate('/subscription')}
         onClose={() => h.navigate(-1)}
       />
     </Lazy>
@@ -443,9 +485,11 @@ export const router = createBrowserRouter([
       { path: 'notifications', element: <Lazy><NotificationsPageWrapper /></Lazy> },
       { path: 'settings', element: <Lazy><SettingsPageWrapper /></Lazy> },
       { path: 'wallet', element: <Lazy><WalletPageWrapper /></Lazy> },
+      { path: 'buy-coins', element: <Lazy><BuyCoinsPageWrapper /></Lazy> },
       { path: 'campaigns', element: <Lazy><CampaignsPageWrapper /></Lazy> },
       { path: 'campaigns/:campaignId', element: <Lazy><CampaignDetailPageWrapper /></Lazy> },
       { path: 'campaigns/:campaignId/leaderboard', element: <Lazy><CampaignLeaderboardWrapper /></Lazy> },
+      { path: 'leaderboard', element: <Lazy><GlobalLeaderboardPageWrapper /></Lazy> },
       { path: 'campaigns/:campaignId/feed', element: <Lazy><CampaignFeedWrapper /></Lazy> },
       { path: 'profile', element: <Lazy><ProfilePageWrapper /></Lazy> },
       { path: 'profile/edit', element: <Lazy><EditProfilePageWrapper /></Lazy> },

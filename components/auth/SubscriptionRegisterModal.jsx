@@ -14,6 +14,7 @@ import { useLockoutTimer } from '../../utils/useLockoutTimer';
 import { ForgotPasswordPhone } from './ForgotPasswordPhone';
 import { TermsModal } from './LoginFaqTermsModals';
 import logoG from '../../assets/70x20 (2).png';
+import { sanitizePhoneInput, toE164, PHONE_MAX_DIGITS, INVALID_PHONE_MESSAGE } from '../../utils/phone';
 
 const GOLD =
   'linear-gradient(to bottom, #8fc441 0%, #b5dd8f 50%, #6ba835 100%)';
@@ -144,7 +145,7 @@ export function SubscriptionRegisterModal({
     setLoading(true);
     console.log('[SUBSCRIPTION REGISTRATION JOURNEY] Calling resendSubscriptionOtp API');
     try {
-      const res = await api.resendSubscriptionOtp(phone);
+      const res = await api.resendSubscriptionOtp(toE164(phone));
       const data = res.data || res;
       console.log('[SUBSCRIPTION REGISTRATION JOURNEY] Resend OTP response:', { hasDevCode: !!data.dev_code, message: data.message });
       setResendTimer(60);
@@ -170,6 +171,10 @@ export function SubscriptionRegisterModal({
     if (!phone) {
       console.log('[SUBSCRIPTION REGISTRATION JOURNEY] Validation failed: Phone missing');
       setError('Please enter your phone number');
+      return;
+    }
+    if (!toE164(phone)) {
+      setError(INVALID_PHONE_MESSAGE);
       return;
     }
     if (otp.length !== 6) {
@@ -208,7 +213,7 @@ export function SubscriptionRegisterModal({
         // Use Telebirr OTP verification endpoint
         console.log('[SUBSCRIPTION REGISTRATION JOURNEY] Using Telebirr OTP endpoint');
         res = await api.post('/auth/verify-telebirr-subscription-otp/', {
-          phone,
+          phone: toE164(phone),
           otp,
           username: !existingUser ? username : undefined,
           password,
@@ -218,7 +223,7 @@ export function SubscriptionRegisterModal({
         // Use original subscription OTP endpoint
         console.log('[SUBSCRIPTION REGISTRATION JOURNEY] Using subscription OTP endpoint');
         res = await api.post('/auth/login-with-subscription-otp/', {
-          phone,
+          phone: toE164(phone),
           otp,
           password,
           username: !existingUser ? username : undefined,
@@ -420,8 +425,11 @@ export function SubscriptionRegisterModal({
                 <input
                   type="tel"
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="09XXXXXXXX or +251XXXXXXXXX"
+                  onChange={(e) => setPhone(sanitizePhoneInput(e.target.value))}
+                  placeholder="9XXXXXXXX"
+                  inputMode="numeric"
+                  maxLength={PHONE_MAX_DIGITS}
+                  aria-label="Ethiopian phone number without country code"
                   style={inp(focusPhone)}
                   onFocus={() => setFocusPhone(true)}
                   onBlur={() => setFocusPhone(false)}

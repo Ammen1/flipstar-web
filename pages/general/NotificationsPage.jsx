@@ -199,7 +199,7 @@ export function NotificationsPage({ user, onUserClick, onBack, onShowPostPage, o
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {onBack && (
-              <button onClick={onBack} style={{
+              <button aria-label="Go back" onClick={onBack} style={{
                 background: 'none', border: 'none', cursor: 'pointer',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 padding: 4, borderRadius: '50%', color: T.txt,
@@ -233,7 +233,7 @@ export function NotificationsPage({ user, onUserClick, onBack, onShowPostPage, o
                 <Check size={10} /> Mark all read
               </button>
             )}
-            <button onClick={() => fetchNotifications(false)} style={{
+            <button aria-label="Refresh" onClick={() => fetchNotifications(false)} style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               padding: 6, background: 'none',
               border: `1px solid ${T.border}`, borderRadius: 16,

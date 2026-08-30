@@ -1238,7 +1238,7 @@ function ThreadView({ conversation, onBack, user, T, priColor, onShowProfile, on
         padding: '12px 16px', borderBottom: `1px solid ${T.border}`,
         background: T.cardBg, flexShrink: 0,
       }}>
-        <button onClick={onBack} style={{
+        <button aria-label="Go back" onClick={onBack} style={{
           background: 'none', border: 'none', cursor: 'pointer',
           color: T.txt, padding: 6, display: 'flex',
         }}>

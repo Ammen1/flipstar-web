@@ -5,6 +5,7 @@ import { describeAuthError, extractErrorMessage, formatWait } from '../../utils/
 import { useLockoutTimer } from '../../utils/useLockoutTimer';
 import { ForgotPasswordPhone } from './ForgotPasswordPhone';
 import { FaqModal, TermsModal } from './LoginFaqTermsModals';
+import { sanitizePhoneInput, toE164, PHONE_MAX_DIGITS, INVALID_PHONE_MESSAGE } from '../../utils/phone';
 
 const GOLD =
   'linear-gradient(to bottom, #8fc441 0%, #b5dd8f 50%, #6ba835 100%)';
@@ -81,6 +82,10 @@ export function PhoneLoginModal({
       setError('Please fill in all fields');
       return;
     }
+    if (!toE164(phone)) {
+      setError(INVALID_PHONE_MESSAGE);
+      return;
+    }
     setLoading(true);
     try {
       let res;
@@ -89,7 +94,7 @@ export function PhoneLoginModal({
       if (telebirrOtpMode) {
         // Telebirr OTP login mode
         res = await api.post('/auth/verify-telebirr-subscription-otp/', {
-          phone,
+          phone: toE164(phone),
           otp: password,
         });
         data = res.data || res;
@@ -97,7 +102,9 @@ export function PhoneLoginModal({
       } else {
         // Normal login mode
         res = await api.post('/auth/login-with-phone/', {
-          phone,
+          // toE164 owns the country code, so the field never carries one and
+          // the value can never come out as +251+251...
+          phone: toE164(phone),
           password,
         });
         data = res.data || res;
@@ -152,13 +159,17 @@ export function PhoneLoginModal({
       setSuperappError("Phone number is required");
       return;
     }
+    if (!toE164(superappPhone)) {
+      setSuperappError(INVALID_PHONE_MESSAGE);
+      return;
+    }
 
     setSuperappError("");
     setSuperappLoading(true);
 
     try {
       // Check if user has active SuperApp subscription
-      const checkRes = await api.post('/subscription/check-superapp/', { phone: superappPhone });
+      const checkRes = await api.post('/subscription/check-superapp/', { phone: toE164(superappPhone) });
       console.log('✅ SuperApp check response:', checkRes.data);
 
       if (!checkRes.data.has_active_subscription) {
@@ -169,7 +180,7 @@ export function PhoneLoginModal({
 
       // Send OTP with tier-specific application key
       const otpPayload = { 
-        phone: superappPhone,
+        phone: toE164(superappPhone),
         application_key: checkRes.data.application_key,
         product_number: checkRes.data.product_number
       };
@@ -238,7 +249,7 @@ export function PhoneLoginModal({
     setError('');
     
     try {
-      await api.post('/auth/resend-subscription-otp/', { phone });
+      await api.post('/auth/resend-subscription-otp/', { phone: toE164(phone) });
       setResendCountdown(60); // 60 second cooldown
       setError('');
     } catch (e) {
@@ -278,13 +289,16 @@ export function PhoneLoginModal({
               <div style={{ marginBottom: 16 }}>
                 <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#8fc441", marginBottom: 6 }}>Phone Number</label>
                 <div style={{ position: "relative" }}>
-                  <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#8fc441" }}><Phone size={17} /></div>
+                  <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", display: "flex", alignItems: "center", gap: 6, pointerEvents: "none", color: "#8fc441" }}><Phone size={17} /><span style={{ fontSize: 14, fontWeight: 700, letterSpacing: 0.2 }}>+251</span></div>
                   <input
                     type="tel"
                     value={superappPhone}
-                    onChange={e => setSuperappPhone(e.target.value)}
-                    placeholder="09XXXXXXXX"
-                    style={inp(false)}
+                    onChange={e => setSuperappPhone(sanitizePhoneInput(e.target.value))}
+                    placeholder="9XXXXXXXX"
+                    inputMode="numeric"
+                    maxLength={PHONE_MAX_DIGITS}
+                    aria-label="Ethiopian phone number without country code"
+                    style={{ ...inp(false), paddingLeft: 74 }}
                     onFocus={e => e.target.style.border = "1.5px solid #8fc441"}
                     onBlur={e => e.target.style.border = "1.5px solid #262626"}
                   />
@@ -328,7 +342,7 @@ export function PhoneLoginModal({
                   onBlur={e => e.target.style.border = "1.5px solid #262626"}
                 />
               </div>
-              <button type="submit" disabled={superappLoading}
+              <button aria-label="Toggle password visibility" type="submit" disabled={superappLoading}
                 style={{ width: "100%", padding: "14px", background: superappLoading ? "#3A3A3A" : GOLD, border: "none", borderRadius: 10, color: superappLoading ? "#888" : "#000", fontSize: 15, fontWeight: 800, cursor: superappLoading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                 {superappLoading ? <><Loader size={18} style={{ animation: "spin 1s linear infinite" }} /> Verifying...</> : "Login"}
               </button>
@@ -478,13 +492,17 @@ export function PhoneLoginModal({
                     }}
                   >
                     <Phone size={17} />
+                    <span style={{ fontSize: 14, fontWeight: 700, marginLeft: 6 }}>+251</span>
                   </div>
                   <input
                     type="tel"
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="09XXXXXXXX or +251XXXXXXXXX"
-                    style={inp(focusPhone)}
+                    onChange={(e) => setPhone(sanitizePhoneInput(e.target.value))}
+                    placeholder="9XXXXXXXX"
+                    inputMode="numeric"
+                    maxLength={PHONE_MAX_DIGITS}
+                    aria-label="Ethiopian phone number without country code"
+                    style={{ ...inp(focusPhone), paddingLeft: 74 }}
                     onFocus={() => setFocusPhone(true)}
                     onBlur={() => setFocusPhone(false)}
                     autoComplete="tel"
@@ -533,7 +551,7 @@ export function PhoneLoginModal({
                     onBlur={() => setFocusPwd(false)}
                     autoComplete="current-password"
                   />
-                  <button
+                  <button aria-label="Toggle password visibility"
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
                     style={{

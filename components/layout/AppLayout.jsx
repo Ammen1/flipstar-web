@@ -1,19 +1,10 @@
-import React, { useState, useEffect, Suspense, lazy } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api';
 import webPush from '../../services/WebPushService';
 import telebirrH5 from '../../services/TelebirrH5Service';
-import { useTheme } from '../../contexts/ThemeContext';
-
-const TopUpModal = lazy(() => import('../modals/TopUpModal'));
-
-const PageLoader = () => (
-  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '60vh', color: '#999', fontSize: 14 }}>
-    Loading...
-  </div>
-);
 
 export default function AppLayout() {
   const {
@@ -23,7 +14,6 @@ export default function AppLayout() {
   } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const { colors } = useTheme();
 
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
   const [unreadDmCount] = useState(0);
@@ -38,6 +28,7 @@ export default function AppLayout() {
     '/notifications': 'notifications',
     '/settings': 'settings',
     '/wallet': 'wallet',
+    '/buy-coins': 'wallet',
     '/campaigns': 'campaigns',
     '/profile': 'profile',
   };
@@ -61,16 +52,17 @@ export default function AppLayout() {
   // Subscription gate disabled — allow browsing all pages (interactions
   // like/comment/post are gated individually within each page).
 
-  // Pause videos when overlays shown
+  // "Buy coins" used to open a modal; it now navigates to the dedicated
+  // /buy-coins page. Every existing onShowCoinPurchase call site still works —
+  // the auth-context flag is consumed here and turned into a route change.
   useEffect(() => {
-    const pauseAllVideos = () => {
-      document.querySelectorAll('video').forEach(v => { if (!v.paused) v.pause(); });
-    };
-    if (showTopUpModal) {
-      pauseAllVideos();
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
+    if (!showTopUpModal) return;
+    document.querySelectorAll('video').forEach(v => { if (!v.paused) v.pause(); });
+    setShowTopUpModal(false);
+    if (location.pathname !== '/buy-coins') {
+      navigate('/buy-coins', {
+        state: { returnTo: location.pathname + location.search },
+      });
     }
   }, [showTopUpModal]);
 
@@ -207,12 +199,6 @@ export default function AppLayout() {
       >
         <Outlet />
       </AppShell>
-
-      {showTopUpModal && (
-        <Suspense fallback={null}>
-          <TopUpModal theme={colors} onClose={() => setShowTopUpModal(false)} />
-        </Suspense>
-      )}
     </>
   );
 }

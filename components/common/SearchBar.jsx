@@ -49,7 +49,12 @@ export function SearchBar({ onUserClick, onHashtagClick, onPostClick }) {
     setIsOpen(false);
   };
 
-  const hasResults = results.users.length > 0 || results.posts.length > 0 || results.hashtags.length > 0;
+  // `api.search` normalises the payload, but this stays defensive: the render
+  // must never be one missing key away from taking the whole page down.
+  const users = Array.isArray(results?.users) ? results.users : [];
+  const posts = Array.isArray(results?.posts) ? results.posts : [];
+  const hashtags = Array.isArray(results?.hashtags) ? results.hashtags : [];
+  const hasResults = users.length > 0 || posts.length > 0 || hashtags.length > 0;
 
   return (
     <div ref={searchRef} style={{ position: "relative", width: "100%" }}>
@@ -120,12 +125,12 @@ export function SearchBar({ onUserClick, onHashtagClick, onPostClick }) {
           overflowY: "auto",
           zIndex: 1000,
         }}>
-          {results.users.length > 0 && (
+          {users.length > 0 && (
             <div style={{ padding: "12px 0" }}>
               <div style={{ padding: "0 16px 8px", fontSize: 12, fontWeight: 700, color: T.sub, display: "flex", alignItems: "center", gap: 6 }}>
                 <User size={14} /> Users
               </div>
-              {results.users.map(user => (
+              {users.map(user => (
                 <button
                   key={user.id}
                   onClick={() => {
@@ -170,12 +175,12 @@ export function SearchBar({ onUserClick, onHashtagClick, onPostClick }) {
             </div>
           )}
 
-          {results.hashtags.length > 0 && (
-            <div style={{ padding: "12px 0", borderTop: results.users.length > 0 ? `1px solid ${T.border}` : "none" }}>
+          {hashtags.length > 0 && (
+            <div style={{ padding: "12px 0", borderTop: users.length > 0 ? `1px solid ${T.border}` : "none" }}>
               <div style={{ padding: "0 16px 8px", fontSize: 12, fontWeight: 700, color: T.sub, display: "flex", alignItems: "center", gap: 6 }}>
                 <Hash size={14} /> Hashtags
               </div>
-              {results.hashtags.map((tag, idx) => (
+              {hashtags.map((tag, idx) => (
                 <button
                   key={idx}
                   onClick={() => {
@@ -202,12 +207,12 @@ export function SearchBar({ onUserClick, onHashtagClick, onPostClick }) {
             </div>
           )}
 
-          {results.posts.length > 0 && (
-            <div style={{ padding: "12px 0", borderTop: (results.users.length > 0 || results.hashtags.length > 0) ? `1px solid ${T.border}` : "none" }}>
+          {posts.length > 0 && (
+            <div style={{ padding: "12px 0", borderTop: (users.length > 0 || hashtags.length > 0) ? `1px solid ${T.border}` : "none" }}>
               <div style={{ padding: "0 16px 8px", fontSize: 12, fontWeight: 700, color: T.sub, display: "flex", alignItems: "center", gap: 6 }}>
                 <Image size={14} /> Posts
               </div>
-              {results.posts.slice(0, 5).map(post => (
+              {posts.slice(0, 5).map(post => (
                 <button
                   key={post.id}
                   onClick={() => {

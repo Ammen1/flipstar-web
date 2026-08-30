@@ -3,6 +3,7 @@ import { Gift, Send, X, Wallet, AlertCircle, Info } from 'lucide-react';
 import api from '../../api';
 import { useTheme } from '../../contexts/ThemeContext';
 import { AlertModal } from '../../components/common/AlertModal';
+import { sanitizePhoneInput, toE164, PHONE_MAX_DIGITS, INVALID_PHONE_MESSAGE } from '../../utils/phone';
 
 const CATEGORY_ICONS = {
   flowers: '🌹',
@@ -503,8 +504,12 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
 
               <input
                 type="tel"
-                placeholder="Phone for telebirr (+251 9xx xxx xxx)"
+                placeholder="9XXXXXXXX"
                 id="telebirr-phone"
+                inputMode="numeric"
+                maxLength={PHONE_MAX_DIGITS}
+                aria-label="Ethiopian phone number without country code"
+                onInput={(e) => { e.target.value = sanitizePhoneInput(e.target.value); }}
                 style={{ ...inputStyle, padding: '10px 12px', fontSize: 13, marginBottom: 10 }}
               />
 
@@ -516,7 +521,7 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
                   <button
                     key={pkg.pkgId}
                     onClick={() => {
-                      const phone = document.getElementById('telebirr-phone')?.value;
+                      const phone = toE164(document.getElementById('telebirr-phone')?.value);
                       if (!phone) { alert('Please enter your phone number'); return; }
                       handletelebirrPayment(pkg.pkgId, phone);
                     }}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, memo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { Heart, Trophy, MessageCircle, Share2, Bookmark, MoreHorizontal, Eye, CheckCircle, Play, X, Send, Info, Link2, Download, Flag, Trash2, User, Gift, AtSign, Search, Zap } from 'lucide-react';
 import api from '../../api';
 import config from '../../config';
@@ -12,8 +12,13 @@ import { SidebarCampaigns } from '../../components/campaign/SidebarCampaigns';
 import { HorizontalCampaignSuggestions } from '../../components/campaign/HorizontalCampaignSuggestions';
 import { SearchBar } from '../../components/common/SearchBar';
 import { BoostModal } from '../../components/subscription/BoostModal';
-import { GlobalLeaderboardPage } from '../leaderboard/GlobalLeaderboardPage';
 import { InsufficientCoinsModal } from '../../components/common/InsufficientCoinsModal';
+import { PostCaptionOverlay, captionOf } from '../../components/feed/PostCaptionOverlay';
+import { DesktopReelViewer } from '../../components/feed/DesktopReelViewer';
+import { dedupeById } from '../../utils/collections';
+import { likeCountOf, commentCountOf, shareCountOf } from '../../utils/engagement';
+import { ModernCommentSection } from '../../components/messaging/ModernCommentSection';
+import { isVideoUrl, isVideoPost } from '../../utils/media';
 
 const BACKEND = config.API_BASE_URL.replace('/api', '');
 
@@ -673,7 +678,7 @@ const CommentSheet = memo(function CommentSheet({ post, currentUser, onClose, on
 /* ── Post Info Sheet ── */
 const PostInfoSheet = memo(function PostInfoSheet({ post, onClose, T }) {
   const raw = post.media || post.image || '';
-  const isVideo = /\.(mp4|webm|ogg|mov)(\?|$)/i.test(raw) || raw.includes('/video/upload/');
+  const isVideo = isVideoUrl(raw);
   const avatarSrc = post.user?.profile_photo ? mediaUrl(post.user.profile_photo) : null;
   return (
     <div onClick={onClose} style={{ position: 'fixed', top: 0, left: window.innerWidth <= 1024 ? 0 : 260, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9300, display: 'flex', alignItems: 'flex-end' }}>
@@ -890,11 +895,11 @@ const PostOptionsMenu = memo(function PostOptionsMenu({ post, currentUser, onClo
 });
 
 /* ── Post Card ── */
-const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowProfile, onRequireAuth, onNavigateToReel, onCommentAdded, onVoteAdded, onShowVideoDetail, videoObserver, onShowWallet, onShowCoinPurchase, onFollow, isFollowing, joinedCampaignIds, subscriptionStatus, onShowSubscription }) {
+const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowProfile, onRequireAuth, onNavigateToReel, onCommentAdded, onVoteAdded, onShowVideoDetail, onHashtagClick, videoObserver, onShowWallet, onShowCoinPurchase, onFollow, isFollowing, joinedCampaignIds, subscriptionStatus, onShowSubscription }) {
   // Seed from post + any persisted local state so the heart stays filled
   // even when the cached feed's `is_liked` is stale.
   const [liked, setLiked] = useState(() => post.is_liked || readIdSet(LIKES_KEY).has(post.id));
-  const [likes, setLikes] = useState(post.votes || 0);
+  const [likes, setLikes] = useState(likeCountOf(post));
   const [saved, setSaved] = useState(() => post.is_saved || readIdSet(SAVES_KEY).has(post.id));
   const [showInsufficientCoinsModal, setShowInsufficientCoinsModal] = useState(false);
   const likeInteracted = useRef(false);
@@ -903,8 +908,11 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
   const [showOptions, setShowOptions] = useState(false);
   const [optionsAnchor, setOptionsAnchor] = useState(null);
   const [videoPlaying, setVideoPlaying] = useState(false);
+  // True once the video has decoded a frame, so the placeholder below can get
+  // out of the way instead of covering the picture for the whole playback.
+  const [videoReady, setVideoReady] = useState(false);
   const [inlineComments, setInlineComments] = useState(post.recent_comments || []);
-  const [commentCount, setCommentCount] = useState(post.comment_count || 0);
+  const [commentCount, setCommentCount] = useState(commentCountOf(post));
   const [showAllInline, setShowAllInline] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
@@ -947,7 +955,7 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
   // time not count — as it wants").
   useEffect(() => {
     setLikes(post.votes || 0);
-    setCommentCount(post.comment_count || 0);
+    setCommentCount(commentCountOf(post));
     setIsBoostedPost(Boolean(post.is_boosted));
     if (!likeInteracted.current) setLiked(!!post.is_liked || readIdSet(LIKES_KEY).has(post.id));
     if (!saveInteracted.current) setSaved(!!post.is_saved || readIdSet(SAVES_KEY).has(post.id));
@@ -1101,11 +1109,11 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
 
   // Detect if this post has video media
   const raw = post.media || post.image || '';
-  const isVideo = !!(post.media) && (
-    /\.(mp4|webm|ogg|mov)(\?|$)/i.test(raw) ||
-    raw.includes('/video/upload/')
-  );
+  const isVideo = isVideoPost(post);
   const mediaSrc = mediaUrl(raw);
+  // Same caption/description resolution the overlay uses, so the two agree on
+  // whether there is anything to show.
+  const hasCaption = Boolean(captionOf(post));
   const avatarSrc = post.user?.profile_photo ? mediaUrl(post.user.profile_photo) : null;
 
   const handleLike = async (e) => {
@@ -1328,6 +1336,11 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
   const handleVideoClick = (e) => {
     e.stopPropagation();
     e.preventDefault();
+    // Stop this card's audio before leaving. A <video> still playing when React
+    // detaches it keeps its audio running until garbage collection, which is
+    // heard as sound with no picture on whatever page we navigate to.
+    const v = videoRef.current;
+    if (v && !v.paused) { try { v.pause(); } catch { /* already detached */ } }
     // Navigate to Reels page for video posts (Instagram-style)
     if (onShowVideoDetail) {
       onShowVideoDetail(post.id);
@@ -1358,7 +1371,12 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
     if (!video || !isVideo || !videoObserver) return;
 
     videoObserver.observe(video);
-    return () => videoObserver.unobserve(video);
+    return () => {
+      videoObserver.unobserve(video);
+      // unobserve() does not stop playback — pause explicitly so an unmounting
+      // card cannot keep emitting audio in the background.
+      try { video.pause(); } catch { /* already detached */ }
+    };
   }, [isVideo, videoObserver]);
 
   const hashtags = Array.isArray(post.hashtags_list)
@@ -1457,7 +1475,7 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
       >
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '6px 10px', gap: 8, flexShrink: 0 }}>
-          <button
+          <button aria-label="Open profile"
             className="hp-btn"
             onClick={(e) => { e.stopPropagation(); onShowProfile?.(post.user?.id); }}
             style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, flexShrink: 0 }}
@@ -1472,7 +1490,7 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
           </button>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-              <button
+              <button aria-label="Open profile"
                 className="hp-btn"
                 onClick={(e) => { e.stopPropagation(); onShowProfile?.(post.user?.id); }}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 'calc(var(--font-size-base, 16px) * 0.8125)', fontWeight: 700, color: '#fff' }}
@@ -1665,10 +1683,14 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
                   loop
                   onPlay={() => setVideoPlaying(true)}
                   onPause={() => setVideoPlaying(false)}
+                  onLoadedData={() => setVideoReady(true)}
                   onError={() => setImgError(true)}
                 />
-                {/* Fallback thumbnail for videos without poster */}
-                {!post.image && (
+                {/* Placeholder for videos with no poster. It is opaque and
+                    covers the whole frame, so it must be removed as soon as
+                    the video has a frame to show — otherwise the clip plays
+                    underneath it and you get sound with no picture. */}
+                {!post.image && !videoReady && (
                   <div style={{
                     position: 'absolute', inset: 0,
                     background: 'linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%)',
@@ -1728,10 +1750,36 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
             </div>
           )}
 
-          {/* View count badge */}
+          {/* Caption over the media, TikTok style. Sits above the tap-to-open
+              layer (z 10) and the play button (z 11); the overlay root is
+              pointer-events:none so only its own controls take taps and the
+              rest still opens the reel. */}
+          {isVideo && mediaSrc && !imgError && hasCaption && (
+            <div
+              style={{
+                position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 12,
+                padding: '40px 10px 10px',
+                background: 'linear-gradient(to top, rgba(0,0,0,0.78) 0%, rgba(0,0,0,0.38) 48%, rgba(0,0,0,0) 100%)',
+                pointerEvents: 'none',
+              }}
+            >
+              <PostCaptionOverlay
+                post={post}
+                showAuthor={false}
+                onOpenProfile={(id) => onShowProfile?.(id)}
+                onHashtagClick={() => onHashtagClick?.()}
+                onMentionClick={() => onHashtagClick?.()}
+              />
+            </div>
+          )}
+
+          {/* View count badge — moves to the top on captioned videos so the
+              caption owns the bottom edge. */}
           {mediaSrc && !imgError && (
             <div style={{
-              position: 'absolute', bottom: 8, right: 8,
+              position: 'absolute',
+              ...(isVideo && hasCaption ? { top: 8 } : { bottom: 8 }),
+              right: 8,
               background: 'rgba(0,0,0,0.55)', color: '#fff',
               borderRadius: 20, padding: '3px 8px', fontSize: 'calc(var(--font-size-base) * 0.6875)', fontWeight: 600,
               display: 'flex', alignItems: 'center', gap: 3,
@@ -1751,7 +1799,7 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', gap: 2 }}>
               {/* Like */}
-              <button
+              <button aria-label="Like"
                 className="hp-btn hp-action"
                 onClick={handleLike}
                 style={{
@@ -1779,7 +1827,7 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
                 <span style={{ fontSize: 'calc(var(--font-size-base) * 0.6875)', color: '#8fc441', fontWeight: 600 }}>{likes === 0 ? '' : likes}</span>
               </button>
               {/* Comment */}
-              <button
+              <button aria-label="Comments"
                 className="hp-btn hp-action"
                 onClick={handleCommentClick}
                 style={{
@@ -1793,7 +1841,7 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
                 <span style={{ fontSize: 'calc(var(--font-size-base) * 0.6875)', color: '#8fc441', fontWeight: 600 }}>{commentCount === 0 ? '' : commentCount}</span>
               </button>
               {/* Share */}
-              <button
+              <button aria-label="Share"
                 className="hp-btn hp-action"
                 onClick={handleShare}
                 title="Share"
@@ -1805,11 +1853,11 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
                 }}
               >
                 <Share2 size={baseFontSize} color="#8fc441" fill="none" style={{ transition: 'transform 0.15s, fill 0.15s' }} />
-                <span style={{ fontSize: 'calc(var(--font-size-base) * 0.6875)', color: '#8fc441', fontWeight: 600 }}>{post.shares === 0 ? '' : post.shares}</span>
+                <span style={{ fontSize: 'calc(var(--font-size-base) * 0.6875)', color: '#8fc441', fontWeight: 600 }}>{shareCountOf(post) === 0 ? '' : shareCountOf(post)}</span>
               </button>
               {/* Gift - only show on other people's posts */}
               {post.user?.username !== currentUser?.username && (
-                <button
+                <button aria-label="Send gift"
                   className="hp-btn hp-action"
                   onClick={(e) => { e.stopPropagation(); setShowGiftModal(true); }}
                   title="Send Gift"
@@ -1826,7 +1874,7 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
               )}
             </div>
             {/* Save */}
-            <button
+            <button aria-label="Save"
               className="hp-btn hp-action"
               onClick={handleSave}
               style={{
@@ -1844,8 +1892,8 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
             </button>
           </div>
 
-          {/* Caption - minimized, only if caption exists */}
-          {post.caption && (
+          {/* Caption - minimized. Videos show it over the media instead. */}
+          {post.caption && !isVideo && (
             <div
               onClick={(e) => { e.stopPropagation(); setCaptionExpanded(v => !v); }}
               style={{
@@ -1894,7 +1942,7 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
           )}
 
           {/* Comments link */}
-          <button
+          <button aria-label="Comments"
             onClick={handleCommentClick}
             style={{
               background: 'none', border: 'none', cursor: 'pointer',
@@ -2411,14 +2459,30 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
   );
 });
 
+// The TikTok-style desktop viewer replaces the old card feed + suggestions
+// rail. Set true to bring the rail back alongside the player.
+const SHOW_DESKTOP_SIDEBAR = false;
+
 const ALL_TABS = ['For You', 'Trending', 'Campaigns', 'Leaderboard'];
-const MOBILE_TABS = ['For You', 'Trending', 'Campaigns', 'Lboard'];
-const TAB_MAPPING = { 'Lboard': 'Leaderboard' };
+const MOBILE_TABS = ['For You', 'Trending', 'Campaigns', 'Leaders'];
+const TAB_MAPPING = { 'Leaders': 'Leaderboard' };
+
+// Text colour that stays legible on the admin-selected primary fill, which
+// ranges from light gold to dark green depending on the active theme.
+const onPrimary = (hex) => {
+  const h = String(hex || '').replace('#', '');
+  if (h.length !== 6) return '#0C0C0C';
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  if ([r, g, b].some(Number.isNaN)) return '#0C0C0C';
+  return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#0C0C0C' : '#FFFFFF';
+};
 
 // Persists boost expiry across feed refreshes
 const boostEndTimeCache = new Map();
 
-export function HomePage({ user, onShowProfile, onShowPostPage, onRequireAuth, onShowExplorer, onShowCampaigns, onShowVideoDetail, onShowWallet, onShowCoinPurchase, initialPostId, subscriptionStatus, onShowSubscription }) {
+export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPage, onRequireAuth, onShowExplorer, onShowCampaigns, onShowCampaignDetail, onShowVideoDetail, onShowWallet, onShowCoinPurchase, initialPostId, subscriptionStatus, onShowSubscription }) {
   const { colors: T } = useTheme();
   const { filterBlockedUsers, blockedUsers } = useBlock();
   const [activeTab, setActiveTab] = useState('For You');
@@ -2430,6 +2494,9 @@ export function HomePage({ user, onShowProfile, onShowPostPage, onRequireAuth, o
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const videoObserverRef = useRef(null);
+  // Desktop shows one clip at a time (TikTok style) instead of the card feed.
+  const [viewerIndex, setViewerIndex] = useState(0);
+  const [viewerCommentPost, setViewerCommentPost] = useState(null);
   const loaderRef = useRef(null);
   
   // Persistence key for scroll position
@@ -2439,10 +2506,10 @@ export function HomePage({ user, onShowProfile, onShowPostPage, onRequireAuth, o
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showMobileSuggestions, setShowMobileSuggestions] = useState(true);
+  const [showCampaignSuggestions, setShowCampaignSuggestions] = useState(true);
   const [followStates, setFollowStates] = useState({}); // { userId: boolean }
   const [suggestionTriggerUserId, setSuggestionTriggerUserId] = useState(null);
   const [showSearchModal, setShowSearchModal] = useState(false);
-  const [showGlobalLeaderboard, setShowGlobalLeaderboard] = useState(false);
   const [showInsufficientCoinsModal, setShowInsufficientCoinsModal] = useState(false);
   const [joinedCampaignIds, setJoinedCampaignIds] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem('joined_campaign_ids') || '[]')); } catch { return new Set(); }
@@ -2572,14 +2639,30 @@ export function HomePage({ user, onShowProfile, onShowPostPage, onRequireAuth, o
     );
     
     videoObserverRef.current = observer;
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      // disconnect() leaves playback running. Stop every feed video so none
+      // survives the unmount still playing (same guard AppLayout uses).
+      document.querySelectorAll('video').forEach((v) => {
+        try { if (!v.paused) v.pause(); } catch { /* already detached */ }
+      });
+    };
   }, []);
+
+  // Campaigns are injected after the second post so the feed opens on content,
+  // not on a promo block. Short feeds fall back to the last available slot.
+  const campaignSlotIndex = Math.min(1, Math.max(0, posts.length - 1));
+
+  // The desktop viewer is a video player, so image posts and the injected
+  // campaign/suggestion cards have no slide to live on. Mobile keeps the
+  // full mixed feed.
+  const videoPosts = useMemo(() => posts.filter(isVideoPost), [posts]);
 
   const handleTabClick = (tab) => {
     const actualTab = TAB_MAPPING[tab] || tab;
     if (actualTab === 'Trending') { onShowExplorer?.(); return; }
     if (actualTab === 'Campaigns') { onShowCampaigns?.(); return; }
-    if (actualTab === 'Leaderboard') { setShowGlobalLeaderboard(true); return; }
+    if (actualTab === 'Leaderboard') { onShowLeaderboard?.(); return; }
     setActiveTab(actualTab);
   };
 
@@ -2625,7 +2708,8 @@ export function HomePage({ user, onShowProfile, onShowPostPage, onRequireAuth, o
       // the server returns a stale is_liked for a just-liked post.
       const merged = mergeLocalEngagement(results);
       const filtered = filterBlockedUsers(merged);
-      const newPosts = reset ? filtered : [...postsRef.current, ...filtered];
+      // Overlapping pages would otherwise repeat posts in the feed.
+      const newPosts = dedupeById(reset ? filtered : [...postsRef.current, ...filtered]);
       setPosts(newPosts);
       if (reset) writeHomeCache(newPosts);
       setHasMore(Array.isArray(data) ? results.length === limit : !!data.next);
@@ -2813,7 +2897,15 @@ export function HomePage({ user, onShowProfile, onShowPostPage, onRequireAuth, o
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
-      style={{ flex: 1, minWidth: 0, height: '100vh', overflowY: 'auto', overflowX: 'hidden', position: 'relative', overscrollBehaviorY: 'contain', touchAction: 'pan-y', scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+      style={{
+        flex: 1, minWidth: 0, height: '100vh', overflowX: 'hidden', position: 'relative',
+        overscrollBehaviorY: 'contain', touchAction: 'pan-y',
+        scrollbarWidth: 'none', msOverflowStyle: 'none',
+        // Desktop hands its height to the viewer instead of scrolling.
+        ...(isMobile
+          ? { overflowY: 'auto' }
+          : { overflowY: 'hidden', display: 'flex', flexDirection: 'column' }),
+      }}
     >
       <style>{`
         div::-webkit-scrollbar {
@@ -2855,60 +2947,76 @@ export function HomePage({ user, onShowProfile, onShowPostPage, onRequireAuth, o
         WebkitBackdropFilter: 'blur(12px)',
       }}>
         <style>{`
-          .home-tab-row button {
-            margin: 0;
-            max-width: 180px;
+          .home-tab-row button { margin: 0; }
+          /* The viewer below is full-bleed, so the tab row needs its own
+             width limit or it stretches across the whole monitor. */
+          .home-tab-row { max-width: 680px; margin: 0 auto; width: 100%; }
+          .home-tab-track {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex: 1;
+            min-width: 0;
+            padding: 3px;
+            border-radius: 12px;
+            background: ${T?.cardBg || '#1A1A1A'};
+            border: 1px solid ${T?.border || 'rgba(255,255,255,0.07)'};
+          }
+          .home-tab-row .home-tab {
+            flex: 1 1 0;
+            min-width: 0;
+            max-width: 200px;
+            padding: 7px 8px;
+            border: none;
+            border-radius: 9px;
+            background: transparent;
+            color: ${T?.sub || '#8A8A8A'};
+            font-size: 12px;
+            font-weight: 600;
+            line-height: 1.25;
+            letter-spacing: 0.1px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+            transition: background-color .2s ease, color .2s ease;
+          }
+          .home-tab-row .home-tab:hover {
+            color: ${T?.txt || '#EDEDED'};
+            background: rgba(255,255,255,0.05);
+          }
+          .home-tab-row .home-tab.is-active {
+            background: ${T?.pri || '#8fc441'};
+            color: ${onPrimary(T?.pri || '#8fc441')};
+            font-weight: 700;
+          }
+          .home-tab-row .home-tab:focus-visible {
+            outline: 2px solid ${T?.pri || '#8fc441'};
+            outline-offset: 2px;
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .home-tab-row .home-tab { transition: none; }
           }
           @keyframes shimmer {
             0% { transform: translateX(-100%); }
             100% { transform: translateX(100%); }
           }
         `}</style>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1, justifyContent: 'center' }}>
+        <div className="home-tab-track" role="tablist">
           {(isMobile ? MOBILE_TABS : ALL_TABS).map(tab => {
             const actualTab = TAB_MAPPING[tab] || tab;
             const isActive = activeTab === actualTab;
             return (
               <button
                 key={tab}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                className={isActive ? 'home-tab is-active' : 'home-tab'}
                 onClick={() => handleTabClick(tab)}
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  paddingLeft: 4,
-                  paddingRight: 4,
-                  paddingTop: 4,
-                  paddingBottom: 4,
-                  borderRadius: 10,
-                  border: 'none',
-                  cursor: 'pointer',
-                  background: isActive
-                    ? (T?.priGradient || `linear-gradient(to right, #D4AF37 0%, #8fc441 50%, #B8860B 100%)`)
-                    : (T?.cardBg || '#1A1A1A'),
-                  color: isActive ? '#000' : '#8fc441',
-                  fontWeight: isActive ? 700 : 600,
-                  fontSize: 9,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  boxShadow: isActive
-                    ? `0 4px 15px rgba(0,0,0,0.14), 0 2px 8px rgba(0,0,0,0.08)`
-                    : '0 1px 4px rgba(0,0,0,0.06)',
-                  transform: isActive ? 'scale(1.04)' : 'scale(1)',
-                  transition: 'all 0.22s cubic-bezier(0.4,0,0.2,1)',
-                  position: 'relative',
-                  overflow: 'hidden',
-                }}
               >
                 {tab}
-                {isActive && (
-                  <div style={{
-                    position: 'absolute',
-                    top: 0, left: 0, right: 0, bottom: 0,
-                    background: 'linear-gradient(135deg, rgba(255,255,255,0.3) 0%, transparent 50%)',
-                    pointerEvents: 'none',
-                  }} />
-                )}
               </button>
             );
           })}
@@ -2936,7 +3044,27 @@ export function HomePage({ user, onShowProfile, onShowPostPage, onRequireAuth, o
         )}
       </div>
 
-      {/* Feed — tight padding so each post fits fully in the viewport. */}
+      {/* Desktop is a TikTok-style one-clip-at-a-time viewer; mobile keeps the
+          scrolling card feed. */}
+      {!isMobile ? (
+        <DesktopReelViewer
+          posts={videoPosts}
+          index={Math.min(viewerIndex, Math.max(0, videoPosts.length - 1))}
+          onIndexChange={setViewerIndex}
+          currentUser={user}
+          T={T}
+          chromeHeight={52}
+          apiBase={config.API_BASE_URL.replace('/api', '')}
+          onOpenProfile={(id) => onShowProfile?.(id)}
+          commentsOpen={!!viewerCommentPost}
+          onOpenComments={(p) => setViewerCommentPost((cur) => (cur && cur.id === p.id ? null : p))}
+          onHashtagClick={() => onShowExplorer?.()}
+          onFollow={(id) => handleFollow(id)}
+          isFollowing={(p) => followStates[p?.user?.id] ?? p?.user?.is_following}
+          onNeedMore={() => { if (hasMore && !loading) fetchPosts(page + LIMIT); }}
+        />
+      ) : (
+      /* Feed — tight padding so each post fits fully in the viewport. */
       <div style={{
         maxWidth: 600,
         margin: '0 auto',
@@ -2974,13 +3102,6 @@ export function HomePage({ user, onShowProfile, onShowPostPage, onRequireAuth, o
           </div>
         ) : (
           <>
-            {/* Campaign suggestions at the top */}
-            <HorizontalCampaignSuggestions
-              onCampaignClick={(campaignId) => {
-                window.location.hash = `#campaign/${campaignId}`;
-              }}
-              onDismiss={() => {}}
-            />
             {posts.map((post, index) => (
               <div key={post.id || index} style={{ width: '100%' }} data-post-id={post.id}>
                 <PostCard
@@ -2994,6 +3115,7 @@ export function HomePage({ user, onShowProfile, onShowPostPage, onRequireAuth, o
                   onCommentAdded={() => {}}
                   onVoteAdded={() => {}}
                   onShowVideoDetail={onShowVideoDetail}
+                  onHashtagClick={() => onShowExplorer?.()}
                   videoObserver={videoObserverRef.current}
                   onShowWallet={onShowWallet}
                   onShowCoinPurchase={onShowCoinPurchase}
@@ -3003,6 +3125,15 @@ export function HomePage({ user, onShowProfile, onShowPostPage, onRequireAuth, o
                   subscriptionStatus={subscriptionStatus}
                   onShowSubscription={onShowSubscription}
                 />
+                {/* Campaigns sit inside the feed rather than above it, and the
+                    component renders nothing at all when none are active. */}
+                {index === campaignSlotIndex && showCampaignSuggestions && (
+                  <HorizontalCampaignSuggestions
+                    onCampaignClick={(campaignId) => onShowCampaignDetail?.(campaignId)}
+                    onViewAll={onShowCampaigns}
+                    onDismiss={() => setShowCampaignSuggestions(false)}
+                  />
+                )}
                 {/* Inject horizontal suggestions after the 3rd post on mobile */}
                 {window.innerWidth <= 1024 && index === 2 && showMobileSuggestions && (
                   <HorizontalUserSuggestions
@@ -3037,10 +3168,15 @@ export function HomePage({ user, onShowProfile, onShowPostPage, onRequireAuth, o
           </div>
         )}
       </div>
+      )}
     </div>
 
-    {/* ── Right Sidebar (desktop only) ── */}
-    {!isMobile && (
+    {/* ── Right Sidebar ──
+        The desktop viewer is a full-bleed TikTok-style player, which has no
+        room for a suggestions rail; mobile never showed one. Suggestions and
+        campaigns still reach users through the mobile feed and their own
+        pages. Flip this to re-enable the rail beside the viewer. */}
+    {SHOW_DESKTOP_SIDEBAR && !isMobile && (
       <div className="home-right-sidebar" style={{
         width: 320,
         minWidth: 320,
@@ -3126,9 +3262,21 @@ export function HomePage({ user, onShowProfile, onShowPostPage, onRequireAuth, o
         </div>
       </div>
     )}
-    {showGlobalLeaderboard && (
-      <GlobalLeaderboardPage onBack={() => setShowGlobalLeaderboard(false)} />
+    {viewerCommentPost && (
+      /* Docked beside the player, the way TikTok opens comments on desktop. */
+      <ModernCommentSection
+        variant="panel"
+        reelId={viewerCommentPost.id}
+        user={user}
+        onClose={() => setViewerCommentPost(null)}
+        onCommentPosted={() => {}}
+        onShowProfile={onShowProfile}
+        onShowCoinPurchase={onShowCoinPurchase}
+        subscriptionStatus={subscriptionStatus}
+        onShowSubscription={onShowSubscription}
+      />
     )}
+
     <InsufficientCoinsModal
       visible={showInsufficientCoinsModal}
       onClose={() => setShowInsufficientCoinsModal(false)}

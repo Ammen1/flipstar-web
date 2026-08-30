@@ -1,13 +1,52 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Heart, MessageCircle, Share2, Bookmark, ChevronLeft, ChevronRight, Link2 } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import {
+  X, Heart, MessageCircle, Share2, Bookmark, ChevronLeft, ChevronRight, Link2,
+  Volume2, VolumeX, Maximize, Minimize, ImageOff, Loader,
+} from 'lucide-react';
 import api from '../../api';
 import config from '../../config';
-import { getRelativeTime } from '../../utils/timeUtils';
+
 import { useTheme } from '../../contexts/ThemeContext';
 import { useLanguage } from '../../contexts/LanguageContext';
+import { PostCaptionOverlay } from './PostCaptionOverlay';
+import { isVideoUrl } from '../../utils/media';
+
+const MEDIA_ROOT = config.API_BASE_URL.replace('/api', '');
+
+function absolute(url) {
+  if (!url) return '';
+  return url.startsWith('http') ? url : `${MEDIA_ROOT}${url}`;
+}
+
+function looksLikeVideo(url) {
+  if (!url) return false;
+  return isVideoUrl(url);
+}
+
+/**
+ * Media attached to a post, normalised to a list.
+ *
+ * Posts currently carry a single file (`media`/`image`), so this returns one
+ * entry. Array fields are read when present so that if the API ever serves
+ * several files per post, the viewer's counter, arrows and swipe light up
+ * without further changes — the caption stays bound to the post either way.
+ */
+function getPostMedia(post) {
+  if (!post) return [];
+  const list = post.media_items || post.media_urls || post.images;
+  if (Array.isArray(list) && list.length > 0) {
+    return list
+      .map((item) => (typeof item === 'string' ? item : (item?.media || item?.url || item?.image)))
+      .filter(Boolean)
+      .map((url) => ({ url: absolute(url), isVideo: looksLikeVideo(url) }));
+  }
+  const single = post.media || post.image || '';
+  if (!single) return [];
+  return [{ url: absolute(single), isVideo: looksLikeVideo(single) }];
+}
 
 // Reel-style scrollable post detail for ProfilePage
-export function ReelPostViewer({ posts, initialIndex, user, profileUser, onClose, onDeletePost, onEditPost, isOwnProfile, onNavigate }) {
+export function ReelPostViewer({ posts, initialIndex, user, profileUser, onClose, onDeletePost, onEditPost, isOwnProfile, onNavigate, onShowProfile, onHashtagClick, onMentionClick }) {
   const { colors: T } = useTheme();
   const { t } = useLanguage();
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
@@ -16,12 +55,41 @@ export function ReelPostViewer({ posts, initialIndex, user, profileUser, onClose
   const [liked, setLiked] = useState(false);
   const [likeCount, setLikeCount] = useState(0);
   const [shareToast, setShareToast] = useState('');
+  const [muted, setMuted] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [mediaIndex, setMediaIndex] = useState(0);
+  const [mediaState, setMediaState] = useState('loading'); // loading | ready | error
   const videoRef = useRef(null);
   const containerRef = useRef(null);
 
   const currentPost = posts[currentIndex];
   const hasNext = currentIndex < posts.length - 1;
   const hasPrev = currentIndex > 0;
+
+  const mediaList = useMemo(() => getPostMedia(currentPost), [currentPost]);
+  const activeMedia = mediaList[Math.min(mediaIndex, Math.max(0, mediaList.length - 1))] || null;
+  const isVideo = Boolean(activeMedia?.isVideo);
+  const fullUrl = activeMedia?.url || '';
+  const videoUrl = fullUrl;
+  const multiMedia = mediaList.length > 1;
+
+  // Moving to another post restarts its media; the caption panel re-keys off
+  // the post id so it never carries state across posts.
+  useEffect(() => {
+    setMediaIndex(0);
+  }, [currentPost?.id]);
+
+  useEffect(() => {
+    setMediaState(fullUrl ? 'loading' : 'error');
+  }, [fullUrl]);
+
+  const goToMedia = useCallback((next) => {
+    if (mediaList.length < 2) return;
+    setMediaIndex((prev) => {
+      const n = mediaList.length;
+      return ((next(prev) % n) + n) % n;
+    });
+  }, [mediaList.length]);
 
   // Auto-play video when changing posts
   useEffect(() => {
@@ -116,23 +184,27 @@ export function ReelPostViewer({ posts, initialIndex, user, profileUser, onClose
   const handleTouchEnd = (e) => {
     const diffY = touchStartY.current - e.changedTouches[0].clientY;
     const diffX = touchStartX.current - e.changedTouches[0].clientX;
-    
-    // Only allow vertical swipe if horizontal movement is minimal
+
+    // Horizontal swipe moves through this post's media (when it has several);
+    // vertical swipe still moves between posts.
+    if (multiMedia && Math.abs(diffX) > 50 && Math.abs(diffX) > Math.abs(diffY)) {
+      goToMedia((i) => (diffX > 0 ? i + 1 : i - 1));
+      return;
+    }
     if (Math.abs(diffX) < 30 && Math.abs(diffY) > 50) {
       if (diffY > 0) goToNext();
       else goToPrev();
     }
   };
 
-  // Prevent horizontal scroll/swipe
+  // Block horizontal panning unless this post actually has media to swipe through
   const handleTouchMove = (e) => {
-    // Allow vertical scroll only
+    if (multiMedia) return;
     const touchX = e.touches[0].clientX;
     const touchY = e.touches[0].clientY;
     const diffX = Math.abs(touchX - touchStartX.current);
     const diffY = Math.abs(touchY - touchStartY.current);
-    
-    // If horizontal movement is greater than vertical, prevent it
+
     if (diffX > diffY && diffX > 10) {
       e.preventDefault();
     }
@@ -162,10 +234,29 @@ export function ReelPostViewer({ posts, initialIndex, user, profileUser, onClose
     return () => container.removeEventListener('wheel', handleWheel);
   }, [goToNext, goToPrev]);
 
-  const mediaUrl = currentPost?.media || currentPost?.image || '';
-  const fullUrl = mediaUrl.startsWith('http') ? mediaUrl : `${config.API_BASE_URL.replace('/api', '')}${mediaUrl}`;
-  const isVideo = mediaUrl.match(/\.(mp4|webm|ogg|mov)$/i) || mediaUrl.includes('video');
-  const videoUrl = fullUrl;
+  const toggleFullscreen = useCallback(async () => {
+    const el = containerRef.current;
+    if (!el) return;
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else if (el.requestFullscreen) {
+        await el.requestFullscreen();
+      }
+    } catch (_) {
+      // Fullscreen is best-effort; iOS Safari rejects it on non-video elements.
+    }
+  }, []);
+
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.muted = muted;
+  }, [muted, fullUrl]);
 
   const handleVideoClick = () => {
     if (videoRef.current) {
@@ -215,6 +306,26 @@ export function ReelPostViewer({ posts, initialIndex, user, profileUser, onClose
         .slide-in {
           animation: slideIn 0.3s ease-out;
         }
+        @keyframes rpvSpin { to { transform: rotate(360deg); } }
+        .rpv-spin { animation: rpvSpin 0.9s linear infinite; }
+        .rpv-ctl {
+          width: 32px; height: 32px; border-radius: 50%; border: none; padding: 0;
+          background: rgba(0,0,0,0.5); backdrop-filter: blur(10px); color: #fff;
+          display: flex; align-items: center; justify-content: center; cursor: pointer;
+          -webkit-tap-highlight-color: transparent;
+        }
+        .rpv-ctl:hover { background: rgba(0,0,0,0.72); }
+        .rpv-arrow {
+          position: absolute; top: 50%; transform: translateY(-50%); z-index: 60;
+          width: 38px; height: 38px; border-radius: 50%; border: none; padding: 0;
+          background: rgba(0,0,0,0.48); backdrop-filter: blur(10px); color: #fff;
+          display: flex; align-items: center; justify-content: center; cursor: pointer;
+          -webkit-tap-highlight-color: transparent;
+        }
+        .rpv-arrow:hover { background: rgba(0,0,0,0.7); }
+        @media (prefers-reduced-motion: reduce) {
+          .slide-in { animation: none; }
+        }
       `}</style>
 
       {/* Close Button */}
@@ -257,8 +368,33 @@ export function ReelPostViewer({ posts, initialIndex, user, profileUser, onClose
         fontSize: 12,
         fontWeight: 600,
       }}>
-        {currentIndex + 1} / {posts.length}
+        {multiMedia
+          ? `${mediaIndex + 1} / ${mediaList.length}`
+          : `${currentIndex + 1} / ${posts.length}`}
       </div>
+
+      {/* Video controls — kept clear of the caption panel below */}
+      {isVideo && mediaState !== 'error' && (
+        <div style={{
+          position: 'absolute', top: 8, right: 8, zIndex: 100,
+          display: 'flex', gap: 8, transform: 'translateY(40px)',
+        }}>
+          <button
+            onClick={(e) => { e.stopPropagation(); setMuted((m) => !m); }}
+            aria-label={muted ? 'Unmute' : 'Mute'}
+            className="rpv-ctl"
+          >
+            {muted ? <VolumeX size={17} /> : <Volume2 size={17} />}
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
+            aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+            className="rpv-ctl"
+          >
+            {isFullscreen ? <Minimize size={17} /> : <Maximize size={17} />}
+          </button>
+        </div>
+      )}
 
       {/* Main Content - Video/Image */}
       <div 
@@ -274,30 +410,107 @@ export function ReelPostViewer({ posts, initialIndex, user, profileUser, onClose
         }}
         onClick={isVideo ? handleVideoClick : undefined}
       >
-        {isVideo ? (
+        {mediaState === 'error' ? (
+          <div style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12,
+            color: 'rgba(255,255,255,0.75)', textAlign: 'center', padding: 24,
+          }}>
+            <ImageOff size={40} />
+            <div style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>
+              This media could not be loaded
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); setMediaState('loading'); }}
+              style={{
+                marginTop: 4, padding: '9px 18px', borderRadius: 12, cursor: 'pointer',
+                background: 'rgba(255,255,255,0.14)', border: '1px solid rgba(255,255,255,0.25)',
+                color: '#fff', fontSize: 13, fontWeight: 700,
+              }}
+            >
+              Try again
+            </button>
+          </div>
+        ) : isVideo ? (
           <video
             ref={videoRef}
+            key={videoUrl}
             src={videoUrl}
             style={{
               width: '100%',
               height: '100%',
               objectFit: 'contain',
+              opacity: mediaState === 'ready' ? 1 : 0,
+              transition: 'opacity 0.25s ease',
             }}
             autoPlay
             loop
             playsInline
-            muted={false}
+            muted={muted}
+            onLoadedData={() => setMediaState('ready')}
+            onError={() => setMediaState('error')}
           />
         ) : (
           <img
             src={fullUrl}
-            alt={currentPost.caption}
+            alt={currentPost.caption || ''}
             style={{
               width: '100%',
               height: '100%',
               objectFit: 'contain',
+              opacity: mediaState === 'ready' ? 1 : 0,
+              transition: 'opacity 0.25s ease',
             }}
+            onLoad={() => setMediaState('ready')}
+            onError={() => setMediaState('error')}
           />
+        )}
+
+        {/* Loading state */}
+        {mediaState === 'loading' && (
+          <div style={{
+            position: 'absolute', top: '50%', left: '50%',
+            transform: 'translate(-50%, -50%)', color: 'rgba(255,255,255,0.8)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <Loader size={34} className="rpv-spin" />
+          </div>
+        )}
+
+        {/* Per-post media navigation — only when a post carries more than one file */}
+        {multiMedia && mediaState !== 'error' && (
+          <>
+            <button
+              onClick={(e) => { e.stopPropagation(); goToMedia((i) => i - 1); }}
+              aria-label="Previous media"
+              className="rpv-arrow"
+              style={{ left: 10 }}
+            >
+              <ChevronLeft size={22} />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); goToMedia((i) => i + 1); }}
+              aria-label="Next media"
+              className="rpv-arrow"
+              style={{ right: 10 }}
+            >
+              <ChevronRight size={22} />
+            </button>
+            <div style={{
+              position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)',
+              display: 'flex', gap: 6, zIndex: 60,
+            }}>
+              {mediaList.map((_, i) => (
+                <span
+                  key={i}
+                  style={{
+                    width: i === mediaIndex ? 18 : 6, height: 6, borderRadius: 999,
+                    background: i === mediaIndex ? '#fff' : 'rgba(255,255,255,0.45)',
+                    transition: 'width 0.22s ease, background 0.22s ease',
+                  }}
+                />
+              ))}
+            </div>
+          </>
         )}
 
         {/* Pause indicator */}
@@ -339,75 +552,18 @@ export function ReelPostViewer({ posts, initialIndex, user, profileUser, onClose
         color: '#fff',
         zIndex: 50,
       }}>
-        {/* User Info */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          marginBottom: 12,
-        }}>
-          {profileUser?.profile_photo ? (
-            <img
-              src={profileUser.profile_photo.startsWith('http') ? profileUser.profile_photo : `${config.API_BASE_URL.replace('/api', '')}${profileUser.profile_photo}`}
-              alt="Profile"
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: '50%',
-                objectFit: 'cover',
-                border: '2px solid #fff',
-                flexShrink: 0,
-              }}
-            />
-          ) : (
-            <div style={{
-              width: 40,
-              height: 40,
-              borderRadius: '50%',
-              background: 'rgba(255,255,255,0.2)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: 18,
-              border: '2px solid #fff',
-              flexShrink: 0,
-            }}>
-              👤
-            </div>
-          )}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ 
-              fontSize: 15, 
-              fontWeight: 700,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}>
-              @{profileUser?.username}
-            </div>
-            <div style={{ fontSize: 12, opacity: 0.8 }}>
-              {getRelativeTime(new Date(currentPost.created_at || currentPost.timestamp))}
-            </div>
-          </div>
+        {/* Author + caption. Bound to the post, so it is untouched while the
+            user moves between that post's media. */}
+        <div style={{ marginBottom: 14 }}>
+          <PostCaptionOverlay
+            key={currentPost.id}
+            post={currentPost}
+            author={profileUser}
+            onOpenProfile={onShowProfile}
+            onHashtagClick={onHashtagClick}
+            onMentionClick={onMentionClick}
+          />
         </div>
-
-        {/* Caption */}
-        {currentPost.caption && (
-          <div style={{
-            fontSize: 14,
-            lineHeight: 1.5,
-            marginBottom: 14,
-            maxHeight: 72,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            display: '-webkit-box',
-            WebkitLineClamp: 3,
-            WebkitBoxOrient: 'vertical',
-          }}>
-            <span style={{ fontWeight: 700 }}>{profileUser?.username} </span>
-            {currentPost.caption}
-          </div>
-        )}
 
         {/* Action Buttons */}
         <div style={{
@@ -415,7 +571,7 @@ export function ReelPostViewer({ posts, initialIndex, user, profileUser, onClose
           gap: 20,
           alignItems: 'center',
         }}>
-          <button
+          <button aria-label="Like"
             onClick={handleLike}
             style={{
               background: 'none',
@@ -430,7 +586,7 @@ export function ReelPostViewer({ posts, initialIndex, user, profileUser, onClose
             <Heart size={22} fill={liked ? "#fff" : "none"} color="#fff" />
             <span style={{ fontSize: 14, fontWeight: 700 }}>{likeCount}</span>
           </button>
-          <button
+          <button aria-label="Comments"
             onClick={handleComment}
             style={{
               background: 'none',
@@ -445,7 +601,7 @@ export function ReelPostViewer({ posts, initialIndex, user, profileUser, onClose
             <MessageCircle size={22} color="#fff" />
             <span style={{ fontSize: 14, fontWeight: 700 }}>{currentPost.comments_count || 0}</span>
           </button>
-          <button
+          <button aria-label="Share"
             onClick={handleShare}
             style={{
               background: 'none',

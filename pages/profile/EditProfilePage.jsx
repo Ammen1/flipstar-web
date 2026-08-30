@@ -149,7 +149,7 @@ export function EditProfilePage({ user, onBack, onSave }) {
         gap: 12,
         zIndex: 100,
       }}>
-        <button
+        <button aria-label="Go back"
           onClick={onBack}
           style={{
             background: "none",

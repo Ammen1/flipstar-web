@@ -291,7 +291,7 @@ export function CampaignDetailPage({ campaignId, onBack, onShowLeaderboard, onSh
           borderBottom: isMobile ? `1px solid ${T.border}` : 'none',
           display: 'flex', alignItems: 'center', gap: 10,
         }}>
-          <button
+          <button aria-label="Go back"
             onClick={onBack}
             style={{
               background: 'none', border: 'none', cursor: 'pointer',

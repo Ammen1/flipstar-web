@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   Wallet, Coins, ArrowDownToLine, ArrowUpFromLine, Gift,
   TrendingUp, TrendingDown, Calendar, Clock, CheckCircle2,
@@ -37,8 +37,30 @@ function writeCache(summary, config) {
   } catch {}
 }
 
-export function WalletPage({ theme, onBack, showTopUpOnMount, onShowCoinPurchase }) {
-  const T = theme || defaultTheme();
+// This page was written against its own light-mode `defaultTheme()`, which
+// defines `card` and is only used when no theme is passed. The app's real theme
+// exposes `cardBg` and has no `mode`, so `T.card` was undefined at every use and
+// `T.mode` never equalled 'dark' — which is why the modal fell through to its
+// white fallback and the soft panels picked light-theme colours inside a dark
+// app. Normalise once here so every reference below resolves correctly.
+function normalizeWalletTheme(raw) {
+  const bg = raw.bg || '#0D0D0D';
+  const isDark = (() => {
+    const h = String(bg).trim().replace('#', '');
+    if (h.length !== 6 || /[^0-9a-f]/i.test(h)) return true;
+    const n = parseInt(h, 16);
+    const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    return (0.299 * r + 0.587 * g + 0.114 * b) < 140;
+  })();
+  return {
+    ...raw,
+    card: raw.card || raw.cardBg || (isDark ? '#1A1A1A' : '#FFFFFF'),
+    mode: raw.mode || (isDark ? 'dark' : 'light'),
+  };
+}
+
+export function WalletPage({ theme, onBack, onShowCoinPurchase }) {
+  const T = useMemo(() => normalizeWalletTheme(theme || defaultTheme()), [theme]);
   const [isDesktop, setIsDesktop] = useState(window.innerWidth > 1024);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 480);
   const [isTablet, setIsTablet] = useState(window.innerWidth >= 480 && window.innerWidth < 768);
@@ -65,7 +87,6 @@ export function WalletPage({ theme, onBack, showTopUpOnMount, onShowCoinPurchase
   const [error, setError] = useState('');
 
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
-  const [showTopUpModal, setShowTopUpModal] = useState(showTopUpOnMount || false);
   const [showReinvestModal, setShowReinvestModal] = useState(false);
 
   useEffect(() => {
@@ -137,7 +158,7 @@ export function WalletPage({ theme, onBack, showTopUpOnMount, onShowCoinPurchase
         {/* Header with back button always available */}
         <div style={{ ...styles.header, background: T.card, borderColor: T.border }}>
           {onBack && (
-            <button onClick={onBack} style={styles.backBtn}>
+            <button aria-label="Go back" onClick={onBack} style={styles.backBtn}>
               <ChevronLeft size={24} color={T.txt} />
             </button>
           )}
@@ -163,7 +184,7 @@ export function WalletPage({ theme, onBack, showTopUpOnMount, onShowCoinPurchase
       <div style={{ ...styles.container, background: T.bg, padding: 20 }}>
         <div style={{ ...styles.header, background: T.card, borderColor: T.border }}>
           {onBack && (
-            <button onClick={onBack} style={styles.backBtn}>
+            <button aria-label="Go back" onClick={onBack} style={styles.backBtn}>
               <ChevronLeft size={24} color={T.txt} />
             </button>
           )}
@@ -185,12 +206,12 @@ export function WalletPage({ theme, onBack, showTopUpOnMount, onShowCoinPurchase
   const withdrawal = summary?.withdrawal || {};
 
   return (
-    <div style={{ background: T.bg, position: 'fixed', inset: 0, zIndex: 50, left: isDesktop ? 280 : 0 }}>
-      <div style={{ ...styles.container, height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ background: T.bg, width: '100%', minHeight: '100%' }}>
+      <div style={styles.container}>
         {/* Header */}
         <div style={{ ...styles.header, background: T.card, borderColor: T.border }}>
           {onBack && (
-            <button onClick={onBack} style={styles.backBtn}>
+            <button aria-label="Go back" onClick={onBack} style={styles.backBtn}>
               <ChevronLeft size={24} color={T.txt} />
             </button>
           )}
@@ -205,8 +226,11 @@ export function WalletPage({ theme, onBack, showTopUpOnMount, onShowCoinPurchase
           </button>
         </div>
 
-        {/* Scrollable Content Area */}
-        <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 40 }}>
+        {/* Content flows into the app shell's own scroll container. This used
+            to be `flex:1; overflowY:auto`, a second scroller nested inside
+            <main> -- which is what drew the extra scrollbar down the right of
+            the page and gave the wallet two competing scroll positions. */}
+        <div style={{ paddingBottom: 40 }}>
           {/* Three Horizontal Dashboard Cards */}
           <div style={{
             padding: '16px',
@@ -215,24 +239,16 @@ export function WalletPage({ theme, onBack, showTopUpOnMount, onShowCoinPurchase
             gap: 12,
           }}>
         {/* Card 1: Coins */}
-        <div style={{
-          padding: 18,
-          borderRadius: 16,
-          background: 'linear-gradient(135deg, #8fc441 0%, #6ba835 100%)',
-          color: '#1A1A1A',
-          boxShadow: '0 6px 20px rgba(143,196,65,0.25)',
-          display: 'flex',
-          flexDirection: 'column',
-          minHeight: 180,
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, opacity: 0.85, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+        <div style={heroCard(T, '#8fc441')}>
+          <span style={heroAccentBar('#8fc441')} />
+          <div style={heroLabel(T, '#8fc441')}>
             <Coins size={14} /> Coins
           </div>
-          <div style={{ fontSize: 32, fontWeight: 900, marginTop: 6, lineHeight: 1.1 }}>
+          <div style={heroValue(T)}>
             {formatNumber(balance.total)}
           </div>
-          <div style={{ fontSize: 11, opacity: 0.8, marginTop: 2, lineHeight: 1.3 }}>Total Coins</div>
-          <div style={{ marginTop: 'auto', paddingTop: 12, borderTop: '1px solid rgba(0,0,0,0.15)' }}>
+          <div style={heroCaption(T)}>Total Coins</div>
+          <div style={heroFoot(T)}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4, lineHeight: 1.3 }}>
               <span style={{ opacity: 0.8 }}>Earned</span>
               <strong>{formatNumber(balance.earned)}</strong>
@@ -249,24 +265,16 @@ export function WalletPage({ theme, onBack, showTopUpOnMount, onShowCoinPurchase
         </div>
 
         {/* Card 2: Points */}
-        <div style={{
-          padding: 18,
-          borderRadius: 16,
-          background: 'linear-gradient(135deg, #8B5CF6 0%, #6366F1 100%)',
-          color: '#fff',
-          boxShadow: '0 6px 20px rgba(139,92,246,0.25)',
-          display: 'flex',
-          flexDirection: 'column',
-          minHeight: 180,
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, opacity: 0.9, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+        <div style={heroCard(T, '#A78BFA')}>
+          <span style={heroAccentBar('#A78BFA')} />
+          <div style={heroLabel(T, '#A78BFA')}>
             <Gift size={14} /> Points
           </div>
-          <div style={{ fontSize: 32, fontWeight: 900, marginTop: 6, lineHeight: 1.1 }}>
+          <div style={heroValue(T)}>
             {formatNumber(points.current)}
           </div>
-          <div style={{ fontSize: 11, opacity: 0.85, marginTop: 2, lineHeight: 1.3 }}>Current Balance</div>
-          <div style={{ marginTop: 'auto', paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.2)' }}>
+          <div style={heroCaption(T)}>Current Balance</div>
+          <div style={heroFoot(T)}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4, lineHeight: 1.3 }}>
               <span style={{ opacity: 0.85 }}>Earned Total</span>
               <strong>{formatNumber(points.earned_total)}</strong>
@@ -279,20 +287,12 @@ export function WalletPage({ theme, onBack, showTopUpOnMount, onShowCoinPurchase
         </div>
 
         {/* Card 3: Withdrawal */}
-        <div style={{
-          padding: 18,
-          borderRadius: 16,
-          background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
-          color: '#fff',
-          boxShadow: '0 6px 20px rgba(16,185,129,0.25)',
-          display: 'flex',
-          flexDirection: 'column',
-          minHeight: 180,
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, opacity: 0.9, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+        <div style={heroCard(T, '#34D399')}>
+          <span style={heroAccentBar('#34D399')} />
+          <div style={heroLabel(T, '#34D399')}>
             <ArrowUpFromLine size={14} /> Withdraw
           </div>
-          <div style={{ fontSize: 32, fontWeight: 900, marginTop: 6, lineHeight: 1.1 }}>
+          <div style={heroValue(T)}>
             {pointsToBirr(points.current, config?.points_per_birr).toFixed(2)}
           </div>
           <div style={{ fontSize: 11, opacity: 0.85, marginTop: 2, lineHeight: 1.3 }}>ETB Available</div>
@@ -326,10 +326,7 @@ export function WalletPage({ theme, onBack, showTopUpOnMount, onShowCoinPurchase
       {/* Action buttons */}
       <div style={{ padding: '0 16px', display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 10 }}>
         <button
-          onClick={() => {
-            if (onShowCoinPurchase) onShowCoinPurchase();
-            else setShowTopUpModal(true);
-          }}
+          onClick={onShowCoinPurchase}
           style={btnPrimary(T)}
         >
           <ArrowDownToLine size={18} /> Buy Coins
@@ -415,14 +412,6 @@ export function WalletPage({ theme, onBack, showTopUpOnMount, onShowCoinPurchase
         />
       )}
 
-      {showTopUpModal && (
-        <TopUpModal
-          theme={T}
-          packages={config?.packages || []}
-          onClose={() => setShowTopUpModal(false)}
-        />
-      )}
-
       {showReinvestModal && (
         <ReinvestModal
           theme={T}
@@ -487,10 +476,12 @@ function OverviewTab({ theme: T, totals, withdrawal, recentTx, config }) {
         }}>
           <AlertCircle size={20} color="#F59E0B" />
           <div style={{ flex: 1, fontSize: 13, color: T.sub }}>
-            Earn <strong style={{ color: T.txt }}>{withdrawal.min_points?.toLocaleString()}</strong> points
-            to unlock withdrawal to Birr. You have <strong style={{ color: T.txt }}>
-              {/* current earned shown in main balance card */}
-            </strong>
+            You need <strong style={{ color: T.txt }}>
+              {(withdrawal.min_points ?? config?.withdrawal_min_points ?? 100).toLocaleString()}
+            </strong> points to withdraw to Birr &mdash; you have{' '}
+            <strong style={{ color: T.txt }}>
+              {(withdrawal.current_points ?? totals?.points_current ?? 0).toLocaleString()}
+            </strong>.
           </div>
         </div>
       )}
@@ -502,7 +493,10 @@ function OverviewTab({ theme: T, totals, withdrawal, recentTx, config }) {
       {recentTx.length === 0 ? (
         <EmptyState theme={T} icon={<Coins size={32} />} title="No transactions yet" />
       ) : (
-        <div style={{ maxHeight: 400, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        /* Recent Activity flows with the page. Capping it at 400px made a
+           scroll region inside a scroll region: the list drew its own bar and
+           the wheel fought over which one moved. */
+        <div>
           {recentTx.map((tx) => <TransactionRow key={tx.id} tx={tx} theme={T} />)}
         </div>
       )}
@@ -592,7 +586,11 @@ function TransactionRow({ tx, theme: T }) {
       </div>
       <div style={{ textAlign: 'right' }}>
         <div style={{ fontSize: 15, fontWeight: 700, color }}>
-          {isCredit ? '+' : ''}{tx.coins.toLocaleString()}
+          {/* A transaction missing its amount must not white-screen the whole
+              wallet. The API is not consistent about these names elsewhere
+              (comment_count vs comments_count, votes vs likes_count), so an
+              amount/coins divergence is a realistic way for this to break. */}
+          {isCredit ? '+' : ''}{Number(tx.coins ?? tx.amount ?? 0).toLocaleString()}
         </div>
         <div style={{ fontSize: 11, color: T.sub }}>{unitLabel}</div>
       </div>
@@ -907,294 +905,6 @@ function WithdrawModal({ theme: T, balance, points, config, onClose, onSuccess }
 }
 
 // ---------------------------------------------------------------
-// Top Up (Buy Coins) Modal
-// ---------------------------------------------------------------
-
-function TopUpModal({ theme: T, packages, onClose }) {
-  const [selectedPackage, setSelectedPackage] = useState(null);
-  const [paymentMethod, setPaymentMethod] = useState('telebirr'); // 'telebirr' | 'airtime'
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [ussdStatus, setUssdStatus] = useState(null); // 'pending' | 'success' | 'failed'
-  const isInSuperApp = telebirrH5.isInSuperApp();
-
-  // Fetch user's phone number when modal opens
-  useEffect(() => {
-    const fetchPhoneNumber = async () => {
-      try {
-        console.log('[TopUpModal] Fetching user profile for phone number...');
-        const profile = await api.request('/profile/me/');
-        console.log('[TopUpModal] Profile data:', profile);
-        if (profile && profile.phone_number) {
-          console.log('[TopUpModal] Phone number from profile:', profile.phone_number);
-          setPhoneNumber(profile.phone_number);
-        } else {
-          console.log('[TopUpModal] No phone number found in profile');
-        }
-      } catch (error) {
-        console.error('[TopUpModal] Failed to fetch phone number:', error);
-      }
-    };
-    fetchPhoneNumber();
-  }, []);
-
-  // Reset payment method when package changes
-  useEffect(() => {
-    if (selectedPackage) {
-      // Default to telebirr, airtime only available for 10 ETB package on webapp
-      setPaymentMethod('telebirr');
-    }
-  }, [selectedPackage]);
-
-  // Poll for USSD payment status
-  useEffect(() => {
-    if (ussdStatus === 'pending' && selectedPackage) {
-      let initialBalance = null;
-      
-      const pollInterval = setInterval(async () => {
-        try {
-          const walletData = await api.request('/wallet/');
-          const currentBalance = walletData?.coin_balance || 0;
-          
-          // Store initial balance on first poll
-          if (initialBalance === null) {
-            initialBalance = currentBalance;
-            console.log('[TopUpModal] Initial coin balance:', initialBalance);
-          }
-          
-          // Check if coins were credited (balance increased by at least the package amount)
-          if (currentBalance >= initialBalance + selectedPackage.total_coins) {
-            console.log('[TopUpModal] Payment successful! Balance increased from', initialBalance, 'to', currentBalance);
-            setUssdStatus('success');
-            clearInterval(pollInterval);
-            alert(`Payment successful! ${selectedPackage.total_coins} coins added.`);
-            onClose();
-          } else {
-            console.log('[TopUpModal] Polling wallet... Current balance:', currentBalance, 'Expected:', initialBalance + selectedPackage.total_coins);
-          }
-        } catch (error) {
-          console.error('[TopUpModal] Error polling wallet:', error);
-        }
-      }, 3000); // Poll every 3 seconds
-
-      // Stop polling after 2 minutes
-      const timeout = setTimeout(() => {
-        clearInterval(pollInterval);
-        if (ussdStatus === 'pending') {
-          setUssdStatus(null);
-          alert('Payment timed out. If you completed the payment, your coins will be credited shortly.');
-        }
-      }, 120000);
-
-      return () => {
-        clearInterval(pollInterval);
-        clearTimeout(timeout);
-      };
-    }
-  }, [ussdStatus, selectedPackage, onClose]);
-
-  const handlePurchase = async () => {
-    if (!selectedPackage) return;
-
-    // Validate phone number
-    if (!phoneNumber || phoneNumber.length < 10) {
-      alert('Please enter a valid phone number.');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      // SuperApp: Use Telebirr H5 for all packages
-      if (isInSuperApp) {
-        const result = await telebirrH5.purchasePackage(selectedPackage.id);
-
-        if (result.success && !result.pending) {
-          alert(`Payment successful! ${result.coins_added || ''} coins added.`);
-          onClose();
-        } else if (result.success && result.pending) {
-          alert('Payment received. Your coins will appear shortly.');
-          onClose();
-        } else if (result.error === 'NOT_IN_SUPERAPP') {
-          alert('Please open Flipstar inside the telebirr SuperApp to pay with telebirr.');
-        } else if (result.error === 'PAY_TIMEOUT') {
-          alert('Payment was not completed. If you paid, your coins will be credited shortly.');
-          onClose();
-        } else {
-          alert(result.error || 'Payment failed. Please try again.');
-        }
-      }
-      // Webapp: Use USSD Push for Telebirr, Airtime for 10 ETB package
-      else {
-        if (paymentMethod === 'airtime') {
-          // Airtime purchase via Onevas (only for 10 ETB package)
-          const response = await api.request('/charging/coin-purchase/', {
-            method: 'POST',
-            body: JSON.stringify({
-              phone_number: phoneNumber,
-              coins: selectedPackage.total_coins,
-            }),
-          });
-
-          if (response.success) {
-            alert(`Payment successful! ${selectedPackage.total_coins} coins added.`);
-            onClose();
-          } else {
-            alert(response.error || 'Airtime payment failed. Please try again.');
-          }
-        } else {
-          // Telebirr USSD Push for webapp
-          const response = await api.request('/wallet/telebirr-ussd-purchase/', {
-            method: 'POST',
-            body: JSON.stringify({
-              package_id: selectedPackage.id,
-              phone_number: phoneNumber,
-            }),
-          });
-
-          if (response.success) {
-            setUssdStatus('pending');
-            alert('USSD Push sent! Please enter your PIN on your phone to complete the payment.');
-          } else {
-            alert(response.error || 'Failed to initiate USSD payment. Please try again.');
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Payment error:', error);
-      alert('Payment failed. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <Modal onClose={onClose} theme={T} title="Buy Coins">
-      {packages.length === 0 ? (
-        <EmptyState theme={T} icon={<Gift size={32} />} title="No packages available"
-                    subtitle="Check back soon for coin packages." />
-      ) : (
-        <>
-          {/* Package Dropdown */}
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ ...modalLabel(T), marginBottom: 6 }}>Select Package</label>
-            <select
-              value={selectedPackage?.id || ''}
-              onChange={(e) => {
-                const pkg = packages.find(p => p.id === parseInt(e.target.value));
-                setSelectedPackage(pkg || null);
-              }}
-              style={modalInput(T)}
-            >
-              <option value="">Choose a package...</option>
-              {packages.map((pkg) => (
-                <option key={pkg.id} value={pkg.id}>
-                  {pkg.name} - {pkg.total_coins.toLocaleString()} coins ({Number(pkg.price_etb).toFixed(0)} ETB)
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Selected Package Details */}
-          {selectedPackage && (
-            <div style={{
-              padding: 12,
-              borderRadius: 8,
-              background: T.pri + '10',
-              marginBottom: 16,
-              border: `1px solid ${T.pri + '30'}`,
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{
-                  width: 36, height: 36, borderRadius: 8,
-                  background: T.pri + '20',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}>
-                  <Coins size={20} color={T.pri} />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: T.txt }}>
-                    {selectedPackage.total_coins.toLocaleString()} coins
-                  </div>
-                  {selectedPackage.bonus_coins > 0 && (
-                    <div style={{ fontSize: 11, color: '#10B981', fontWeight: 600 }}>
-                      +{selectedPackage.bonus_coins} bonus
-                    </div>
-                  )}
-                </div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: T.pri }}>
-                  {Number(selectedPackage.price_etb).toFixed(0)} ETB
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Payment Method Dropdown (only for 10 ETB package on webapp) */}
-          {!isInSuperApp && selectedPackage && selectedPackage.allows_airtime && (
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ ...modalLabel(T), marginBottom: 6 }}>Payment Method</label>
-              <select
-                value={paymentMethod}
-                onChange={(e) => setPaymentMethod(e.target.value)}
-                style={modalInput(T)}
-              >
-                <option value="telebirr">Telebirr (USSD Push)</option>
-                <option value="airtime">Airtime (Direct Charge)</option>
-              </select>
-              <div style={{ fontSize: 11, color: T.sub, marginTop: 4 }}>
-                {paymentMethod === 'airtime' ? 'Charged directly from your airtime balance' : 'Enter PIN on your phone via USSD'}
-              </div>
-            </div>
-          )}
-
-          {/* Phone Number Input */}
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ ...modalLabel(T), marginBottom: 6 }}>Phone Number</label>
-            <input
-              type="tel"
-              value={phoneNumber}
-              onChange={(e) => setPhoneNumber(e.target.value)}
-              placeholder="+251 9xx xxx xxx"
-              style={modalInput(T)}
-            />
-          </div>
-
-          {/* USSD Status Message */}
-          {ussdStatus === 'pending' && (
-            <div style={{
-              padding: 12,
-              borderRadius: 8,
-              background: '#FEF3C7',
-              marginBottom: 16,
-              border: '1px solid #F59E0B',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-            }}>
-              <Loader size={18} color="#F59E0B" style={{ animation: 'spin 1s linear infinite' }} />
-              <div style={{ fontSize: 13, color: '#92400E' }}>
-                Waiting for payment... Please enter your PIN on your phone.
-              </div>
-            </div>
-          )}
-
-          <button
-            onClick={handlePurchase}
-            disabled={!selectedPackage || loading}
-            style={{ ...btnPrimary(T), width: '100%', opacity: (!selectedPackage || loading) ? 0.5 : 1 }}
-          >
-            {loading ? 'Processing...' : selectedPackage ? (
-              isInSuperApp ? `Pay ${Number(selectedPackage.price_etb).toFixed(0)} ETB via Telebirr` :
-              paymentMethod === 'airtime' ? `Pay ${Number(selectedPackage.price_etb).toFixed(0)} ETB via Airtime` :
-              `Pay ${Number(selectedPackage.price_etb).toFixed(0)} ETB via Telebirr (USSD)`
-            ) : 'Select a package'}
-          </button>
-        </>
-      )}
-    </Modal>
-  );
-}
-
-// ---------------------------------------------------------------
 // Re-invest Points Modal (Points to Coins)
 // ---------------------------------------------------------------
 
@@ -1418,6 +1128,56 @@ function formatDate(iso) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+// Hero metric cards share the app's dark card surface; the metric's hue is
+// carried by the icon, the number and a hairline accent rather than by a
+// full-bleed gradient. Three saturated gradient panels read as three unrelated
+// widgets next to the dark cards further down the same page.
+function heroCard(T, accent) {
+  return {
+    position: 'relative',
+    padding: 18,
+    borderRadius: 16,
+    background: T.card,
+    border: `1px solid ${T.border}`,
+    boxShadow: '0 1px 2px rgba(0,0,0,.28)',
+    color: T.txt,
+    display: 'flex',
+    flexDirection: 'column',
+    minHeight: 172,
+    overflow: 'hidden',
+  };
+}
+
+function heroAccentBar(accent) {
+  return {
+    position: 'absolute', top: 0, left: 0, right: 0, height: 3,
+    background: accent,
+  };
+}
+
+const heroLabel = (T, accent) => ({
+  display: 'flex', alignItems: 'center', gap: 6,
+  fontSize: 11.5, fontWeight: 700, letterSpacing: 0.6,
+  textTransform: 'uppercase', color: accent,
+});
+
+const heroValue = (T) => ({
+  fontSize: 34, fontWeight: 800, marginTop: 8, lineHeight: 1.05,
+  letterSpacing: '-0.02em', color: T.txt, fontVariantNumeric: 'tabular-nums',
+});
+
+const heroCaption = (T) => ({ fontSize: 11.5, color: T.sub, marginTop: 3, lineHeight: 1.3 });
+
+const heroFoot = (T) => ({
+  marginTop: 'auto', paddingTop: 12, borderTop: `1px solid ${T.border}`,
+});
+
+const heroRow = (T) => ({
+  display: 'flex', justifyContent: 'space-between', gap: 10,
+  fontSize: 11.5, marginBottom: 4, lineHeight: 1.35, color: T.sub,
+  fontVariantNumeric: 'tabular-nums',
+});
+
 function defaultTheme() {
   return {
     bg: '#F9FAFB', card: '#FFFFFF', txt: '#111827', sub: '#6B7280',
@@ -1426,12 +1186,10 @@ function defaultTheme() {
 }
 
 const styles = {
-  container: { 
-    minHeight: '100vh', 
+  container: {
+    minHeight: '100%',
     paddingBottom: 120,
     boxSizing: 'border-box',
-    display: 'flex',
-    flexDirection: 'column'
   },
   header: {
     display: 'flex', alignItems: 'center', gap: 8,

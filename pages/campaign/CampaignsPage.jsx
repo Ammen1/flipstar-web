@@ -148,7 +148,7 @@ export function CampaignsPage({ onCampaignClick, onBack }) {
           borderBottom: isMobile ? `1px solid ${T.border}` : 'none',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <button
+            <button aria-label="Go back"
               onClick={onBack}
               style={{
                 background: 'none', border: 'none', cursor: 'pointer',

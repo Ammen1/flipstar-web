@@ -104,7 +104,7 @@ export function MasterCampaignLeaderboard({ masterCampaignId, onBack }) {
         alignItems: 'center',
         gap: 12,
       }}>
-        <button
+        <button aria-label="Go back"
           onClick={onBack}
           style={{
             background: 'none',

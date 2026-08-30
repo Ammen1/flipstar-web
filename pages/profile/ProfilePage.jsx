@@ -1,4 +1,4 @@
-import { useState, useEffect, memo } from "react";
+import { useState, useEffect, useCallback, memo } from "react";
 import { Grid, Film, Bookmark, Settings, ChevronLeft, UserPlus, UserCheck, Edit, Trash2, Edit2, MoreVertical, Trophy, Flag, Share2, Wallet, X, Crown, Coins, Flame, Ban, Shield } from "lucide-react";
 import api from "../../api";
 import config from "../../config";
@@ -8,6 +8,7 @@ import { useLanguage } from "../../contexts/LanguageContext";
 import { useBlock } from "../../contexts/BlockContext";
 import { ReelPostViewer } from "../../components/feed/ReelPostViewer";
 import CampaignStats from "../../components/campaign/CampaignStats";
+import { isVideoUrl } from '../../utils/media';
 
 // Profile page cache helpers
 const PROFILE_CACHE_KEY = (userId) => `profile_cache_${userId}`;
@@ -76,7 +77,12 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
   const [blocking, setBlocking] = useState(false);
   const [showBlockModal, setShowBlockModal] = useState(false);
   const [blockAction, setBlockAction] = useState(null); // 'block' or 'unblock'
-  const [hasActiveSubscription, setHasActiveSubscription] = useState(false);
+  // Three states, not two. `null` means "we could not find out" -- a server
+  // failure is not the same as "you are not subscribed", and converting one
+  // into the other is what pushed paying users to the subscribe page while
+  // /subscription/status/ was down.
+  const [hasActiveSubscription, setHasActiveSubscription] = useState(null);
+  const [subscriptionError, setSubscriptionError] = useState(null);
   const targetUserId = userId || user?.id;
   const [mounted, setMounted] = useState(false); // Prevent flash on initial load
 
@@ -88,20 +94,30 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
   }, [isOwnProfile]);
 
   // Fetch subscription status
-  useEffect(() => {
-    if (isOwnProfile && user) {
+  const refreshSubscriptionStatus = useCallback(async () => {
+    {
       const fetchSubscriptionStatus = async () => {
         try {
           const response = await api.request('/subscription/status/');
-          setHasActiveSubscription(response.has_subscription || false);
+          setHasActiveSubscription(Boolean(response?.has_subscription));
+          setSubscriptionError(null);
         } catch (error) {
+          // Leave the answer unknown and say so, rather than silently
+          // downgrading a server fault into "not subscribed".
           console.error('Failed to fetch subscription status:', error);
-          setHasActiveSubscription(false);
+          setHasActiveSubscription(null);
+          setSubscriptionError(
+            'Unable to check your subscription right now. Please try again.'
+          );
         }
       };
-      fetchSubscriptionStatus();
+      await fetchSubscriptionStatus();
     }
-  }, [isOwnProfile, user]);
+  }, []);
+
+  useEffect(() => {
+    if (isOwnProfile && user) refreshSubscriptionStatus();
+  }, [isOwnProfile, user, refreshSubscriptionStatus]);
 
   const loadStreakData = async () => {
     try {
@@ -527,7 +543,7 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
           data = Array.isArray(raw) ? raw : (raw.results || []);
           data = data.filter(post => {
             const url = post.media || post.image || '';
-            return url.match(/\.(mp4|webm|ogg|mov)$/i) || url.includes('video');
+            return isVideoUrl(url);
           });
         } else {
           const raw = await api.getUserPosts(targetUserId);
@@ -578,7 +594,7 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
             borderBottom: `1px solid ${T.border}`,
             display: "flex", alignItems: "center", gap: 16,
           }}>
-            <button
+            <button aria-label="Go back"
               onClick={onBack}
               style={{ background: "none", border: "none", cursor: "pointer", padding: 8, display: "flex", alignItems: "center", color: '#8fc441' }}
             >
@@ -625,7 +641,7 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
               alignItems: "center",
               gap: 16,
             }}>
-              <button
+              <button aria-label="Go back"
                 onClick={onBack}
                 style={{
                   background: "none", border: "none", cursor: "pointer",
@@ -666,8 +682,19 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
                   </button>
                   <button
                     onClick={() => {
+                      if (hasActiveSubscription === null) {
+                        // Status unknown (request failed). Do not gate on a
+                        // guess; retry instead.
+                        setSubscriptionError(
+                          'Unable to check your subscription right now. Please try again.'
+                        );
+                        return;
+                      }
                       if (!hasActiveSubscription) {
-                        alert('You need an active subscription to purchase coins. Please subscribe first.');
+                        // Go straight to the subscription page. The native
+                        // alert that used to fire here blocked the tap behind a
+                        // browser dialog and read as the app opening something
+                        // unexpected; the page itself explains what is needed.
                         onShowSubscription();
                         return;
                       }
@@ -702,7 +729,7 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
                   >
                     <Crown size={24} />
                   </button>
-                  <button
+                  <button aria-label="Settings"
                     onClick={onShowSettings}
                     style={{
                       background: 'none', border: 'none', cursor: 'pointer',
@@ -715,6 +742,33 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
               )}
             </div>
           </div>
+
+      {/* A failed status check is surfaced, not swallowed: the user is told
+          what is wrong and can retry, instead of being quietly told they are
+          not subscribed. */}
+      {subscriptionError && (
+        <div
+          role="alert"
+          style={{
+            margin: '8px 16px 0', padding: '10px 12px', borderRadius: 10,
+            background: 'rgba(245,165,36,0.10)', border: '1px solid rgba(245,165,36,0.35)',
+            color: '#F5A524', fontSize: 13, display: 'flex', alignItems: 'center', gap: 10,
+          }}
+        >
+          <span style={{ flex: 1, minWidth: 0 }}>{subscriptionError}</span>
+          <button
+            type="button"
+            onClick={() => { setSubscriptionError(null); setHasActiveSubscription(null); refreshSubscriptionStatus(); }}
+            style={{
+              background: 'rgba(245,165,36,0.18)', border: 'none', borderRadius: 8,
+              color: '#F5A524', fontWeight: 700, fontSize: 12, padding: '6px 12px',
+              cursor: 'pointer', flexShrink: 0,
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* ── Centered content container (Instagram-style) ─── */}
       <div style={{ maxWidth: 680, margin: '0 auto', width: '100%', overflowX: 'hidden' }}>
@@ -1015,7 +1069,7 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
               if (activeTab === 'saved') {
                 // Check if post is a video
                 const mediaUrl = post.media || post.image || '';
-                const isVideo = mediaUrl.match(/\.(mp4|webm|ogg|mov)$/i) || mediaUrl.includes('video');
+                const isVideo = isVideoUrl(mediaUrl);
                 
                 if (onShowPostDetail) {
                   // Navigate to correct page based on media type
@@ -1089,7 +1143,7 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
             {(() => {
               const mediaUrl = post.media || post.image || '';
               const fullUrl = mediaUrl.startsWith('http') ? mediaUrl : `${config.API_BASE_URL.replace('/api', '')}${mediaUrl}`;
-              const isVideo = mediaUrl.match(/\.(mp4|webm|ogg|mov)$/i) || mediaUrl.includes('video');
+              const isVideo = isVideoUrl(mediaUrl);
               
               if (!mediaUrl) {
                 return (
@@ -1308,7 +1362,7 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
                   
                   const isVideo = editMediaFile 
                     ? editMediaFile.type.startsWith('video/')
-                    : (editingPost.media || '').match(/\.(mp4|webm|ogg|mov)$/i) || (editingPost.media || '').includes('video');
+                    : isVideoUrl(editingPost.media);
                   
                   if (isVideo) {
                     return (
