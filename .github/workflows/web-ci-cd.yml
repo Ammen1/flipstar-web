@@ -35,7 +35,7 @@ env:
   GITOPS_REPO: Ammen1/flip-star
   GITOPS_BRANCH: main
   KUSTOMIZE_VERSION: "5.4.3"
-  TRIVY_VERSION: "v0.56.2"
+  TRIVY_VERSION: "v0.74.0"
   # Buildx otherwise uploads a build record to the Actions artifact store on
   # every run. Actions artifacts and Packages share ONE storage quota, and
   # exhausting it fails the run with "Artifact storage quota has been hit" --
@@ -67,16 +67,40 @@ jobs:
             .
 
       - name: Install Trivy
-        # Into RUNNER_TEMP, not /usr/local/bin. That directory is root-owned on
-        # the GitHub runner image and the job does not run as root, so the
-        # installer downloads the release, fails to write the binary, and exits
-        # 1 right after printing "found version" -- which reads like a download
-        # problem but is a permission one. Same reason the kustomize step below
-        # installs to RUNNER_TEMP.
+        # Pinned tarball straight from the GitHub release, checksum-verified.
+        #
+        # This used to pipe contrib/install.sh from `main` into sh, and it
+        # failed right after printing "found version" -- not because of the
+        # bindir permissions, but because the pinned version no longer exists:
+        # Aqua has deleted every release between v0.26.0 and v0.69.2, v0.56.2
+        # among them. The script fetches the checksum from the release
+        # (GITHUB_DOWNLOAD/$TAG/...), that 404s, and `set -e` ends the run
+        # before it ever tries to write the binary.
+        #
+        # Fetching the release directly also settles the other half of the
+        # problem: that script is unpinned and now routes the binary through
+        # get.trivy.dev rather than the release assets, so it can change under
+        # this workflow at any time -- exactly what the no-third-party-actions
+        # rule at the top of this file exists to prevent. Bumping
+        # TRIVY_VERSION is now the only thing needed to move versions.
         run: |
-          mkdir -p "${RUNNER_TEMP}/bin"
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sh -s -- -b "${RUNNER_TEMP}/bin" "${TRIVY_VERSION}"
+          version="${TRIVY_VERSION#v}"
+          tarball="trivy_${version}_Linux-64bit.tar.gz"
+          base="https://github.com/aquasecurity/trivy/releases/download/${TRIVY_VERSION}"
+
+          mkdir -p "${RUNNER_TEMP}/trivy" "${RUNNER_TEMP}/bin"
+          cd "${RUNNER_TEMP}/trivy"
+
+          curl -fsSL -o "${tarball}" "${base}/${tarball}"
+          curl -fsSL -o checksums.txt "${base}/trivy_${version}_checksums.txt"
+
+          # Only the tarball is in this directory, so --ignore-missing checks
+          # exactly it. sha256sum exits non-zero if nothing was verified, so a
+          # renamed asset fails here rather than installing something unchecked.
+          sha256sum --ignore-missing -c checksums.txt
+
+          tar -xzf "${tarball}" trivy
+          install -m 0755 trivy "${RUNNER_TEMP}/bin/trivy"
           echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
           "${RUNNER_TEMP}/bin/trivy" --version
 
