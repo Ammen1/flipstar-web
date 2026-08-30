@@ -67,10 +67,18 @@ jobs:
             .
 
       - name: Install Trivy
+        # Into RUNNER_TEMP, not /usr/local/bin. That directory is root-owned on
+        # the GitHub runner image and the job does not run as root, so the
+        # installer downloads the release, fails to write the binary, and exits
+        # 1 right after printing "found version" -- which reads like a download
+        # problem but is a permission one. Same reason the kustomize step below
+        # installs to RUNNER_TEMP.
         run: |
+          mkdir -p "${RUNNER_TEMP}/bin"
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sh -s -- -b /usr/local/bin "${TRIVY_VERSION}"
-          trivy --version
+            | sh -s -- -b "${RUNNER_TEMP}/bin" "${TRIVY_VERSION}"
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+          "${RUNNER_TEMP}/bin/trivy" --version
 
       # No continue-on-error, and no `|| true`. A CRITICAL or HIGH finding
       # fails the step, and every step below it -- including the push and the
