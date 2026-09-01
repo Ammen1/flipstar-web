@@ -66,7 +66,7 @@ function ProgressRing({ radius, stroke, progress, color }) {
 }
 
 // ── Main Component ────────────────────────────────────────────────────────────
-export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNavReels, onNavMessages, onNavProfile, unreadDmCount = 0, onShowCoinPurchase, subscriptionStatus, onShowSubscription }) {
+export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNavReels, onNavMessages, onNavProfile, unreadDmCount = 0, onShowCoinPurchase, onRequireAuth, subscriptionStatus, onShowSubscription }) {
   const { colors: T } = useTheme();
   // Stage
   const [stage, setStage] = useState('capture'); // 'capture' | 'details'
@@ -2595,61 +2595,24 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
       )}
 
       {/* ── INSUFFICIENT COINS MODAL ──────────────────────────────────────────── */}
-      {showInsufficientCoins && (
-        <div
-          onClick={(e) => {
-            // Prevent closing when clicking outside the modal content
-            e.stopPropagation();
-          }}
-          style={{
-            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 9999,
-            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-            gap: 20, animation: 'ep-fade-in 0.3s ease',
-          }}>
-          <div style={{
-            width: 96, height: 96, borderRadius: '50%',
-            background: 'linear-gradient(135deg, #EF4444, #DC2626)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <Coins size={48} color={T.white} strokeWidth={3} />
-          </div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: T.white }}>Insufficient Coins</div>
-          <div style={{ fontSize: 15, color: T.sub, textAlign: 'center', maxWidth: 300, padding: '0 20px' }}>
-            You need {postCost} coins to create a post. Purchase coins to continue.
-          </div>
-          <div style={{ display: 'flex', gap: 12, marginTop: 10 }}>
-            <button
-              onClick={() => setShowInsufficientCoins(false)}
-              style={{
-                padding: '12px 24px', borderRadius: 24, fontSize: 14, fontWeight: 700,
-                background: 'rgba(255,255,255,0.1)', color: T.white, border: 'none', cursor: 'pointer',
-              }}
-            >
-              OK
-            </button>
-            <button
-              onClick={() => {
-                console.log('[INSUFFICIENT_COINS] Purchase button clicked', { onShowCoinPurchase: !!onShowCoinPurchase });
-                setShowInsufficientCoins(false);
-                // Show coin purchase modal
-                if (onShowCoinPurchase) {
-                  onShowCoinPurchase();
-                } else {
-                  console.error('[INSUFFICIENT_COINS] onShowCoinPurchase not available');
-                  // Fallback: navigate to profile
-                  onNavProfile?.();
-                }
-              }}
-              style={{
-                padding: '12px 24px', borderRadius: 24, fontSize: 14, fontWeight: 700,
-                background: T.pri, color: T.white, border: 'none', cursor: 'pointer',
-              }}
-            >
-              Purchase Coins
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Not enough coins to post. The old inline panel's only real action
+          was onShowCoinPurchase(), which navigated to /buy-coins and unmounted
+          this page -- taking the recording, caption and overlays with it. The
+          shared popup buys in place, so the draft is still here afterwards and
+          the user just presses Post again. */}
+      <InsufficientCoinsModal
+        visible={showInsufficientCoins}
+        requiredCoins={postCost}
+        currentCoins={coinBalance}
+        actionLabel="post this video"
+        onClose={() => setShowInsufficientCoins(false)}
+        onRequireAuth={onRequireAuth}
+        onPurchased={(newBalance) => {
+          setCoinBalance(newBalance);
+          setShowInsufficientCoins(false);
+        }}
+        onBuyCoins={onShowCoinPurchase}
+      />
 
       {/* ── EXTENDED RECORDING INSUFFICIENT COINS MODAL ──────────────────────────── */}
       {showExtendedInsufficientModal && (

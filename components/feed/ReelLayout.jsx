@@ -39,6 +39,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import realtimeService from '../../services/RealtimeService';
 import { InsufficientCoinsModal } from '../common/InsufficientCoinsModal';
+import { readCoinError, INSUFFICIENT, AUTH } from '../../utils/coinErrors';
 import './ReelLayout.css';
 import { isVideoUrl, hasVideoExtension } from '../../utils/media';
 import { DesktopReelViewer } from './DesktopReelViewer';
@@ -193,6 +194,11 @@ export const ReelLayout = memo(function ReelLayout({
   const [insufficientCoinsModal, setInsufficientCoinsModal] = useState({
     show: false,
     requiredCoins: 0,
+    currentCoins: null,
+    actionLabel: 'continue',
+    // What to re-run once coins land, so the popup does not just close on
+    // an action the user still has not completed.
+    retry: null,
   });
 
   // Pull to refresh state
@@ -1071,12 +1077,19 @@ export const ReelLayout = memo(function ReelLayout({
         ),
       );
 
-      // Check for insufficient balance error
-      if (error?.response?.data?.error?.includes('Insufficient') || error?.response?.data?.required_coins) {
+      // Branch on the server's machine-readable code, not the wording of its
+      // message -- and tell a signed-out session apart from an empty wallet.
+      const coinErr = readCoinError(error);
+      if (coinErr.kind === INSUFFICIENT) {
         setInsufficientCoinsModal({
           show: true,
-          requiredCoins: error.response.data.required_coins || 0,
+          requiredCoins: coinErr.requiredCoins,
+          currentCoins: coinErr.currentCoins,
+          actionLabel: 'send this gift',
+          retry: null,
         });
+      } else if (coinErr.kind === AUTH) {
+        onRequireAuth?.();
       }
     }
   };
@@ -1252,6 +1265,9 @@ export const ReelLayout = memo(function ReelLayout({
           setInsufficientCoinsModal({
             show: true,
             requiredCoins: costShare,
+            currentCoins: balance,
+            actionLabel: 'share this video',
+            retry: null,
           });
           return;
         }
@@ -1331,12 +1347,17 @@ export const ReelLayout = memo(function ReelLayout({
           await api.request(`/reels/${shareVideo.id}/share/`, { method: 'POST' });
           setVideos(prev => prev.map(v => v.id === shareVideo.id ? { ...v, shares: (v.shares || 0) + 1 } : v));
         } catch (error) {
-          // Check for insufficient balance error
-          if (error?.response?.data?.error?.includes('Insufficient') || error?.response?.data?.required_coins) {
+          const coinErr = readCoinError(error);
+          if (coinErr.kind === INSUFFICIENT) {
             setInsufficientCoinsModal({
               show: true,
-              requiredCoins: error.response.data.required_coins || 0,
+              requiredCoins: coinErr.requiredCoins,
+              currentCoins: coinErr.currentCoins,
+              actionLabel: 'share this video',
+              retry: null,
             });
+          } else if (coinErr.kind === AUTH) {
+            onRequireAuth?.();
           }
         }
         return;
@@ -1348,12 +1369,17 @@ export const ReelLayout = memo(function ReelLayout({
         await api.request(`/reels/${shareVideo.id}/share/`, { method: 'POST' });
         setVideos(prev => prev.map(v => v.id === shareVideo.id ? { ...v, shares: (v.shares || 0) + 1 } : v));
       } catch (error) {
-        // Check for insufficient balance error
-        if (error?.response?.data?.error?.includes('Insufficient') || error?.response?.data?.required_coins) {
+        const coinErr = readCoinError(error);
+        if (coinErr.kind === INSUFFICIENT) {
           setInsufficientCoinsModal({
             show: true,
-            requiredCoins: error.response.data.required_coins || 0,
+            requiredCoins: coinErr.requiredCoins,
+            currentCoins: coinErr.currentCoins,
+            actionLabel: 'share this video',
+            retry: null,
           });
+        } else if (coinErr.kind === AUTH) {
+          onRequireAuth?.();
         }
       }
       const toast = document.createElement('div');
@@ -1384,12 +1410,17 @@ export const ReelLayout = memo(function ReelLayout({
         await api.request(`/reels/${shareVideo.id}/share/`, { method: 'POST' });
         setVideos(prev => prev.map(v => v.id === shareVideo.id ? { ...v, shares: (v.shares || 0) + 1 } : v));
       } catch (error) {
-        // Check for insufficient balance error
-        if (error?.response?.data?.error?.includes('Insufficient') || error?.response?.data?.required_coins) {
+        const coinErr = readCoinError(error);
+        if (coinErr.kind === INSUFFICIENT) {
           setInsufficientCoinsModal({
             show: true,
-            requiredCoins: error.response.data.required_coins || 0,
+            requiredCoins: coinErr.requiredCoins,
+            currentCoins: coinErr.currentCoins,
+            actionLabel: 'share this video',
+            retry: null,
           });
+        } else if (coinErr.kind === AUTH) {
+          onRequireAuth?.();
         }
       }
       setShareSent(targetUserId);
@@ -3229,6 +3260,7 @@ export const ReelLayout = memo(function ReelLayout({
       {showComments && (
         <div key={showComments}>
           <ModernCommentSection
+            onRequireAuth={onRequireAuth}
             variant={isMobile ? 'sheet' : 'panel'}
             reelId={showComments}
             user={user}
@@ -3409,9 +3441,20 @@ export const ReelLayout = memo(function ReelLayout({
       {/* Insufficient Coins Modal */}
       <InsufficientCoinsModal
         visible={insufficientCoinsModal.show}
-        onClose={() => setInsufficientCoinsModal({ show: false, requiredCoins: 0 })}
+        requiredCoins={insufficientCoinsModal.requiredCoins}
+        currentCoins={insufficientCoinsModal.currentCoins}
+        actionLabel={insufficientCoinsModal.actionLabel}
+        onClose={() => setInsufficientCoinsModal({ show: false, requiredCoins: 0, currentCoins: null, actionLabel: 'continue', retry: null })}
+        onRequireAuth={onRequireAuth}
+        onPurchased={() => {
+          // The coins are in. Pick the action back up rather than making the
+          // user find their way to it again.
+          const again = insufficientCoinsModal.retry;
+          setInsufficientCoinsModal({ show: false, requiredCoins: 0, currentCoins: null, actionLabel: 'continue', retry: null });
+          if (typeof again === 'function') again();
+        }}
         onBuyCoins={() => {
-          setInsufficientCoinsModal({ show: false, requiredCoins: 0 });
+          setInsufficientCoinsModal({ show: false, requiredCoins: 0, currentCoins: null, actionLabel: 'continue', retry: null });
           onShowCoinPurchase?.();
         }}
       />

@@ -155,6 +155,7 @@ function EnhancedPostPageWrapper() {
       onNavMessages={() => h.navigate('/messages')}
       onNavProfile={() => h.navigate('/profile')}
       onShowCoinPurchase={h.openTopUpModal}
+      onRequireAuth={h.openLoginModal}
       subscriptionStatus={h.subscriptionStatus}
       onShowSubscription={() => h.navigate('/subscription')}
     />

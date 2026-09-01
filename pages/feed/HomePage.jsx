@@ -3265,6 +3265,7 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
     {viewerCommentPost && (
       /* Docked beside the player, the way TikTok opens comments on desktop. */
       <ModernCommentSection
+        onRequireAuth={onRequireAuth}
         variant="panel"
         reelId={viewerCommentPost.id}
         user={user}

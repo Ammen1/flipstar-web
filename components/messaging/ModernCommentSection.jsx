@@ -4,6 +4,7 @@ import api from "../../api";
 import config from "../../config";
 import { AlertModal } from "../common/AlertModal";
 import { InsufficientCoinsModal } from "../common/InsufficientCoinsModal";
+import { readCoinError, INSUFFICIENT, AUTH } from "../../utils/coinErrors";
 import { getRelativeTime } from "../../utils/timeUtils";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useLanguage } from "../../contexts/LanguageContext";
@@ -277,7 +278,7 @@ const CommentItem = ({ comment, T, user, onLike, onReply, onReport, replyTo, rep
 //   'sheet' (default) — the full-screen bottom sheet used on mobile.
 //   'panel'           — a docked right-hand column, TikTok's desktop layout.
 // Only the two wrapper elements differ; all comment behaviour is shared.
-export function ModernCommentSection({ reelId, user, onClose, onCommentPosted, onShowProfile, onShowCoinPurchase, subscriptionStatus, onShowSubscription, variant = 'sheet' }) {
+export function ModernCommentSection({ reelId, user, onClose, onCommentPosted, onShowProfile, onShowCoinPurchase, onRequireAuth, subscriptionStatus, onShowSubscription, variant = 'sheet' }) {
   const { colors: T } = useTheme();
   const { t } = useLanguage();
   const [comments, setComments] = useState([]);
@@ -316,7 +317,7 @@ export function ModernCommentSection({ reelId, user, onClose, onCommentPosted, o
   const [showMentionSuggestions, setShowMentionSuggestions] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionSuggestions, setMentionSuggestions] = useState([]);
-  const [showInsufficientCoinsModal, setShowInsufficientCoinsModal] = useState(false);
+  const [coinBlock, setCoinBlock] = useState({ show: false, requiredCoins: 0, currentCoins: null });
   const inputRef = useRef(null);
 
   // Mention autocomplete
@@ -416,14 +417,18 @@ export function ModernCommentSection({ reelId, user, onClose, onCommentPosted, o
     } catch (error) {
       console.error("Failed to post comment:", error);
 
-      // Check for insufficient balance error
-      const errorData = error?.response?.data || error?.data;
-      const errorMessage = errorData?.error || errorData?.message || error?.message;
-      console.log('[Comment] Error data:', errorData, 'Error message:', errorMessage);
-      if (errorMessage && errorMessage.toLowerCase().includes('insufficient')) {
-        setShowInsufficientCoinsModal(true);
-      } else if (errorData?.required_coins) {
-        setShowInsufficientCoinsModal(true);
+      // Branch on the server's code rather than sniffing the word
+      // "insufficient" out of the message -- and keep the amounts, which the
+      // popup needs to show the cost and the shortfall.
+      const coinErr = readCoinError(error);
+      if (coinErr.kind === INSUFFICIENT) {
+        setCoinBlock({
+          show: true,
+          requiredCoins: coinErr.requiredCoins,
+          currentCoins: coinErr.currentCoins,
+        });
+      } else if (coinErr.kind === AUTH) {
+        onRequireAuth?.();
       } else {
         setAlertModal({
           isOpen: true,
@@ -835,10 +840,15 @@ export function ModernCommentSection({ reelId, user, onClose, onCommentPosted, o
       />
 
       <InsufficientCoinsModal
-        visible={showInsufficientCoinsModal}
-        onClose={() => setShowInsufficientCoinsModal(false)}
+        visible={coinBlock.show}
+        requiredCoins={coinBlock.requiredCoins}
+        currentCoins={coinBlock.currentCoins}
+        actionLabel="post this comment"
+        onClose={() => setCoinBlock({ show: false, requiredCoins: 0, currentCoins: null })}
+        onRequireAuth={onRequireAuth}
+        onPurchased={() => setCoinBlock({ show: false, requiredCoins: 0, currentCoins: null })}
         onBuyCoins={() => {
-          setShowInsufficientCoinsModal(false);
+          setCoinBlock({ show: false, requiredCoins: 0, currentCoins: null });
           onShowCoinPurchase?.();
         }}
       />
