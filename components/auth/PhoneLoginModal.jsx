@@ -178,12 +178,12 @@ export function PhoneLoginModal({
         return;
       }
 
-      // Send OTP with tier-specific application key
-      const otpPayload = { 
-        phone: toE164(superappPhone),
-        application_key: checkRes.data.application_key,
-        product_number: checkRes.data.product_number
-      };
+      // The backend resolves the tier-specific OneVAS credentials itself
+      // from the subscription behind this number. They used to be read off
+      // the check response and posted back here, which meant a provisioned
+      // key was returned to any unauthenticated caller who knew a subscribed
+      // number.
+      const otpPayload = { phone: toE164(superappPhone) };
       const otpRes = await api.post('/auth/send-login-otp/', otpPayload);
       console.log('✅ OTP sent:', otpRes.data);
 
