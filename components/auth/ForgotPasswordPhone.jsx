@@ -129,7 +129,6 @@ export function ForgotPasswordPhone({ onClose, onSuccess }) {
                 onFocus={() => setFocusPhone(true)}
                 onBlur={() => setFocusPhone(false)}
                 onKeyDown={e => e.key === "Enter" && sendCode()}
-                maxLength={10}
               />
             </div>
             <button onClick={sendCode} disabled={loading} style={{ width: "100%", padding: "13px", background: GOLD, border: "none", borderRadius: 10, color: "#000", fontSize: 15, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>

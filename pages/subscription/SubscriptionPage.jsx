@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   Crown, Zap, Calendar, Coins, Check, X, ChevronLeft,
-  Star, Trophy, Gem, MessageCircle, Info, Video, Ban, AlertCircle,
+  Star, Trophy, Gem, MessageCircle, Info, Video, Ban, AlertCircle, Phone,
 } from 'lucide-react';
 import api from '../../api';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import telebirrH5 from '../../services/TelebirrH5Service';
-import { sanitizePhoneInput, toE164, PHONE_MAX_DIGITS, INVALID_PHONE_MESSAGE } from '../../utils/phone';
+import { sanitizePhoneInput, toE164, PHONE_MAX_DIGITS, INVALID_PHONE_MESSAGE, COUNTRY_CODE } from '../../utils/phone';
 
 const getFallbackTiers = () => [
   {
@@ -59,6 +59,27 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
   const [telebirrModalOpen, setTelebirrModalOpen] = useState(false);
   const [telebirrPhoneInputOpen, setTelebirrPhoneInputOpen] = useState(false);
   const [telebirrPhone, setTelebirrPhone] = useState('');
+  // The input holds the 9-digit subscriber part only (the +251 is fixed and
+  // never typed), so this must never be gated on a digit count: the guard
+  // here used to demand ten digits, which the 9-digit maxLength made
+  // impossible, leaving Continue permanently dead. Reuse the same check the
+  // submit handler applies so the two cannot drift apart again.
+  // '20' and '20.00' must both render as 20.00 -- the receipt used to append
+  // a literal '.00', which doubled up on an already-decimal price.
+  const fmtEtb = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n.toFixed(2) : String(v ?? '');
+  };
+  // Receipts show the full number that will be charged, not the 9 digits
+  // typed into the field.
+  const displayPhone = (nine) => {
+    const e164 = toE164(nine);
+    return e164 ? `${COUNTRY_CODE} ${nine}` : (nine || 'N/A');
+  };
+  const telebirrPhoneValid = Boolean(toE164(telebirrPhone));
+  // Only complain once something has been typed -- an empty field on open
+  // is not a mistake yet.
+  const showPhoneError = telebirrPhone.length > 0 && !telebirrPhoneValid;
   const [selectedTierForTelebirr, setSelectedTierForTelebirr] = useState(null);
   const [successModalOpen, setSuccessModalOpen] = useState(false);
   const [pollCount, setPollCount] = useState(0);
@@ -1278,120 +1299,143 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
 
         {/* telebirr Receipt Modal — shown when user clicks "Subscribe via telebirr" */}
         {telebirrModalOpen && selectedTierForTelebirr && (
-          <div style={{
-            position: 'fixed',
-            top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(0, 0, 0, 0.85)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            zIndex: 1000,
-            padding: isMobile ? 16 : 24,
-            overflow: 'auto',
-          }}>
-            <div style={{
-              background: '#F5F5F5',
-              borderRadius: 24,
-              padding: isMobile ? 20 : 24,
-              width: '100%',
-              maxWidth: 400,
-              boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-            }}>
-              {/* Close button */}
-              <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 4 }}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="sub-receipt-title"
+            onClick={(e) => { if (e.target === e.currentTarget && !processing) setTelebirrModalOpen(false); }}
+            style={{
+              position: 'fixed',
+              top: 0, left: 0, right: 0, bottom: 0,
+              background: 'rgba(0, 0, 0, 0.78)',
+              backdropFilter: 'blur(3px)',
+              display: 'flex',
+              alignItems: isMobile ? 'flex-end' : 'center',
+              justifyContent: 'center',
+              zIndex: 1000,
+              padding: isMobile ? 0 : 24,
+              overflow: 'auto',
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: M_CARD,
+                border: `1px solid ${M_BORDER}`,
+                borderRadius: isMobile ? '22px 22px 0 0' : 22,
+                padding: isMobile ? '18px 20px' : '22px 24px',
+                paddingBottom: isMobile ? 'calc(20px + env(safe-area-inset-bottom))' : 22,
+                width: '100%',
+                maxWidth: isMobile ? '100%' : 400,
+                boxSizing: 'border-box',
+                boxShadow: '0 -12px 40px rgba(0,0,0,0.55)',
+              }}
+            >
+              {isMobile && (
+                <div style={{
+                  width: 38, height: 4, borderRadius: 4,
+                  background: '#3A3A3A', margin: '0 auto 14px',
+                }} />
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 2 }}>
                 <button
                   onClick={() => setTelebirrModalOpen(false)}
                   aria-label="Close"
+                  disabled={processing}
                   style={{
-                    background: 'transparent',
-                    border: 'none',
-                    cursor: 'pointer',
-                    padding: 4,
-                    color: '#000',
-                    fontSize: 22,
-                    lineHeight: 1,
+                    background: '#202020', border: `1px solid ${M_BORDER}`,
+                    borderRadius: 10, cursor: processing ? 'not-allowed' : 'pointer',
+                    color: '#B5B5B5', width: 32, height: 32,
+                    display: 'grid', placeItems: 'center',
                   }}
                 >
-                  <X size={22} color="#000" />
+                  <X size={17} />
                 </button>
               </div>
 
-              {/* Title */}
-              <div style={{
-                textAlign: 'center',
-                fontSize: 14,
-                color: '#333',
-                marginBottom: 4,
-              }}>
-                Subscribe to FlipStar {selectedTierForTelebirr.name}
-              </div>
-
-              {/* Total amount big */}
-              <div style={{
-                textAlign: 'center',
-                fontSize: 36,
-                fontWeight: 900,
-                color: '#000',
-                marginBottom: 20,
-              }}>
-                {selectedTierForTelebirr.price_etb}.00
-                <span style={{ fontSize: 14, fontWeight: 700, marginLeft: 4 }}>ETB</span>
-              </div>
-
-              {/* Receipt details card */}
-              <div style={{
-                background: '#fff',
-                borderRadius: 12,
-                padding: 16,
-                marginBottom: 12,
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                  <span style={{ fontSize: 14, color: '#333' }}>Plan</span>
-                  <span style={{ fontSize: 14, color: '#000', fontWeight: 700 }}>
-                    {selectedTierForTelebirr.name}
-                  </span>
+              {/* Hero: what is about to be charged. */}
+              <div style={{ textAlign: 'center', marginBottom: 18 }}>
+                <div id="sub-receipt-title" style={{ fontSize: 13.5, color: '#8A8A8A' }}>
+                  Subscribe to FlipStar {selectedTierForTelebirr.name}
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                  <span style={{ fontSize: 14, color: '#333' }}>
-                    {selectedTierForTelebirr.duration_type === 'daily' ? 'Daily Amount' :
-                     selectedTierForTelebirr.duration_type === 'weekly' ? 'Weekly Amount' :
-                     selectedTierForTelebirr.duration_type === 'monthly' ? 'Monthly Amount' : 'Amount'}
-                  </span>
-                  <span style={{ fontSize: 14, color: '#000', fontWeight: 700 }}>
-                    {selectedTierForTelebirr.price_etb}.00 ETB
-                  </span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                  <span style={{ fontSize: 14, color: '#333' }}>Date</span>
-                  <span style={{ fontSize: 14, color: '#000', fontWeight: 700 }}>
-                    {new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: 14, color: '#333' }}>Phone Number</span>
-                  <span style={{ fontSize: 14, color: '#000', fontWeight: 700 }}>
-                    {telebirrPhone || 'N/A'}
+                <div style={{
+                  fontSize: isMobile ? 36 : 34, fontWeight: 900,
+                  color: '#fff', letterSpacing: -1, marginTop: 4, lineHeight: 1.1,
+                }}>
+                  {fmtEtb(selectedTierForTelebirr.price_etb)}
+                  <span style={{
+                    fontSize: 14, fontWeight: 700, marginLeft: 5, color: BRAND_GREEN,
+                  }}>
+                    ETB
                   </span>
                 </div>
               </div>
 
-              {/* Proceed button */}
+              <div style={{
+                background: '#101010', border: `1px solid ${M_BORDER}`,
+                borderRadius: 14, padding: '4px 14px', marginBottom: 18,
+              }}>
+                {[
+                  ['Plan', selectedTierForTelebirr.name],
+                  [
+                    selectedTierForTelebirr.duration_type === 'daily' ? 'Daily Amount' :
+                    selectedTierForTelebirr.duration_type === 'weekly' ? 'Weekly Amount' :
+                    selectedTierForTelebirr.duration_type === 'monthly' ? 'Monthly Amount' : 'Amount',
+                    `${fmtEtb(selectedTierForTelebirr.price_etb)} ETB`,
+                  ],
+                  ['Date', new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })],
+                  // The full MSISDN, not the bare 9 digits: this is the
+                  // confirmation screen, so show the number that gets charged.
+                  ['Phone Number', displayPhone(telebirrPhone)],
+                ].map(([label, value], i, rows) => (
+                  <div
+                    key={label}
+                    style={{
+                      display: 'flex', justifyContent: 'space-between',
+                      alignItems: 'center', gap: 12, padding: '13px 0',
+                      borderBottom: i === rows.length - 1 ? 'none' : `1px solid ${M_BORDER}`,
+                    }}
+                  >
+                    <span style={{ fontSize: 13.5, color: '#8A8A8A', flexShrink: 0 }}>{label}</span>
+                    <span style={{
+                      fontSize: 13.5, color: '#fff', fontWeight: 700,
+                      textAlign: 'right', minWidth: 0,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>
+                      {value}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
               <button
                 onClick={handleTelebirrProceed}
                 disabled={processing}
                 style={{
                   width: '100%',
-                  padding: '16px',
-                  background: processing ? '#9CB870' : '#8fc441',
+                  minHeight: 52,
+                  padding: isMobile ? 15 : 14,
+                  background: processing ? '#2A3320' : BRAND_GREEN,
                   border: 'none',
-                  borderRadius: 12,
-                  color: '#fff',
+                  borderRadius: 13,
+                  color: processing ? '#5F6B4F' : '#0B1207',
                   fontSize: 16,
-                  fontWeight: 700,
+                  fontWeight: 800,
                   cursor: processing ? 'wait' : 'pointer',
-                  boxShadow: '0 4px 16px rgba(143,196,65,0.3)',
+                  boxShadow: processing ? 'none' : '0 6px 20px rgba(143,196,65,0.28)',
+                  transition: 'background .15s ease, color .15s ease',
+                  WebkitTapHighlightColor: 'transparent',
                 }}
               >
                 {processing ? 'Processing…' : 'Proceed'}
               </button>
+
+              <div style={{
+                fontSize: 11.5, color: '#6F6F6F', textAlign: 'center', marginTop: 12,
+              }}>
+                You'll get a telebirr prompt to approve this payment.
+              </div>
             </div>
           </div>
         )}
@@ -1642,73 +1686,207 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
           (airtime) flow. Stays out of the way and auto-dismisses. */}
       {/* Telebirr Phone Input Modal — rendered at top level to avoid clipping */}
       {telebirrPhoneInputOpen && selectedTierForTelebirr && (
-        <div style={{
-          position: 'fixed',
-          top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0, 0, 0, 0.85)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 1100,
-          padding: isMobile ? 16 : 24,
-        }}>
-          <div style={{
-            background: '#F5F5F5',
-            borderRadius: 24,
-            padding: isMobile ? 24 : 28,
-            width: '100%',
-            maxWidth: 400,
-            boxSizing: 'border-box',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 4 }}>
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="sub-phone-title"
+          onClick={(e) => { if (e.target === e.currentTarget) setTelebirrPhoneInputOpen(false); }}
+          style={{
+            position: 'fixed',
+            top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0, 0, 0, 0.78)',
+            backdropFilter: 'blur(3px)',
+            display: 'flex',
+            // Bottom sheet on a phone, centred card on a wider screen.
+            alignItems: isMobile ? 'flex-end' : 'center',
+            justifyContent: 'center',
+            zIndex: 1100,
+            padding: isMobile ? 0 : 24,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: M_CARD,
+              border: `1px solid ${M_BORDER}`,
+              borderRadius: isMobile ? '22px 22px 0 0' : 22,
+              padding: isMobile ? '18px 20px' : '22px 24px',
+              paddingBottom: isMobile
+                ? 'calc(20px + env(safe-area-inset-bottom))'
+                : 22,
+              width: '100%',
+              maxWidth: isMobile ? '100%' : 400,
+              boxSizing: 'border-box',
+              boxShadow: '0 -12px 40px rgba(0,0,0,0.55)',
+            }}
+          >
+            {/* Grab handle — reads as a sheet you can dismiss. */}
+            {isMobile && (
+              <div style={{
+                width: 38, height: 4, borderRadius: 4,
+                background: '#3A3A3A', margin: '0 auto 14px',
+              }} />
+            )}
+
+            <div style={{
+              display: 'flex', alignItems: 'flex-start',
+              justifyContent: 'space-between', gap: 12, marginBottom: 16,
+            }}>
+              <div style={{ minWidth: 0 }}>
+                <div id="sub-phone-title" style={{
+                  fontSize: isMobile ? 18 : 17, fontWeight: 800,
+                  color: '#fff', letterSpacing: -0.2,
+                }}>
+                  Enter Phone Number
+                </div>
+                <div style={{ fontSize: 13, color: '#8A8A8A', marginTop: 3 }}>
+                  We'll send a Telebirr prompt to confirm.
+                </div>
+              </div>
               <button
                 onClick={() => setTelebirrPhoneInputOpen(false)}
-                style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 4, color: '#000' }}
+                aria-label="Close"
+                style={{
+                  background: '#202020', border: `1px solid ${M_BORDER}`,
+                  borderRadius: 10, cursor: 'pointer', color: '#B5B5B5',
+                  width: 32, height: 32, flexShrink: 0,
+                  display: 'grid', placeItems: 'center',
+                }}
               >
-                <X size={22} color="#000" />
+                <X size={17} />
               </button>
             </div>
-            <div style={{ textAlign: 'center', fontSize: isMobile ? 16 : 14, color: '#333', marginBottom: 4 }}>
-              Enter Phone Number
-            </div>
-            <div style={{ textAlign: 'center', fontSize: isMobile ? 13 : 12, color: '#888', marginBottom: isMobile ? 24 : 20 }}>
-              Enter your Telebirr phone number to subscribe
-            </div>
-            <div style={{ marginBottom: isMobile ? 24 : 20 }}>
+
+            {/* What they are paying for — mirrors the plan card they tapped,
+                so the amount is never a surprise at the Telebirr prompt. */}
+            {(() => {
+              const PlanIcon = getTierIcon(selectedTierForTelebirr.duration_type);
+              return (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  background: '#101010', border: `1px solid ${M_BORDER}`,
+                  borderRadius: 14, padding: '12px 14px', marginBottom: 16,
+                }}>
+                  <div style={{
+                    width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+                    background: BRAND_GREEN + '1F',
+                    display: 'grid', placeItems: 'center',
+                  }}>
+                    <PlanIcon size={18} color={BRAND_GREEN} />
+                  </div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{
+                      fontSize: 14.5, fontWeight: 700, color: '#fff',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>
+                      {selectedTierForTelebirr.name}
+                    </div>
+                    {selectedTierForTelebirr.description && (
+                      <div style={{
+                        fontSize: 12, color: '#7E7E7E', marginTop: 1,
+                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                      }}>
+                        {selectedTierForTelebirr.description}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <span style={{ fontSize: 19, fontWeight: 800, color: BRAND_GREEN }}>
+                      {selectedTierForTelebirr.price_etb}
+                    </span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: BRAND_GREEN, marginLeft: 3 }}>
+                      ETB
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
+
+            <label
+              htmlFor="sub-phone-input"
+              style={{
+                display: 'block', fontSize: 12, fontWeight: 700,
+                color: BRAND_GREEN, marginBottom: 7, letterSpacing: 0.2,
+              }}
+            >
+              Phone Number
+            </label>
+            <div style={{ position: 'relative', marginBottom: 8 }}>
+              {/* Fixed country code. It is not part of the value, so the
+                  number can never come out as +251+251... */}
+              <div style={{
+                position: 'absolute', left: 13, top: '50%',
+                transform: 'translateY(-50%)', display: 'flex',
+                alignItems: 'center', gap: 6, pointerEvents: 'none',
+                color: BRAND_GREEN,
+              }}>
+                <Phone size={17} />
+                <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: 0.2 }}>+251</span>
+              </div>
               <input
+                id="sub-phone-input"
                 type="tel"
                 placeholder="9XXXXXXXX"
                 inputMode="numeric"
+                autoComplete="tel-national"
                 maxLength={PHONE_MAX_DIGITS}
                 aria-label="Ethiopian phone number without country code"
+                aria-invalid={showPhoneError}
                 value={telebirrPhone}
                 onChange={(e) => setTelebirrPhone(sanitizePhoneInput(e.target.value))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && telebirrPhoneValid) handleTelebirrPhoneSubmit();
+                }}
                 style={{
                   width: '100%',
-                  padding: isMobile ? '18px' : '16px',
-                  background: '#fff',
-                  border: '1px solid #ddd',
+                  padding: isMobile ? '15px 14px' : '14px',
+                  paddingLeft: 76,
+                  background: '#101010',
+                  border: `1.5px solid ${showPhoneError ? '#E5484D' : M_BORDER}`,
                   borderRadius: 12,
-                  fontSize: isMobile ? 18 : 16,
-                  color: '#000',
+                  fontSize: 16.5,
+                  fontWeight: 600,
+                  letterSpacing: 0.6,
+                  color: '#fff',
                   outline: 'none',
                   boxSizing: 'border-box',
+                  transition: 'border-color .15s ease',
+                }}
+                onFocus={(e) => {
+                  e.target.style.borderColor = showPhoneError ? '#E5484D' : BRAND_GREEN;
+                }}
+                onBlur={(e) => {
+                  e.target.style.borderColor = showPhoneError ? '#E5484D' : M_BORDER;
                 }}
               />
             </div>
+
+            {/* Only nag once they have actually typed something. */}
+            <div style={{
+              fontSize: 12, lineHeight: 1.45, marginBottom: 16,
+              color: showPhoneError ? '#E5484D' : '#6F6F6F',
+              minHeight: 17,
+            }}>
+              {showPhoneError ? INVALID_PHONE_MESSAGE : 'Example: 944365493'}
+            </div>
+
             <button
               onClick={handleTelebirrPhoneSubmit}
-              disabled={!telebirrPhone || telebirrPhone.length < 10}
+              disabled={!telebirrPhoneValid}
               style={{
                 width: '100%',
-                padding: isMobile ? '18px' : '16px',
-                background: (!telebirrPhone || telebirrPhone.length < 10) ? '#9CB870' : '#8fc441',
+                minHeight: 52,
+                padding: isMobile ? '15px' : '14px',
+                background: telebirrPhoneValid ? BRAND_GREEN : '#2A3320',
                 border: 'none',
-                borderRadius: 12,
-                color: '#fff',
-                fontSize: isMobile ? 18 : 16,
-                fontWeight: 700,
-                cursor: (!telebirrPhone || telebirrPhone.length < 10) ? 'wait' : 'pointer',
-                boxShadow: '0 4px 16px rgba(143,196,65,0.3)',
+                borderRadius: 13,
+                color: telebirrPhoneValid ? '#0B1207' : '#5F6B4F',
+                fontSize: 16,
+                fontWeight: 800,
+                cursor: telebirrPhoneValid ? 'pointer' : 'not-allowed',
+                boxShadow: telebirrPhoneValid ? '0 6px 20px rgba(143,196,65,0.28)' : 'none',
+                transition: 'background .15s ease, color .15s ease',
+                WebkitTapHighlightColor: 'transparent',
               }}
             >
               Continue
@@ -1719,47 +1897,119 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
 
       {/* Subscription Method Selection Modal — rendered at top level to avoid clipping */}
       {methodModalOpen && selectedTierForMethod && (
-        <div style={{
-          position: 'fixed',
-          top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0, 0, 0, 0.85)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 1000,
-          padding: isMobile ? 16 : 24,
-        }}>
-          <div style={{
-            background: '#fff',
-            borderRadius: isMobile ? 16 : 24,
-            padding: isMobile ? 24 : 32,
-            width: '100%',
-            maxWidth: 400,
-            boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-              <div style={{ fontSize: isMobile ? 18 : 20, fontWeight: 900, color: '#000' }}>
-                Choose Payment Method
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="sub-method-title"
+          onClick={(e) => { if (e.target === e.currentTarget) setMethodModalOpen(false); }}
+          style={{
+            position: 'fixed',
+            top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0, 0, 0, 0.78)',
+            backdropFilter: 'blur(3px)',
+            display: 'flex',
+            alignItems: isMobile ? 'flex-end' : 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: isMobile ? 0 : 24,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: M_CARD,
+              border: `1px solid ${M_BORDER}`,
+              borderRadius: isMobile ? '22px 22px 0 0' : 22,
+              padding: isMobile ? '18px 20px' : '22px 24px',
+              paddingBottom: isMobile ? 'calc(20px + env(safe-area-inset-bottom))' : 22,
+              width: '100%',
+              maxWidth: isMobile ? '100%' : 400,
+              boxSizing: 'border-box',
+              boxShadow: '0 -12px 40px rgba(0,0,0,0.55)',
+            }}
+          >
+            {isMobile && (
+              <div style={{
+                width: 38, height: 4, borderRadius: 4,
+                background: '#3A3A3A', margin: '0 auto 14px',
+              }} />
+            )}
+
+            <div style={{
+              display: 'flex', alignItems: 'flex-start',
+              justifyContent: 'space-between', gap: 12, marginBottom: 16,
+            }}>
+              <div style={{ minWidth: 0 }}>
+                <div id="sub-method-title" style={{
+                  fontSize: isMobile ? 18 : 17, fontWeight: 800,
+                  color: '#fff', letterSpacing: -0.2,
+                }}>
+                  Choose Payment Method
+                </div>
+                <div style={{ fontSize: 13, color: '#8A8A8A', marginTop: 3 }}>
+                  How would you like to pay?
+                </div>
               </div>
               <button
                 onClick={() => setMethodModalOpen(false)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#666' }}
+                aria-label="Close"
+                style={{
+                  background: '#202020', border: `1px solid ${M_BORDER}`,
+                  borderRadius: 10, cursor: 'pointer', color: '#B5B5B5',
+                  width: 32, height: 32, flexShrink: 0,
+                  display: 'grid', placeItems: 'center',
+                }}
               >
-                <X size={24} />
+                <X size={17} />
               </button>
             </div>
 
-            <div style={{ marginBottom: 20, paddingBottom: 16, borderBottom: '1px solid #eee' }}>
-              <div style={{ fontSize: isMobile ? 14 : 16, fontWeight: 700, color: '#000', marginBottom: 4 }}>
-                {selectedTierForMethod.name} Plan
-              </div>
-              <div style={{ fontSize: isMobile ? 24 : 28, fontWeight: 900, color: '#8fc441' }}>
-                {selectedTierForMethod.price_etb} ETB
-              </div>
-              <div style={{ fontSize: isMobile ? 12 : 13, color: '#666', marginTop: 4 }}>
-                {selectedTierForMethod.description}
-              </div>
-            </div>
+            {/* Same plan summary the phone step shows, so the amount carries
+                through the flow unchanged. */}
+            {(() => {
+              const PlanIcon = getTierIcon(selectedTierForMethod.duration_type);
+              return (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  background: '#101010', border: `1px solid ${M_BORDER}`,
+                  borderRadius: 14, padding: '12px 14px', marginBottom: 18,
+                }}>
+                  <div style={{
+                    width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+                    background: BRAND_GREEN + '1F',
+                    display: 'grid', placeItems: 'center',
+                  }}>
+                    <PlanIcon size={18} color={BRAND_GREEN} />
+                  </div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{
+                      fontSize: 14.5, fontWeight: 700, color: '#fff',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>
+                      {selectedTierForMethod.name}
+                    </div>
+                    {selectedTierForMethod.description && (
+                      <div style={{
+                        fontSize: 12, color: '#7E7E7E', marginTop: 1,
+                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                      }}>
+                        {selectedTierForMethod.description}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <span style={{ fontSize: 19, fontWeight: 800, color: BRAND_GREEN }}>
+                      {selectedTierForMethod.price_etb}
+                    </span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: BRAND_GREEN, marginLeft: 3 }}>
+                      ETB
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <button
                 onClick={() => {
                   setMethodModalOpen(false);
@@ -1767,22 +2017,24 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
                 }}
                 style={{
                   width: '100%',
-                  padding: isMobile ? 14 : 16,
-                  background: '#8fc441',
+                  minHeight: 52,
+                  padding: isMobile ? 15 : 14,
+                  background: BRAND_GREEN,
                   border: 'none',
-                  borderRadius: 12,
-                  color: '#000',
-                  fontSize: isMobile ? 14 : 15,
+                  borderRadius: 13,
+                  color: '#0B1207',
+                  fontSize: 15.5,
                   fontWeight: 800,
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  gap: 8,
-                  boxShadow: '0 4px 16px rgba(143,196,65,0.3)',
+                  gap: 9,
+                  boxShadow: '0 6px 20px rgba(143,196,65,0.28)',
+                  WebkitTapHighlightColor: 'transparent',
                 }}
               >
-                <Trophy size={18} color="#000" />
+                <Trophy size={18} color="#0B1207" />
                 Subscribe via telebirr
               </button>
 
@@ -1794,21 +2046,23 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
                   }}
                   style={{
                     width: '100%',
-                    padding: isMobile ? 14 : 16,
+                    minHeight: 52,
+                    padding: isMobile ? 15 : 14,
                     background: 'transparent',
-                    border: '2px solid #8fc441',
-                    borderRadius: 12,
-                    color: '#8fc441',
-                    fontSize: isMobile ? 14 : 15,
-                    fontWeight: 800,
+                    border: `1.5px solid ${M_BORDER}`,
+                    borderRadius: 13,
+                    color: '#E4E4E4',
+                    fontSize: 15.5,
+                    fontWeight: 700,
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    gap: 8,
+                    gap: 9,
+                    WebkitTapHighlightColor: 'transparent',
                   }}
                 >
-                  <MessageCircle size={18} color="#8fc441" />
+                  <MessageCircle size={18} color={BRAND_GREEN} />
                   Subscribe via SMS
                 </button>
               )}
