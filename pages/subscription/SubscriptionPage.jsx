@@ -401,6 +401,30 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
     }
   }, [user]);
 
+  // Refetch subscription status whenever the tab regains focus. This covers
+  // the SMS/payment flows where the browser is briefly backgrounded (native
+  // SMS app / Telebirr app) and the subscription becomes active server-side
+  // while this page is still mounted. Without this the plan cards stay
+  // visible after a successful subscribe and a user can wrongly subscribe
+  // again and again.
+  useEffect(() => {
+    const handleFocus = () => {
+      if (successModalOpen || cancelModalOpen || processing) return;
+      loadSubscriptionData(true);
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' && !successModalOpen && !cancelModalOpen && !processing) {
+        loadSubscriptionData(true);
+      }
+    };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [user, successModalOpen, cancelModalOpen, processing]);
+
   const loadSubscriptionData = async (skipCache = true) => {
     try {
       // Fetch both in parallel but don't block UI
