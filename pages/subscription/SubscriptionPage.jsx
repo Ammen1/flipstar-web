@@ -91,6 +91,10 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
   const [reconciling, setReconciling] = useState(false);
   const [reconcileAttempt, setReconcileAttempt] = useState(0);
   const [activeSubscriptionModalOpen, setActiveSubscriptionModalOpen] = useState(false);
+  // Filled from the server's ALREADY_SUBSCRIBED refusal. In the telebirr
+  // SuperApp the page is unauthenticated and cannot read /subscriptions/,
+  // so this is the only way it learns what the user already holds.
+  const [existingSubscription, setExistingSubscription] = useState(null);
   const [methodModalOpen, setMethodModalOpen] = useState(false);
   const [selectedTierForMethod, setSelectedTierForMethod] = useState(null);
   // Inline toast state — replaces native alert() popups for the on-demand flow
@@ -937,9 +941,21 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
         showToast('error', response.error || 'Failed to initiate USSD payment');
       }
     } catch (error) {
-      clog('error', 'Exception during USSD initiate', { error: error.message, stack: error.stack });
       setProcessing(false);
       setProcessingTierId(null);
+
+      // The server refuses a second subscription before charging anything.
+      // Show what they already have rather than a failure -- nothing went
+      // wrong, and telling them it did invites another attempt.
+      const body = error?.data || error?.response?.data || error || {};
+      if (body.code === 'ALREADY_SUBSCRIBED' || error?.status === 409) {
+        clog('info', 'Server refused a duplicate subscription', body);
+        setExistingSubscription(body.subscription || null);
+        setActiveSubscriptionModalOpen(true);
+        return;
+      }
+
+      clog('error', 'Exception during USSD initiate', { error: error.message, stack: error.stack });
       showToast('error', 'Failed to process telebirr subscription');
     }
   };
@@ -1628,7 +1644,13 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
                 lineHeight: 1.6,
                 marginBottom: 24,
               }}>
-                You have an active subscription. Please wait for it to expire before subscribing again.
+                {existingSubscription?.tier_name
+                  ? `Your ${existingSubscription.tier_name} subscription is still active${
+                      existingSubscription.end_date
+                        ? ` until ${new Date(existingSubscription.end_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`
+                        : ''
+                    }. You have not been charged again.`
+                  : 'You have an active subscription. Please wait for it to expire before subscribing again.'}
               </p>
               <button
                 onClick={() => setActiveSubscriptionModalOpen(false)}

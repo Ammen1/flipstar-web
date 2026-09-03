@@ -255,7 +255,20 @@ export const ReelLayout = memo(function ReelLayout({
   }, [user?.id]);
 
   // Generate video poster thumbnail (returns undefined for local storage)
-  const getVideoPoster = (url) => undefined;
+  // Poster shown while the video downloads. The backend generates a 320x720
+  // thumbnail per reel (api/tasks/media.py); this used to return undefined
+  // unconditionally, so every card rendered black until the first frame
+  // decoded. Falls back to undefined when a reel has not been processed yet,
+  // which <video> treats as 'no poster' rather than a broken image.
+  const getVideoPoster = (video) => {
+    const t = video?.thumbnail;
+    if (!t) return undefined;
+    // Same absolute-URL rule the rest of this component uses: relative paths
+    // come back from local storage, absolute ones from object storage.
+    return t.startsWith('http')
+      ? t
+      : `${config.API_BASE_URL.replace('/api', '')}${t}`;
+  };
 
   // Mobile detection - runs once on mount and on resize
   useEffect(() => {
@@ -367,6 +380,7 @@ export const ReelLayout = memo(function ReelLayout({
             }
             return url;
           })(),
+          thumbnail: reel.thumbnail || null,
           liked: reel.is_liked || false,
           saved: reel.is_saved || false,
           created_at: reel.created_at,
@@ -533,6 +547,7 @@ export const ReelLayout = memo(function ReelLayout({
               }
               return url;
             })(),
+            thumbnail: reel.thumbnail || null,
             liked: reel.is_liked || false,
             saved: reel.is_saved || false,
             created_at: reel.created_at,
@@ -677,7 +692,7 @@ export const ReelLayout = memo(function ReelLayout({
     if (!videos.length) return;
     const firstUrl = videos[0]?.imageUrl;
     if (!firstUrl) return;
-    const poster = getVideoPoster(firstUrl);
+    const poster = getVideoPoster(videos[0]);
     if (!poster) return;
     
     // Remove any existing preload
@@ -1590,6 +1605,7 @@ export const ReelLayout = memo(function ReelLayout({
         shares: reel.shares || 0,
         gift_count: reel.gift_count || 0,
         imageUrl: reel.media || reel.image,
+        thumbnail: reel.thumbnail || null,
         liked: reel.is_liked || false,
         saved: reel.is_saved || false,
         created_at: reel.created_at,
@@ -2363,8 +2379,8 @@ export const ReelLayout = memo(function ReelLayout({
                             style={{
                               position: 'absolute',
                               inset: 0,
-                              backgroundImage: getVideoPoster(video.imageUrl)
-                                ? `url(${getVideoPoster(video.imageUrl)})`
+                              backgroundImage: getVideoPoster(video)
+                                ? `url(${getVideoPoster(video)})`
                                 : 'none',
                               backgroundColor: '#111',
                               backgroundSize: 'cover',
@@ -2385,7 +2401,7 @@ export const ReelLayout = memo(function ReelLayout({
                                 ? video.imageUrl
                                 : `${config.API_BASE_URL.replace('/api', '')}${video.imageUrl}`
                           }
-                          poster={getVideoPoster(video.imageUrl)}
+                          poster={getVideoPoster(video)}
                           preload={
                             videos.indexOf(video) === 0
                               ? 'metadata'

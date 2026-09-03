@@ -122,6 +122,39 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
   // Post
   const [caption, setCaption] = useState('');
   const [hashtags, setHashtags] = useState('');
+  // Categories come from /categories/ rather than a hardcoded list: they are
+  // admin-managed, and the backend now rejects ids it does not recognise, so a
+  // stale constant here would surface as a 400 on publish.
+  const [categories, setCategories] = useState([]);
+  const [categoryId, setCategoryId] = useState('');
+  const [categoriesError, setCategoriesError] = useState(false);
+  // Separate from categories.length: a successful fetch returning zero rows
+  // is not the same as 'still loading', and conflating them left the picker
+  // showing a spinner forever on an empty table.
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
+
+  // Loaded once on mount. This used to live inside handlePost, so the list
+  // was only fetched when the user pressed Post -- the picker sat on
+  // 'Loading categories...' for the entire session.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .request('/categories/')
+      .then((rows) => {
+        if (cancelled) return;
+        setCategories(Array.isArray(rows) ? rows : []);
+        setCategoriesError(false);
+      })
+      .catch(() => {
+        if (!cancelled) setCategoriesError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setCategoriesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -1362,6 +1395,7 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
           new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
         ]);
 
+
       const [walletConfig, coinBalance] = await Promise.all([
         withTimeout(
           api.request('/wallet/config/').catch(err => {
@@ -1420,6 +1454,9 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
       
       fd.append('caption', caption);
       if (hashtags) fd.append('hashtags', hashtags);
+      // Optional. Omitted entirely when unset, so the post is created
+      // uncategorised rather than with an empty string the API would reject.
+      if (categoryId) fd.append('category', categoryId);
       if (customAudioFile) {
         fd.append('audio_file', customAudioFile);
         fd.append('audio_volume_level', addedVol);
@@ -2310,6 +2347,70 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
                   color: '#8fc441', fontSize: 14,
                 }}
               />
+            </div>
+
+            {/* Category */}
+            <div style={{
+              background: '#000', borderRadius: 16, padding: '14px 16px',
+              border: '1px solid rgba(255,255,255,0.2)',
+            }}>
+              <div style={{
+                color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: 700,
+                letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 10,
+              }}>
+                Category
+              </div>
+
+              {categoriesError ? (
+                <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13 }}>
+                  Categories unavailable - your post will be uncategorised.
+                </div>
+              ) : categoriesLoading ? (
+                <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13 }}>
+                  Loading categories...
+                </div>
+              ) : categories.length === 0 ? (
+                <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13 }}>
+                  No categories yet - your post will be uncategorised.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  <button
+                    type="button"
+                    className="ep-btn"
+                    onClick={() => setCategoryId('')}
+                    aria-pressed={categoryId === ''}
+                    style={{
+                      padding: '8px 14px', borderRadius: 999, fontSize: 13, fontWeight: 600,
+                      background: categoryId === '' ? T.pri : 'transparent',
+                      color: categoryId === '' ? '#000' : 'rgba(255,255,255,0.75)',
+                      border: '1px solid ' + (categoryId === '' ? T.pri : 'rgba(255,255,255,0.25)'),
+                    }}
+                  >
+                    None
+                  </button>
+                  {categories.map((c) => {
+                    const active = String(categoryId) === String(c.id);
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        className="ep-btn"
+                        onClick={() => setCategoryId(active ? '' : c.id)}
+                        aria-pressed={active}
+                        style={{
+                          padding: '8px 14px', borderRadius: 999, fontSize: 13, fontWeight: 600,
+                          background: active ? T.pri : 'transparent',
+                          color: active ? '#000' : 'rgba(255,255,255,0.75)',
+                          border: '1px solid ' + (active ? T.pri : 'rgba(255,255,255,0.25)'),
+                        }}
+                      >
+                        {c.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             {/* Sound section */}

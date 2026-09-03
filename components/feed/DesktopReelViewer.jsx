@@ -53,6 +53,11 @@ export function DesktopReelViewer({
   const [engagement, setEngagement] = useState({});
 
   const [dragY, setDragY] = useState(0);
+  // Playback stalls on a weak connection are normal with byte-serving --
+  // show that something is happening rather than a frozen frame.
+  const [buffering, setBuffering] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
   const suppressTap = useRef(false);
 
   // Exactly one <video> is mounted at a time, so hold that one element
@@ -253,6 +258,22 @@ export function DesktopReelViewer({
       box-shadow:0 18px 50px rgba(0,0,0,.5);
     }
     .drv-video{ width:100%; height:100%; object-fit:contain; display:block; background:#000; }
+    .drv-buffering{ position:absolute; inset:0; display:grid; place-items:center; pointer-events:none; }
+    .drv-spinner{
+      width:38px; height:38px; border-radius:50%;
+      border:3px solid rgba(255,255,255,0.22); border-top-color:#fff;
+      animation: drv-spin 0.8s linear infinite;
+    }
+    @keyframes drv-spin{ to{ transform: rotate(360deg); } }
+    .drv-error{
+      position:absolute; inset:0; display:flex; flex-direction:column;
+      align-items:center; justify-content:center; gap:12px;
+      background:rgba(0,0,0,0.72); color:#fff; font-size:14px; text-align:center; padding:20px;
+    }
+    .drv-error button{
+      min-height:40px; padding:0 18px; border-radius:10px; border:none;
+      background:#8fc441; color:#0B1207; font-size:14px; font-weight:800; cursor:pointer;
+    }
     .drv-tap{ position:absolute; inset:0; cursor:pointer; }
 
     .drv-playicon{
@@ -369,7 +390,7 @@ export function DesktopReelViewer({
           }}
         >
           <video
-            key={`${index}-${post.id}`}
+            key={`${index}-${post.id}-${retryKey}`}
             ref={(el) => { videoEl.current = el; }}
             className="drv-video"
             src={mediaSrcOf(post, apiBase)}
@@ -377,6 +398,15 @@ export function DesktopReelViewer({
             playsInline
             loop
             muted={muted}
+            // Fetch the header and enough to start, not the whole clip: the
+            // server byte-serves, so the rest arrives as it plays.
+            preload="metadata"
+            onLoadStart={() => { setBuffering(true); setLoadError(false); }}
+            onWaiting={() => setBuffering(true)}
+            onStalled={() => setBuffering(true)}
+            onCanPlay={() => setBuffering(false)}
+            onPlaying={() => { setBuffering(false); setLoadError(false); }}
+            onError={() => { setBuffering(false); setLoadError(true); }}
             onTimeUpdate={(e) => {
               const v = e.currentTarget;
               if (v.duration) setProgress((v.currentTime / v.duration) * 100);
@@ -384,6 +414,31 @@ export function DesktopReelViewer({
             onPlay={() => setPaused(false)}
             onPause={() => setPaused(true)}
           />
+
+          {buffering && !loadError && (
+            <div className="drv-buffering" role="status" aria-live="polite">
+              <span className="drv-spinner" />
+            </div>
+          )}
+
+          {loadError && (
+            <div className="drv-error" role="alert">
+              <div>This video didn't load.</div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  // Remounting the element restarts the request from scratch,
+                  // which is what a transient network failure needs.
+                  setLoadError(false);
+                  setBuffering(true);
+                  setRetryKey((k) => k + 1);
+                }}
+              >
+                Try again
+              </button>
+            </div>
+          )}
 
           <div
             className="drv-tap"

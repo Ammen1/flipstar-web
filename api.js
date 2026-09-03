@@ -85,6 +85,14 @@ function isEncryptedEndpoint(endpoint) {
   if (endpoint.startsWith("/subscription/check-superapp/")) return false;
   // Messaging uses multipart/form-data for media uploads — encryption not compatible
   if (endpoint.startsWith("/messages/")) return false;
+  // Same reason: campaign posts carry request.FILES.
+  if (endpoint.startsWith("/campaigns/posts/create/")) return false;
+  // Provider callbacks. Telebirr POSTs these directly, so they can never
+  // carry our envelope -- encrypting them would make us reject real payment
+  // confirmations. Listed explicitly so a future /wallet/ or /subscription/
+  // prefix cannot silently pull them in.
+  if (endpoint.startsWith("/wallet/telebirr-callback/")) return false;
+  if (endpoint.startsWith("/subscription/telebirr/one-time/callback/")) return false;
   return ENCRYPTED_ENDPOINT_PREFIXES.some((prefix) =>
     endpoint.startsWith(prefix),
   );
@@ -227,6 +235,17 @@ const api = {
         headers["Content-Type"] === "application/json";
 
       // Wait for crypto init if E2E is enabled but still initializing
+      // Await enablement itself, not just key generation. enableE2E() is
+      // async and was called without keeping its promise, so a request
+      // firing on mount could reach the checks below while _e2eEnabled was
+      // still false -- skipping the header entirely and getting a 400
+      // decryption_failed from endpoints that require it.
+      try {
+        await _e2eReady;
+      } catch {
+        /* enablement failed; the guards below fall back to plaintext */
+      }
+
       if (_e2eEnabled && !isCryptoReady()) {
         await waitForCrypto();
       }
@@ -982,6 +1001,6 @@ api.config = { baseURL: API_BASE_URL };
 // children-first due to React's useEffect ordering, so child components
 // that called encrypted endpoints on mount fired requests BEFORE
 // _e2eEnabled was set to true, missing the X-Client-Public-Key header.
-api.enableE2E();
+const _e2eReady = api.enableE2E();
 
 export default api;

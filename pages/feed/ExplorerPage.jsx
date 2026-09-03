@@ -11,9 +11,10 @@ import realtimeService from '../../services/RealtimeService';
 import { isVideoUrl } from '../../utils/media';
 
 // ── Constants ────────────────────────────────────────────────────────────────
-const CATEGORIES = [
-  { id: 'trending',  label: 'Trending', icon: Flame, emoji: '🔥' },
-];
+// Only the "all" pill is fixed. The rest come from /categories/, which is
+// admin-managed -- a hardcoded list here silently stops matching the backend
+// the moment someone adds or renames a category.
+const ALL_CATEGORY = { id: 'all', label: 'All', emoji: '✨' };
 
 const TIME_RANGES = [
   { id: '24h', label: '24h'    },
@@ -221,6 +222,26 @@ export function ExplorerPage({ user, onBack, onShowProfile, onShowVideoDetail, o
 
   // ── Explore state ──────────────────────────────────────────────────────────
   const [activeCategory, setActiveCategory] = useState('all');
+  const [categories, setCategories] = useState([ALL_CATEGORY]);
+
+  // Loaded once. A failure leaves the "All" pill alone rather than an empty
+  // row, so Explore still works with the filter simply unavailable.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .request('/categories/')
+      .then((rows) => {
+        if (cancelled || !Array.isArray(rows)) return;
+        setCategories([
+          ALL_CATEGORY,
+          ...rows.map((c) => ({ id: c.slug, label: c.name, emoji: c.icon || '' })),
+        ]);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [timeRange, setTimeRange] = useState('7d');
   const [videos, setVideos]       = useState([]);
   const [loading, setLoading]     = useState(true);
@@ -500,6 +521,29 @@ export function ExplorerPage({ user, onBack, onShowProfile, onShowVideoDetail, o
 
           {/* Time range pills — only in explore mode */}
           {!inSearchMode && !searchFocused && (
+            <>
+              {/* Category filter. Horizontally scrollable so a long list never
+                  pushes the time ranges off-screen on a phone. */}
+              <div style={{
+                display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 6,
+                marginBottom: 6, scrollbarWidth: 'none',
+              }}>
+                {categories.map(c => (
+                  <button key={c.id}
+                    onClick={() => { setActiveCategory(c.id); setHashtagView(null); }}
+                    aria-pressed={activeCategory === c.id}
+                    style={{
+                      minHeight: 32, padding: '4px 10px', borderRadius: 16,
+                      border: '1px solid ' + (activeCategory === c.id ? T.pri : T.border),
+                      background: activeCategory === c.id ? T.pri : 'transparent',
+                      color: activeCategory === c.id ? '#fff' : '#8fc441',
+                      fontSize: 10, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap',
+                    }}>
+                    {c.emoji ? c.emoji + ' ' : ''}{c.label}
+                  </button>
+                ))}
+              </div>
+
             <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
               {TIME_RANGES.map(r => (
                 <button key={r.id} onClick={() => { setTimeRange(r.id); setHashtagView(null); }} style={{ minHeight: 32, 
@@ -513,6 +557,7 @@ export function ExplorerPage({ user, onBack, onShowProfile, onShowVideoDetail, o
                 </button>
               ))}
             </div>
+            </>
           )}
         </div>
 
