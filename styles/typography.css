@@ -1,0 +1,205 @@
+/*
+ * Centralised typography for the Flipstar app.
+ *
+ * Why this file exists
+ * --------------------
+ * The app shipped with NO font-family anywhere outside admin/. `src/global.css`
+ * defined one but was never imported by any module, so every user-facing screen
+ * rendered in the browser's default serif, unantialiased, at the default line
+ * height. Meanwhile 1095 inline `fontSize` declarations across pages/ and
+ * components/ used 28 distinct sizes, none of them coordinated.
+ *
+ * The scale below is NOT new. It is admin/theme.js's `typography` block, which
+ * already governs every admin screen, lifted to custom properties so the main
+ * app and the admin share one system rather than two that drift.
+ *
+ * Deliberately NOT imported from src/global.css
+ * ---------------------------------------------
+ * That file also carries `* { box-sizing: border-box; margin: 0; padding: 0 }`.
+ * Importing it would apply a box-model reset to ~1100 components built without
+ * one, shifting layouts everywhere at once. This file changes type only; the
+ * reset is a separate decision with its own visual review.
+ *
+ * Custom properties, not hardcoded values
+ * --------------------------------------
+ * SiteSettings exposes font_family_primary / _secondary / _username / _caption
+ * (api/models/admin.py) and the admin Settings page already edits them. Reading
+ * them through variables means ThemeContext can apply an operator's choice at
+ * runtime the same way it already applies colours, instead of a rebuild.
+ */
+
+:root {
+  /* Families. Each falls back through the system stack, so an unavailable
+     brand font degrades to the platform UI font rather than to serif. */
+  --font-stack-system: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+  --font-primary: Inter, var(--font-stack-system);
+  --font-secondary: var(--font-primary);
+  --font-username: var(--font-primary);
+  --font-caption: var(--font-secondary);
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  /* Scale — mirrors admin/theme.js typography.fontSize exactly. */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-lg: 16px;
+  --text-xl: 18px;
+  --text-2xl: 20px;
+  --text-3xl: 24px;
+  --text-4xl: 30px;
+
+  /* Weights — mirrors admin/theme.js typography.fontWeight. */
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* Line heights. Tight for headings, where 1.5 leaves them looking unset. */
+  --leading-tight: 1.2;
+  --leading-snug: 1.35;
+  --leading-normal: 1.5;
+
+  --tracking-tight: -0.01em;
+}
+
+/*
+ * Mobile. Headings only.
+ *
+ * Body text stays put: 14px is already at the floor for comfortable reading,
+ * and shrinking it to fit more on screen is what makes an interface feel
+ * cramped. Large display sizes are what actually overflow a 360px viewport,
+ * so those come down and nothing else moves.
+ */
+@media (max-width: 480px) {
+  :root {
+    --text-3xl: 22px;
+    --text-4xl: 26px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Element defaults
+ *
+ * Every rule here is one an unstyled element would otherwise inherit from the
+ * browser. None of them override an inline style, so no existing component
+ * changes appearance except to gain the font family it never had.
+ * ------------------------------------------------------------------------ */
+
+html {
+  -webkit-text-size-adjust: 100%; /* stop iOS Safari inflating text on rotate */
+}
+
+body {
+  font-family: var(--font-secondary);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-normal);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-primary);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
+}
+
+h1 { font-size: var(--text-4xl); }
+h2 { font-size: var(--text-3xl); }
+h3 { font-size: var(--text-2xl); }
+h4 { font-size: var(--text-xl); }
+h5 { font-size: var(--text-lg); }
+h6 { font-size: var(--text-base); }
+
+p {
+  line-height: var(--leading-normal);
+}
+
+/*
+ * Form controls do not inherit type from body in any browser -- they default to
+ * a 13px system font, which is why inputs looked unrelated to the text beside
+ * them. `font: inherit` is the one-line fix.
+ *
+ * 16px on mobile inputs is not a style choice: iOS Safari zooms the viewport on
+ * focus for anything smaller, and the user is then left zoomed in.
+ */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  font-family: var(--font-secondary);
+  letter-spacing: inherit;
+}
+
+button {
+  font-weight: var(--weight-semibold);
+}
+
+label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+@media (max-width: 480px) {
+  input,
+  select,
+  textarea {
+    font-size: max(16px, var(--text-lg));
+  }
+}
+
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+/* ---------------------------------------------------------------------------
+ * Utility classes
+ *
+ * For components migrating off inline fontSize/fontWeight numbers. Preferred
+ * over the TYPE tokens in constants/theme.js when the element has no other
+ * inline style, since a class costs nothing per render.
+ * ------------------------------------------------------------------------ */
+
+.t-xs   { font-size: var(--text-xs); }
+.t-sm   { font-size: var(--text-sm); }
+.t-base { font-size: var(--text-base); }
+.t-lg   { font-size: var(--text-lg); }
+.t-xl   { font-size: var(--text-xl); }
+.t-2xl  { font-size: var(--text-2xl); }
+.t-3xl  { font-size: var(--text-3xl); }
+.t-4xl  { font-size: var(--text-4xl); }
+
+.t-normal   { font-weight: var(--weight-normal); }
+.t-medium   { font-weight: var(--weight-medium); }
+.t-semibold { font-weight: var(--weight-semibold); }
+.t-bold     { font-weight: var(--weight-bold); }
+
+.t-username { font-family: var(--font-username); }
+.t-caption  { font-family: var(--font-caption); font-size: var(--text-sm); }
+
+/* Respect a reader who has asked for less motion; unrelated to size but this
+   is the only global stylesheet the app loads. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

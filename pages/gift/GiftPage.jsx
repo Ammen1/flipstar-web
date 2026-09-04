@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Gift, Send, X, Wallet, AlertCircle, Info } from 'lucide-react';
 import api from '../../api';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { AlertModal } from '../../components/common/AlertModal';
-import { sanitizePhoneInput, toE164, PHONE_MAX_DIGITS, INVALID_PHONE_MESSAGE } from '../../utils/phone';
 
 const CATEGORY_ICONS = {
   flowers: '🌹',
@@ -23,6 +24,7 @@ const RARITY_COLORS = {
 
 export default function GiftPage({ username, reelId, onClose, onShowWallet, onShowCoinPurchase }) {
   const { colors: T } = useTheme();
+  const { openTopUpModal } = useAuth();
   const [gifts, setGifts] = useState([
     { id: 1, name: 'Rose', description: 'A beautiful red rose', coin_value: 10, rarity: 'common', category: 'flowers' },
     { id: 2, name: 'Heart', description: 'A heart symbol', coin_value: 20, rarity: 'common', category: 'hearts' },
@@ -40,8 +42,6 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
   const [balanceData, setBalanceData] = useState(null);
   const [showRechargeDialog, setShowRechargeDialog] = useState(false);
   const [rechargeError, setRechargeError] = useState(null);
-  const [showtelebirrPayment, setShowtelebirrPayment] = useState(false);
-  const [telebirrPaymentUrl, settelebirrPaymentUrl] = useState(null);
   const [walletConfig, setWalletConfig] = useState(null);
   const [showInsufficientModal, setShowInsufficientModal] = useState(false);
 
@@ -287,31 +287,6 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
     }
   };
 
-  const handletelebirrPayment = async (packageId, phoneNumber) => {
-    try {
-      const response = await api.request('/wallet/telebirr/initiate/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          package_id: packageId,
-          phone_number: phoneNumber,
-        }),
-      });
-
-      if (response.success && response.payment_url) {
-        // Redirect to telebirr payment page
-        settelebirrPaymentUrl(response.payment_url);
-        setShowtelebirrPayment(true);
-        window.open(response.payment_url, '_blank');
-      } else {
-        alert(response.error || 'Payment initiation failed');
-      }
-    } catch (error) {
-      console.error('telebirr payment error:', error);
-      alert('Payment initiation failed. Please try again.');
-    }
-  };
-
   // surface = one step above the modal card so inset elements are always visible
   const card = T?.cardBg || '#1A1A1A';
   const surface = T?.border || '#333';
@@ -344,9 +319,21 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
     cursor: 'pointer',
   };
 
-  return (
+  // Rendered into document.body rather than in place.
+  //
+  // This sheet is opened from inside the feed (ReelLayout, HomePage, the
+  // comment section). A position:fixed element resolves against its nearest
+  // transformed or filtered ancestor, not the viewport, so mounted there it
+  // was trapped in the feed's stacking context and the app's bottom nav --
+  // z-index 1000 against this sheet's 10000 -- still painted over its footer.
+  // That is why the Send button was unreachable on the Super App H5.
+  //
+  // dvh, not vh: iOS Safari's vh includes the area behind the browser chrome,
+  // so 85vh is taller than what the user can actually see. The vh line stays
+  // first as a fallback for browsers without dvh.
+  return createPortal(
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)', zIndex: 10000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: 0 }} onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} style={{ background: card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16, maxWidth: 480, width: '100%', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 -8px 32px rgba(0,0,0,0.6)', border: `1px solid ${border}` }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16, paddingBottom: 0, maxWidth: 480, width: '100%', maxHeight: '85vh', overflowY: 'auto', overscrollBehavior: 'contain', boxShadow: '0 -8px 32px rgba(0,0,0,0.6)', border: `1px solid ${border}`, ...(CSS.supports?.('height', '1dvh') ? { maxHeight: '85dvh' } : {}) }}>
         {/* Compact Header: Title + Recipient + Balance */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
@@ -450,7 +437,29 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
               </div>
             )}
 
-            {/* Message - 1 row */}
+            {/*
+              Message + Send, pinned to the bottom of the sheet.
+
+              These used to sit at the end of the scrolling content, so on a
+              short viewport the primary action was simply below the fold with
+              nothing indicating it was there. Sticky keeps it on screen at
+              every scroll position, and the safe-area padding clears the iOS
+              home indicator. The negative margins cancel the sheet's own
+              horizontal padding so the bar spans the full width.
+            */}
+            <div
+              style={{
+                position: 'sticky',
+                bottom: 0,
+                marginLeft: -16,
+                marginRight: -16,
+                marginTop: 4,
+                padding: '10px 16px calc(10px + env(safe-area-inset-bottom, 0px))',
+                background: card,
+                borderTop: `1px solid ${border}`,
+                boxShadow: '0 -8px 22px rgba(0,0,0,0.45)',
+              }}
+            >
             <input
               type="text"
               value={message}
@@ -487,6 +496,7 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
                 </>
               )}
             </button>
+            </div>
           </>
         )}
 
@@ -502,45 +512,41 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
                 </div>
               </div>
 
-              <input
-                type="tel"
-                placeholder="9XXXXXXXX"
-                id="telebirr-phone"
-                inputMode="numeric"
-                maxLength={PHONE_MAX_DIGITS}
-                aria-label="Ethiopian phone number without country code"
-                onInput={(e) => { e.target.value = sanitizePhoneInput(e.target.value); }}
-                style={{ ...inputStyle, padding: '10px 12px', fontSize: 13, marginBottom: 10 }}
-              />
+              {/*
+                Top-up hands off to the real Buy Coins page.
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 12 }}>
-                {[
-                  { coins: 100, etb: 10, pkgId: 1 },
-                  { coins: 500, etb: 50, pkgId: 2 },
-                ].map(pkg => (
-                  <button
-                    key={pkg.pkgId}
-                    onClick={() => {
-                      const phone = toE164(document.getElementById('telebirr-phone')?.value);
-                      if (!phone) { alert('Please enter your phone number'); return; }
-                      handletelebirrPayment(pkg.pkgId, phone);
-                    }}
-                    style={{
-                      padding: '10px 8px',
-                      borderRadius: 8,
-                      border: `1.5px solid ${border}`,
-                      background: surface,
-                      color: txt,
-                      fontSize: 13,
-                      fontWeight: 700,
-                      cursor: 'pointer',
-                      textAlign: 'center',
-                    }}
-                  >
-                    🪙 {pkg.coins} <span style={{ fontSize: 11, color: sub, fontWeight: 500 }}>· {pkg.etb} ETB</span>
-                  </button>
-                ))}
-              </div>
+                What was here did three things wrong at once: it checked
+                `response.payment_url`, which /wallet/telebirr/initiate/ has
+                never returned -- it returns `raw_request` for the SuperApp
+                bridge -- so the branch never fired and the user got "Payment
+                initiation failed" AFTER the backend had already created the
+                order and written a pending CoinTransaction. It hardcoded
+                package ids 1 and 2, which seed_coin_packages reassigns. And it
+                hardcoded prices that could disagree with the database.
+
+                TelebirrH5Service.purchasePackage() already does this properly:
+                create order, startPay(raw_request) through the bridge, then
+                confirm server-side rather than trusting the client. Rather
+                than reimplement it here, this routes to the same top-up entry
+                point BoostModal uses.
+              */}
+              <button
+                onClick={() => { onClose?.(); openTopUpModal?.(); }}
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  borderRadius: 10,
+                  border: 'none',
+                  background: pri,
+                  color: '#000',
+                  fontSize: 14,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  marginBottom: 12,
+                }}
+              >
+                Buy coins
+              </button>
 
               <div style={{ display: 'flex', gap: 8 }}>
                 <button onClick={() => setShowRechargeDialog(false)} style={{ ...secondaryBtn, padding: '10px', fontSize: 13 }}>
@@ -783,10 +789,7 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
-
-
-
-

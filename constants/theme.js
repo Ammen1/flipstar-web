@@ -27,6 +27,49 @@ export const THEME = {
   dark:"#0C1A12",
 };
 
+/*
+ * Typography tokens for inline styles.
+ *
+ * THEME above carries colours only, which is why 1095 inline `fontSize`
+ * declarations across pages/ and components/ invented 28 different sizes with
+ * nothing to reconcile them.
+ *
+ * The scale is admin/theme.js's, so the app and the admin agree; styles/
+ * typography.css exposes the same values as CSS custom properties for
+ * stylesheets and class-based markup. Prefer the .t-* utility classes when an
+ * element has no other inline style.
+ */
+export const TYPE = {
+  size: {
+    xs: 12,
+    sm: 13,
+    base: 14,
+    lg: 16,
+    xl: 18,
+    xxl: 20,
+    display: 24,
+    hero: 30,
+  },
+  weight: {
+    normal: 400,
+    medium: 500,
+    semibold: 600,
+    bold: 700,
+  },
+  leading: {
+    tight: 1.2,
+    snug: 1.35,
+    normal: 1.5,
+  },
+  family: {
+    primary: 'var(--font-primary)',
+    secondary: 'var(--font-secondary)',
+    username: 'var(--font-username)',
+    caption: 'var(--font-caption)',
+    mono: 'var(--font-mono)',
+  },
+};
+
 export const PLANS = [
   {
     id:"free",

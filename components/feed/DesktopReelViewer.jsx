@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import api from '../../api';
 import { PostCaptionOverlay } from './PostCaptionOverlay';
-import { isVideoUrl } from '../../utils/media';
+import { isVideoUrl, isVideoPost } from '../../utils/media';
 import { likeCountOf, commentCountOf, shareCountOf, formatCount } from '../../utils/engagement';
 
 /**
@@ -154,6 +154,10 @@ export function DesktopReelViewer({
   }, [go]);
 
   // ── playback ────────────────────────────────────────────────────────────
+
+  // Image posts render a still in the same slot; the playback chrome below is
+  // hidden for them because none of it applies to an image.
+  const isVideo = isVideoPost(post);
 
   // Only the visible clip may play; everything else is paused and rewound so
   // no audio survives off-screen.
@@ -389,12 +393,23 @@ export function DesktopReelViewer({
             transition: dragY ? "none" : "transform .22s cubic-bezier(.2,.8,.3,1)",
           }}
         >
+          {isVideo ? (
           <video
             key={`${index}-${post.id}-${retryKey}`}
             ref={(el) => { videoEl.current = el; }}
             className="drv-video"
             src={mediaSrcOf(post, apiBase)}
-            poster={post.image && !isVideoUrl(post.image) ? mediaSrcOf({ media: post.image }, apiBase) : undefined}
+            /* The backend generates a 320x720 thumbnail per reel
+               (api/tasks/media.py). Prefer it over post.image: that is the
+               full-size still, so using it as a poster downloads a 1080px
+               image to cover the first moment of playback. */
+            poster={
+              post.thumbnail
+                ? mediaSrcOf({ media: post.thumbnail }, apiBase)
+                : post.image && !isVideoUrl(post.image)
+                  ? mediaSrcOf({ media: post.image }, apiBase)
+                  : undefined
+            }
             playsInline
             loop
             muted={muted}
@@ -414,6 +429,27 @@ export function DesktopReelViewer({
             onPlay={() => setPaused(false)}
             onPause={() => setPaused(true)}
           />
+          ) : (
+            /*
+              Image posts.
+
+              The desktop viewer used to be handed a video-only list, so an
+              image post simply had no slide and desktop showed a different,
+              shorter feed than mobile. It renders in the same slot with the
+              same object-fit, so the layout is identical either way; only the
+              playback chrome below is hidden, because none of it applies.
+            */
+            <img
+              key={`${index}-${post.id}-${retryKey}`}
+              className="drv-video"
+              src={mediaSrcOf(post, apiBase)}
+              alt={post.caption || ''}
+              draggable={false}
+              onLoadStart={() => { setBuffering(true); setLoadError(false); }}
+              onLoad={() => { setBuffering(false); setLoadError(false); }}
+              onError={() => { setBuffering(false); setLoadError(true); }}
+            />
+          )}
 
           {buffering && !loadError && (
             <div className="drv-buffering" role="status" aria-live="polite">
@@ -423,7 +459,7 @@ export function DesktopReelViewer({
 
           {loadError && (
             <div className="drv-error" role="alert">
-              <div>This video didn't load.</div>
+              <div>{isVideo ? "This video didn't load." : "This image didn't load."}</div>
               <button
                 type="button"
                 onClick={(e) => {
@@ -440,17 +476,20 @@ export function DesktopReelViewer({
             </div>
           )}
 
-          <div
-            className="drv-tap"
-            onClick={() => { if (!suppressTap.current) setPaused((v) => !v); }}
-          />
+          {isVideo && (
+            <div
+              className="drv-tap"
+              onClick={() => { if (!suppressTap.current) setPaused((v) => !v); }}
+            />
+          )}
 
-          {paused && (
+          {isVideo && paused && (
             <div className="drv-playicon">
               <span><Play size={26} fill="#fff" color="#fff" style={{ marginLeft: 3 }} /></span>
             </div>
           )}
 
+          {isVideo && (
           <button
             className="drv-mute"
             type="button"
@@ -459,6 +498,7 @@ export function DesktopReelViewer({
           >
             {muted ? <VolumeX size={18} /> : <Volume2 size={18} />}
           </button>
+          )}
 
           <div className="drv-caption">
             <PostCaptionOverlay
@@ -469,7 +509,9 @@ export function DesktopReelViewer({
             />
           </div>
 
-          <div className="drv-progress"><i style={{ width: `${progress}%` }} /></div>
+          {isVideo && (
+            <div className="drv-progress"><i style={{ width: `${progress}%` }} /></div>
+          )}
         </div>
 
         {/* Action rail */}

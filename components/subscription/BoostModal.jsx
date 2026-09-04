@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { X, Zap, Clock, Wallet, AlertCircle, RefreshCw, Check, Loader2 } from "lucide-react";
 import api from "../../api";
 import { useLegacyT } from "../../contexts/ThemeContext";
@@ -249,6 +250,9 @@ export function BoostModal({ reelId, onClose, onSuccess }) {
   const txt = T.txt || '#FFFFFF';
   const sub = T.sub || 'rgba(255,255,255,0.55)';
   const card = T.cardBg || '#151515';
+  // Page background for the full-screen phone layout. Opaque: at that size
+  // this is a page in its own right, not a card floating over the feed.
+  const bg = T.bg || '#0B0B0B';
   const WARN = '#F5A524';
   const ink = onPrimary(pri);
 
@@ -522,6 +526,56 @@ export function BoostModal({ reelId, onClose, onSuccess }) {
       .bm-btn { min-height: 52px; }
     }
 
+    /* ── Phones: a page, not a floating card ─────────────────────────────
+       Centring a rounded sheet inside a padded overlay leaves its footer
+       floating above the fold on a short viewport, which is where the primary
+       action was getting lost. Filling the screen puts the header at the top
+       and pins the actions to the bottom edge, so the Boost button is always
+       exactly where a thumb expects it. */
+    @media (max-width: 560px) {
+      .bm-overlay {
+        padding: 0;
+        align-items: stretch; justify-content: stretch;
+        background: ${bg};
+        -webkit-backdrop-filter: none; backdrop-filter: none;
+      }
+      .bm-sheet {
+        width: 100%; max-width: none;
+        height: 100dvh; max-height: 100dvh;
+        border: none; border-radius: 0;
+        box-shadow: none;
+        animation: bmSlide .24s cubic-bezier(0.22,1,0.36,1) both;
+      }
+      /* Page header: sits on the surface rather than floating on a card. */
+      .bm-head {
+        padding: 14px 16px 12px;
+        padding-top: calc(14px + env(safe-area-inset-top, 0px));
+        border-bottom: 1px solid rgba(255,255,255,0.07);
+      }
+      .bm-icon { width: 38px; height: 38px; border-radius: 12px; }
+      .bm-title { font-size: 16.5px; }
+      .bm-sub { font-size: 11.5px; }
+
+      /* Tighter throughout so every duration and the cost summary fit without
+         scrolling on a 360x640 handset. */
+      .bm-balance { padding: 11px 13px; margin-bottom: 14px; }
+      .bm-label { margin-bottom: 10px; }
+      .bm-grid { gap: 9px; }
+      .bm-card { min-height: 66px; padding: 12px 13px; }
+
+      .bm-actions {
+        position: sticky; bottom: 0;
+        padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+        box-shadow: 0 -8px 24px rgba(0,0,0,0.45);
+      }
+      .bm-btn { min-height: 52px; font-size: 15.5px; }
+    }
+
+    @keyframes bmSlide {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: none; }
+    }
+
     /* ── Very narrow phones: one column, stacked actions ─────────────────── */
     @media (max-width: 360px) {
       .bm-grid { grid-template-columns: minmax(0, 1fr); }
@@ -563,7 +617,19 @@ export function BoostModal({ reelId, onClose, onSuccess }) {
     }
   `;
 
-  return (
+  // Rendered into document.body, not in place.
+  //
+  // The overlay is position:fixed with z-index 99999, and the app's bottom nav
+  // is only 1000 -- yet the nav painted over the Boost button on the Super App
+  // H5. A position:fixed element resolves against its nearest transformed,
+  // filtered or contained ancestor rather than the viewport, and this renders
+  // inside the feed, which is exactly such an ancestor. Trapped there, the
+  // overlay could not cover the nav at any z-index, and its footer -- the
+  // primary action -- sat underneath it.
+  //
+  // A portal escapes that stacking context entirely, so the fix holds wherever
+  // the component is mounted from. It has four call sites.
+  return createPortal(
     <div
       className="bm-overlay"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
@@ -695,6 +761,7 @@ export function BoostModal({ reelId, onClose, onSuccess }) {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

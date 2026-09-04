@@ -262,7 +262,19 @@ async function confirmOrder(merchOrderId) {
 // End-to-end purchase for a coin package.
 // Returns { success, pending, coins_added, merch_order_id, error }.
 async function purchasePackage(packageId) {
+  // Instrumented to match purchaseSubscription.
+  //
+  // This function reported failures only through its return value, and the UI
+  // collapses an unrecognised error into "Payment failed. Please try again."
+  // -- so a coin purchase could fail with the reason discarded on the client
+  // and nothing whatsoever on the server. Subscription failures were always
+  // diagnosable; coin failures never were, which is why one was traceable and
+  // the other was not.
+  logToServer('info', '[TelebirrH5Service] ========== COIN PURCHASE START ==========');
+  logToServer('info', '[TelebirrH5Service] purchasePackage() called', { packageId });
+
   if (!isInSuperApp()) {
+    logToServer('error', '[TelebirrH5Service] Not in SuperApp, cannot purchase');
     return { success: false, error: 'NOT_IN_SUPERAPP' };
   }
 
@@ -273,18 +285,43 @@ async function purchasePackage(packageId) {
       body: JSON.stringify({ package_id: packageId }),
     });
   } catch (err) {
+    // Reaching here without a server-side request line means the call never
+    // left the device -- most often the E2E key exchange not being ready, since
+    // /wallet/ is an encrypted prefix.
+    logToServer('error', '[TelebirrH5Service] Coin initiate THREW', {
+      packageId,
+      name: err?.name,
+      message: err?.message,
+      status: err?.status ?? err?.response?.status,
+      body: typeof err?.response?.data === 'object' ? err.response.data : undefined,
+    });
     return { success: false, error: err?.message || 'Failed to create order' };
   }
 
   if (!order || !order.success || !order.raw_request) {
+    logToServer('error', '[TelebirrH5Service] Coin initiate returned no raw_request', {
+      packageId,
+      success: order?.success,
+      error: order?.error,
+      code: order?.code,
+      keys: order ? Object.keys(order) : null,
+    });
     return { success: false, error: order?.error || 'Failed to create order' };
   }
 
   const merchOrderId = order.merch_order_id;
+  logToServer('info', '[TelebirrH5Service] Coin order created, calling startPay', { merchOrderId });
 
   try {
     await startPay(order.raw_request);
   } catch (err) {
+    // A rejection here is the SuperApp bridge itself: the user cancelling, the
+    // payment counter timing out, or js_fun_start_pay being unavailable.
+    logToServer('error', '[TelebirrH5Service] startPay REJECTED', {
+      merchOrderId,
+      name: err?.name,
+      message: err?.message,
+    });
     return { success: false, merch_order_id: merchOrderId, error: err?.message };
   }
 

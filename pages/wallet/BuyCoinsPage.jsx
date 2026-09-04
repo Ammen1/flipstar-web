@@ -585,10 +585,19 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
             ok: false,
             message: 'Payment was not completed. If you paid, your coins will be credited shortly.',
           });
+        } else if (r.error === 'NOT_IN_SUPERAPP') {
+          // Can only happen if the bridge disappears mid-flow; the branch above
+          // already checked. Distinct message so it is not mistaken for a
+          // provider failure.
+          setResult({ ok: false, message: 'Please open FlipStar inside the telebirr app to pay.' });
         } else {
+          // Console-only so the reason is recoverable from a device inspector
+          // even when the visible copy is the generic fallback.
+          console.error('[BuyCoins] SuperApp purchase failed:', r);
           setResult({ ok: false, message: friendlyError(r.error) });
         }
       } catch (error) {
+        console.error('[BuyCoins] SuperApp purchase threw:', error);
         setResult({ ok: false, message: 'Payment failed. Please try again.' });
       } finally {
         setBusy(null);

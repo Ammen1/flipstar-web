@@ -787,6 +787,8 @@ function CampaignEntryCard({ entry, theme: T }) {
           {entry.reel.media.endsWith('.mp4') || entry.reel.media.endsWith('.mov') ? (
             <video
               src={mediaUrl(entry.reel.media)}
+              poster={entry.reel.thumbnail ? mediaUrl(entry.reel.thumbnail) : undefined}
+              preload="metadata"
               style={{
                 maxWidth: '100%',
                 maxHeight: 400,

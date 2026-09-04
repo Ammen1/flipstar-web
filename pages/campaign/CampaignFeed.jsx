@@ -372,6 +372,14 @@ const PostCard = ({ post, rank, onVote, campaignType, isVotingOpen }) => {
           ) : post.reel?.media ? (
             <video
               src={mediaUrl(post.reel.media)}
+              /* Generated 320x720 thumbnail, shown while the video buffers.
+                 undefined when it has not been processed yet, which <video>
+                 treats as 'no poster' rather than a broken image. */
+              poster={post.reel.thumbnail ? mediaUrl(post.reel.thumbnail) : undefined}
+              /* Fetch headers only until the viewer presses play. The spec
+                 default is 'auto', which downloads the whole file -- on a feed
+                 of campaign entries that is every video at once. */
+              preload="metadata"
               controls
               playsInline
               style={{ width: '100%', display: 'block', maxHeight: 480 }}

@@ -156,6 +156,38 @@ function applyCSS(c, glassEnabled = false) {
   r.style.setProperty('--color-card', c.cardBg);
 }
 
+/*
+ * Apply operator-chosen fonts.
+ *
+ * SiteSettings already stores font_family_primary / _secondary / _username /
+ * _caption and the admin Settings page edits them, but nothing ever read them
+ * back on the app side -- the values were saved and ignored. Setting the same
+ * custom properties styles/typography.css declares means a font change takes
+ * effect on the next load rather than needing a rebuild.
+ *
+ * Only overwrite a property when a value is actually present: assigning an
+ * empty string clears the variable, which would drop the whole fallback chain
+ * and leave the browser on its default serif.
+ */
+export function applyFonts(settings) {
+  if (!settings) return;
+  const r = document.documentElement;
+  const system =
+    "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
+
+  const map = {
+    '--font-primary': settings.font_family_primary,
+    '--font-secondary': settings.font_family_secondary,
+    '--font-username': settings.font_family_username,
+    '--font-caption': settings.font_family_caption,
+  };
+
+  Object.entries(map).forEach(([prop, family]) => {
+    const name = (family || '').trim();
+    if (name) r.style.setProperty(prop, `"${name}", ${system}`);
+  });
+}
+
 // Helper function to convert hex to rgba
 function hexToRgba(hex, alpha) {
   if (hex.startsWith('#')) {

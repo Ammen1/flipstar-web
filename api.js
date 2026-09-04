@@ -78,13 +78,28 @@ const ENCRYPTED_ENDPOINT_PREFIXES = [
   "/settings/public/",
 ];
 
+// POST .../conversations/<id>/messages/ carries a file, so it cannot be
+// wrapped in a JSON envelope. Anchored and digit-bounded so it matches that
+// route alone and not, say, /messages/conversations/.
+const MULTIPART_MESSAGE_ROUTE = /^\/messages\/conversations\/\d+\/messages\/?$/;
+
 function isEncryptedEndpoint(endpoint) {
   // Admin endpoints are never encrypted
   if (endpoint.startsWith("/admin/")) return false;
   // Public subscription endpoints without @encrypted_endpoint on backend
   if (endpoint.startsWith("/subscription/check-superapp/")) return false;
-  // Messaging uses multipart/form-data for media uploads — encryption not compatible
-  if (endpoint.startsWith("/messages/")) return false;
+  // Messaging: only the message-send route is multipart.
+  //
+  // This used to exclude all of /messages/, on the reasoning that messaging
+  // uploads media. Only ONE route does -- POST .../conversations/<id>/messages/
+  // -- and that one has no @encrypted_endpoint on the backend. The other five
+  // are plain JSON and DO decrypt, so excluding them wholesale meant the web
+  // app sent plaintext to a view expecting an envelope and got 400 on every
+  // call, including creating a conversation to share a post.
+  //
+  // Flipstar-Mobile/src/security/encryptedRoutes.js:89-93 already draws the
+  // line in exactly this place, which is why sharing works there and not here.
+  if (MULTIPART_MESSAGE_ROUTE.test(endpoint)) return false;
   // Same reason: campaign posts carry request.FILES.
   if (endpoint.startsWith("/campaigns/posts/create/")) return false;
   // Provider callbacks. Telebirr POSTs these directly, so they can never

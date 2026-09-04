@@ -1,3 +1,7 @@
+// Centralised typography. Must load before any component renders: without it
+// the app has no font-family at all outside admin/ and falls back to the
+// browser's default serif.
+import './styles/typography.css';
 import ReactDOM from 'react-dom/client';
 import React from 'react';
 import { RouterProvider } from 'react-router-dom';

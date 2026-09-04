@@ -2653,10 +2653,20 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
   // not on a promo block. Short feeds fall back to the last available slot.
   const campaignSlotIndex = Math.min(1, Math.max(0, posts.length - 1));
 
-  // The desktop viewer is a video player, so image posts and the injected
-  // campaign/suggestion cards have no slide to live on. Mobile keeps the
-  // full mixed feed.
-  const videoPosts = useMemo(() => posts.filter(isVideoPost), [posts]);
+  // Desktop and mobile now show the same posts.
+  //
+  // The viewer used to be handed a video-only list, because it rendered a
+  // <video> unconditionally and an image post had no slide to live on. That
+  // made desktop a different, shorter feed than mobile -- a post visible on a
+  // phone was simply absent on a laptop. DesktopReelViewer renders a still for
+  // image posts now, so the filter is gone and both surfaces agree.
+  //
+  // Posts with no media at all are still excluded: the viewer is a media
+  // surface, and a slide showing nothing but a caption is not navigable.
+  const viewerPosts = useMemo(
+    () => posts.filter((p) => p && (p.media || p.image)),
+    [posts],
+  );
 
   const handleTabClick = (tab) => {
     const actualTab = TAB_MAPPING[tab] || tab;
@@ -3048,8 +3058,8 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
           scrolling card feed. */}
       {!isMobile ? (
         <DesktopReelViewer
-          posts={videoPosts}
-          index={Math.min(viewerIndex, Math.max(0, videoPosts.length - 1))}
+          posts={viewerPosts}
+          index={Math.min(viewerIndex, Math.max(0, viewerPosts.length - 1))}
           onIndexChange={setViewerIndex}
           currentUser={user}
           T={T}
