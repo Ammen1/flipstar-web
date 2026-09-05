@@ -222,6 +222,7 @@ export function ExplorerPage({ user, onBack, onShowProfile, onShowVideoDetail, o
 
   // ── Explore state ──────────────────────────────────────────────────────────
   const [activeCategory, setActiveCategory] = useState('all');
+  const [loadError, setLoadError] = useState(null);
   const [categories, setCategories] = useState([ALL_CATEGORY]);
 
   // Loaded once. A failure leaves the "All" pill alone rather than an empty
@@ -276,9 +277,15 @@ export function ExplorerPage({ user, onBack, onShowProfile, onShowVideoDetail, o
       const d = await api.request(`/explorer/trending/?category=${activeCategory}&time_range=${timeRange}&limit=${limit}`, { skipCache: true });
       const list = Array.isArray(d) ? d : (d?.results || []);
       setVideos(list);
+      setLoadError(null);
       setHasMore(list.length >= limit);
-    } catch {
+    } catch (err) {
+      // A swallowed error rendered "Nothing trending yet" -- identical to a
+      // genuinely empty feed. That made a failing request indistinguishable
+      // from no content, on the screen and in the console alike.
+      console.error('[Explorer] trending fetch failed:', err);
       setVideos([]);
+      setLoadError(err?.error || err?.message || 'Could not load trending posts.');
     } finally {
       if (showSpinner) setLoading(false);
     }
@@ -741,6 +748,24 @@ export function ExplorerPage({ user, onBack, onShowProfile, onShowVideoDetail, o
             {/* ── Trending video grid ─────────────────────────────────── */}
             {loading ? (
               <GridSkeleton T={T} />
+            ) : loadError ? (
+              <div style={{ textAlign: 'center', padding: '60px 20px', color: T.sub }}>
+                <TrendingUp size={44} style={{ opacity: 0.3, marginBottom: 12 }} />
+                <div style={{ fontSize: 16, fontWeight: 700, color: '#8fc441', marginBottom: 6 }}>
+                  Couldn't load trending
+                </div>
+                <div style={{ fontSize: 13, marginBottom: 14 }}>{loadError}</div>
+                <button
+                  onClick={() => fetchTrending({ showSpinner: true, limit: INITIAL_LIMIT })}
+                  style={{
+                    padding: '8px 18px', borderRadius: 20, border: `1px solid ${T.pri}`,
+                    background: 'transparent', color: T.pri, fontSize: 13, fontWeight: 700,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Try again
+                </button>
+              </div>
             ) : videos.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '60px 20px', color: T.sub }}>
                 {hashtagView ? (

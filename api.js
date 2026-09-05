@@ -55,6 +55,36 @@ const ENCRYPTED_ENDPOINT_PREFIXES = [
   "/subscription/status/",
   "/subscriptions/tiers/",
   "/coins/",
+
+  // Endpoints the BACKEND decrypts that this list was missing.
+  //
+  // The response-decryption branch is gated on isEncryptedEndpoint(), so a
+  // route absent from here had its {encrypted, nonce, checksum} envelope left
+  // unwrapped. Callers then read `d.results` off the envelope, got undefined,
+  // and rendered an empty list -- no error, no console warning. The Trending
+  // tab was returning a full 15KB feed and showing "Nothing trending yet".
+  //
+  // Exact paths, not prefixes. "/profile/" would wrongly encrypt /profile/me/
+  // and "/reels/" the main feed, neither of which the backend decrypts --
+  // turning a silent-empty bug into a 400 on the busiest endpoints.
+  "/eligibility/age/",
+  "/eligibility/phone/",
+  "/explorer/hashtag/",
+  "/explorer/trending-hashtags/",
+  "/explorer/trending/",
+  "/grand-finale/",
+  "/leaderboard/",
+  "/legal/",
+  "/profile/privacy/",
+  "/push/public-key/",
+  "/push/subscribe/",
+  "/push/unsubscribe/",
+  "/reels/following/",
+  "/reels/not-interested/",
+  "/reels/saved/",
+  "/reels/trending/",
+  "/search/",
+  "/upload/check/",
   "/campaigns/",
   "/gifts/",
   "/gift-stats/",
@@ -88,6 +118,13 @@ function isEncryptedEndpoint(endpoint) {
   if (endpoint.startsWith("/admin/")) return false;
   // Public subscription endpoints without @encrypted_endpoint on backend
   if (endpoint.startsWith("/subscription/check-superapp/")) return false;
+  // /leaderboard/ is encrypted but /leaderboard/global/ is not, and
+  // startsWith cannot express that. Mobile draws the same line with an
+  // anchored pattern (^/leaderboard/$ in encryptedRoutes.js); this is the
+  // prefix-matching equivalent. Without it the global board would be
+  // encrypted against a view that does not decrypt, turning a working
+  // endpoint into "field is required" errors.
+  if (endpoint.startsWith("/leaderboard/global/")) return false;
   // Messaging: only the message-send route is multipart.
   //
   // This used to exclude all of /messages/, on the reasoning that messaging
