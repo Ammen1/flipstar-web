@@ -19,6 +19,7 @@ import { dedupeById } from '../../utils/collections';
 import { likeCountOf, commentCountOf, shareCountOf } from '../../utils/engagement';
 import { ModernCommentSection } from '../../components/messaging/ModernCommentSection';
 import { isVideoUrl, isVideoPost } from '../../utils/media';
+import { connectionTier, videoPreload, pickVideoSource, pickImageSource } from '../../utils/connection';
 
 const BACKEND = config.API_BASE_URL.replace('/api', '');
 
@@ -895,7 +896,7 @@ const PostOptionsMenu = memo(function PostOptionsMenu({ post, currentUser, onClo
 });
 
 /* ── Post Card ── */
-const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowProfile, onRequireAuth, onNavigateToReel, onCommentAdded, onVoteAdded, onShowVideoDetail, onHashtagClick, videoObserver, onShowWallet, onShowCoinPurchase, onFollow, isFollowing, joinedCampaignIds, subscriptionStatus, onShowSubscription }) {
+const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowProfile, onRequireAuth, onNavigateToReel, onCommentAdded, onVoteAdded, onShowVideoDetail, onHashtagClick, videoObserver, onShowWallet, onShowCoinPurchase, onFollow, isFollowing, joinedCampaignIds, subscriptionStatus, onShowSubscription, onShowCampaignDetail, onShowCampaigns }) {
   // Seed from post + any persisted local state so the heart stays filled
   // even when the cached feed's `is_liked` is stale.
   const [liked, setLiked] = useState(() => post.is_liked || readIdSet(LIKES_KEY).has(post.id));
@@ -905,6 +906,11 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
   const likeInteracted = useRef(false);
   const saveInteracted = useRef(false);
   const [imgError, setImgError] = useState(false);
+  // Drives the thumbnail -> full-image handover below.
+  const [fullImageReady, setFullImageReady] = useState(false);
+  // A hint, never a gate: on a slow connection nothing beyond the current
+  // post preloads at all, and on 2G even its metadata is skipped.
+  const netTier = connectionTier();
   const [showOptions, setShowOptions] = useState(false);
   const [optionsAnchor, setOptionsAnchor] = useState(null);
   const [videoPlaying, setVideoPlaying] = useState(false);
@@ -1110,7 +1116,28 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
   // Detect if this post has video media
   const raw = post.media || post.image || '';
   const isVideo = isVideoPost(post);
-  const mediaSrc = mediaUrl(raw);
+
+  // Which encode to fetch. The backend advertises smaller rungs in
+  // media_variants / image_variants; the pickers prefer one that suits the
+  // connection and fall through to the original when a post has none, so a
+  // post from before the ladders existed loads exactly as it does today.
+  //
+  // isVideoPost decides the branch below, so the source has to be picked on
+  // the same basis -- a video post must never be handed an image variant.
+  const chosen = isVideo ? pickVideoSource(post, netTier) : pickImageSource(post, netTier);
+  const mediaSrc = mediaUrl(chosen || raw);
+
+  // The cheap preview. api/tasks/media.py generates a 320x720 thumbnail for
+  // every processed post; the feed was ignoring it and using post.image --
+  // the full 1080px still -- as the video poster. That downloads a
+  // full-resolution image for every video in the feed purely to show a frame,
+  // which on a mobile connection is the most expensive thing on this screen.
+  //
+  // Falls back to post.image so posts processed before thumbnails existed
+  // keep the behaviour they have now rather than losing their poster.
+  const previewSrc = post.thumbnail
+    ? mediaUrl(post.thumbnail)
+    : (post.image ? mediaUrl(post.image) : null);
   // Same caption/description resolution the overlay uses, so the two agree on
   // whether there is anything to show.
   const hasCaption = Boolean(captionOf(post));
@@ -1576,10 +1603,10 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
               const campaignId = post.campaign_id || post.campaign?.id;
               console.log('[Campaign Badge] Clicked, campaignId:', campaignId);
               if (campaignId) {
-                window.location.hash = `#campaign/${campaignId}`;
+                onShowCampaignDetail?.(campaignId);
               } else {
                 console.log('[Campaign Badge] No campaignId found, navigating to campaigns page');
-                window.location.hash = '#campaigns';
+                onShowCampaigns?.();
               }
             }}
             style={{
@@ -1637,10 +1664,10 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
                 const campaignId = post.campaign_id || post.campaign?.id;
                 console.log('[Campaign Badge] View button clicked, campaignId:', campaignId);
                 if (campaignId) {
-                  window.location.hash = `#campaign/${campaignId}`;
+                  onShowCampaignDetail?.(campaignId);
                 } else {
                   console.log('[Campaign Badge] No campaignId found, navigating to campaigns page');
-                  window.location.hash = '#campaigns';
+                  onShowCampaigns?.();
                 }
               }}
               style={{
@@ -1675,8 +1702,8 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
                 <video
                   ref={videoRef}
                   src={mediaSrc}
-                  poster={post.image ? mediaUrl(post.image) : undefined}
-                  preload={index === 0 ? 'metadata' : 'none'}
+                  poster={previewSrc || undefined}
+                  preload={videoPreload(index, netTier)}
                   loading={index === 0 ? 'eager' : 'lazy'}
                   style={{ width: '100%', height: 'auto', display: 'block', background: '#000', pointerEvents: 'none' }}
                   playsInline
@@ -1712,15 +1739,50 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
                 />
               </>
             ) : (
-              <img
-                src={mediaSrc}
-                alt={post.caption || ''}
-                loading={index === 0 ? 'eager' : 'lazy'}
-                decoding="async"
-                style={{ width: '100%', height: 'auto', display: 'block', cursor: 'zoom-in' }}
-                onClick={handleImageClick}
-                onError={() => setImgError(true)}
-              />
+              /*
+                Two stages: the 320px thumbnail paints first, the full image
+                replaces it once decoded.
+
+                Before this the feed went straight to the original upload, so
+                on a slow connection the post sat blank until a 1080px file
+                finished arriving. Now something readable appears almost
+                immediately and sharpens in place.
+
+                Both are absolutely positioned in the same box so the swap
+                cannot shift layout -- a thumbnail and its full version share
+                an aspect ratio, and reserving the space stops the feed
+                jumping under the reader's thumb as images land.
+              */
+              <div style={{ position: 'relative', width: '100%' }}>
+                {previewSrc && !fullImageReady && (
+                  <img
+                    src={previewSrc}
+                    alt=""
+                    aria-hidden="true"
+                    decoding="async"
+                    style={{
+                      width: '100%', height: 'auto', display: 'block',
+                      /* Hides thumbnail compression while the real file lands. */
+                      filter: 'blur(6px)', transform: 'scale(1.03)',
+                    }}
+                  />
+                )}
+                <img
+                  src={mediaSrc}
+                  alt={post.caption || ''}
+                  loading={index === 0 ? 'eager' : 'lazy'}
+                  decoding="async"
+                  onLoad={() => setFullImageReady(true)}
+                  style={{
+                    width: '100%', height: 'auto', display: 'block', cursor: 'zoom-in',
+                    ...(previewSrc && !fullImageReady
+                      ? { position: 'absolute', inset: 0, opacity: 0 }
+                      : {}),
+                  }}
+                  onClick={handleImageClick}
+                  onError={() => setImgError(true)}
+                />
+              </div>
             )
           ) : (
             <div style={{ width: '100%', height: 260, background: T?.cardBg || '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T?.sub || '#666', fontSize: 14 }}>No media</div>
@@ -2622,25 +2684,75 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
   useEffect(() => {
     if (typeof IntersectionObserver === 'undefined') return;
     
+    // One video plays at a time -- the most visible one.
+    //
+    // This used to play EVERY intersecting video and pause the rest, with no
+    // notion of which was active. The card feed shows more than one post at a
+    // time, so two short videos both clearing the threshold both played, and
+    // since the <video> carries no `muted` attribute they played with sound.
+    // That is the "mixed audio" you hear, and it is worse for short clips
+    // precisely because more of them fit on screen at once.
+    //
+    // Ratios are kept in a map rather than read from `entries`: a callback
+    // only carries the elements whose visibility just changed, so deciding
+    // "most visible" from it alone would compare one new arrival against
+    // nothing and hand it the feed.
+    const ratios = new Map();
+
     const observer = new IntersectionObserver(
       (entries) => {
-        entries.forEach(entry => {
-          const video = entry.target;
-          if (entry.isIntersecting) {
-            video.play().catch((err) => {
-              if (err.name !== 'AbortError') console.log('Play error:', err);
+        entries.forEach((entry) => {
+          ratios.set(entry.target, entry.isIntersecting ? entry.intersectionRatio : 0);
+        });
+
+        let active = null;
+        let best = 0;
+        ratios.forEach((ratio, el) => {
+          if (ratio > best) {
+            best = ratio;
+            active = el;
+          }
+        });
+
+        ratios.forEach((ratio, el) => {
+          if (el === active && best >= 0.3) {
+            // Unmute on becoming active. Without this the mute below is a
+            // one-way door: the first video keeps the sound it started with
+            // and every other one, having been muted while inactive, stays
+            // silent for ever after.
+            el.muted = false;
+            el.play().catch((err) => {
+              if (err.name === 'NotAllowedError') {
+                // No user gesture yet, so the browser refuses audible
+                // autoplay. Play muted rather than not at all -- the feed
+                // keeps moving, and the next card the user taps gets sound.
+                el.muted = true;
+                el.play().catch(() => {});
+              } else if (err.name !== 'AbortError') {
+                console.log('Play error:', err);
+              }
             });
           } else {
-            video.pause();
+            // Muted as well as paused. pause() alone leaves the element able
+            // to resume with sound from a stray play() -- a tap, a React
+            // re-render, or the browser resuming after a stall.
+            el.muted = true;
+            if (!el.paused) {
+              try { el.pause(); } catch { /* detached */ }
+            }
           }
         });
       },
-      { threshold: 0.3, rootMargin: '50px' }
+      // Several thresholds so the ratio updates as a card scrolls rather than
+      // only when it crosses 0.3 -- otherwise two visible videos both report
+      // their last crossing value and the comparison is meaningless.
+      { threshold: [0, 0.25, 0.5, 0.75, 1], rootMargin: '50px' }
     );
     
     videoObserverRef.current = observer;
     return () => {
       observer.disconnect();
+      ratios.clear();
       // disconnect() leaves playback running. Stop every feed video so none
       // survives the unmount still playing (same guard AppLayout uses).
       document.querySelectorAll('video').forEach((v) => {
@@ -3134,6 +3246,15 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
                   joinedCampaignIds={joinedCampaignIds}
                   subscriptionStatus={subscriptionStatus}
                   onShowSubscription={onShowSubscription}
+                  /* The campaign badge inside PostCard calls both of these.
+                     They were never passed down, so the identifiers did not
+                     exist in that scope at all -- and `?.` does not help with
+                     an undeclared name, it only guards a declared one that is
+                     null, so the VIEW button threw ReferenceError rather than
+                     failing quietly. Sourced here from the same HomePage props
+                     that HorizontalCampaignSuggestions uses just below. */
+                  onShowCampaignDetail={onShowCampaignDetail}
+                  onShowCampaigns={onShowCampaigns}
                 />
                 {/* Campaigns sit inside the feed rather than above it, and the
                     component renders nothing at all when none are active. */}
@@ -3212,7 +3333,7 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
             if (!user) { onRequireAuth?.(); return; }
             // Navigate to campaigns page with the specific campaign ID
             // The CampaignsPage will handle showing the detail
-            window.location.hash = `#campaign/${campaign.id}`;
+            onShowCampaignDetail?.(campaign.id);
           }}
         />
       </div>

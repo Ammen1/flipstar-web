@@ -7,6 +7,7 @@ import api from '../../api';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import telebirrH5 from '../../services/TelebirrH5Service';
+import { isSubscriptionActive } from '../../utils/subscription';
 import { sanitizePhoneInput, toE164, PHONE_MAX_DIGITS, INVALID_PHONE_MESSAGE, COUNTRY_CODE } from '../../utils/phone';
 
 const getFallbackTiers = () => [
@@ -453,7 +454,7 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
       setCurrentSubscription(subscriptionData);
 
       // Don't redirect - show cancel card for all active subscriptions
-      if (subscriptionData && subscriptionData.status === 'active') {
+      if (isSubscriptionActive(subscriptionData)) {
         console.log('[SubscriptionPage] User has active subscription, showing cancel card');
       }
     } catch (error) {
@@ -472,7 +473,7 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
       setPollCount(count);
       try {
         const sub = await api.request('/subscriptions/', { skipCache: true });
-        if (sub && sub.status === 'active') {
+        if (isSubscriptionActive(sub)) {
           clearInterval(pollRef.current);
           setCurrentSubscription(sub);
           setConfirmed(true);
@@ -511,7 +512,7 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
     if (processing) return;
 
     // Check if user already has active subscription (cross-platform ban)
-    if (currentSubscription && currentSubscription.status === 'active') {
+    if (isSubscriptionActive(currentSubscription)) {
       console.log('[SubscriptionPage] User has active subscription, showing modal');
       setActiveSubscriptionModalOpen(true);
       return;
@@ -542,7 +543,7 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
 
   const handleSuperAppProceed = async (tier) => {
     // Check if user already has active subscription (cross-platform ban)
-    if (currentSubscription && currentSubscription.status === 'active') {
+    if (isSubscriptionActive(currentSubscription)) {
       setActiveSubscriptionModalOpen(true);
       return;
     }
@@ -596,7 +597,7 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
           api.setAuthToken(autoLoginResult.token);
           try {
             const freshSub = await api.request('/subscriptions/', { skipCache: true });
-            if (freshSub && freshSub.status === 'active') {
+            if (isSubscriptionActive(freshSub)) {
               setCurrentSubscription(freshSub);
               setActiveSubscriptionModalOpen(true);
               setProcessing(false);
@@ -874,7 +875,7 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
             if (isAuthed) {
               payment = await api.request('/subscriptions/', { skipCache: true });
               clog('info', `Poll #${count} (authenticated /subscriptions/)`, payment);
-              if (payment && payment.status === 'active') {
+              if (isSubscriptionActive(payment)) {
                 clearInterval(pollRef.current);
                 setProcessing(false);
                 setProcessingTierId(null);
@@ -1108,7 +1109,7 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
     );
   }
 
-  const isActive = currentSubscription?.status === 'active';
+  const isActive = isSubscriptionActive(currentSubscription);
   const hasAnySubscription = isActive;
 
   return (

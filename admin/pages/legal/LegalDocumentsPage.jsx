@@ -629,7 +629,7 @@ function DocumentEditor({ theme, document, documentTypes, onClose, onSave }) {
                   rows={15}
                   style={{
                     width: '100%', padding: 12, borderRadius: 8, border: `1px solid ${theme.border}`,
-                    fontSize: 13, color: theme.txt, resize: 'vertical', fontFamily: 'monospace',
+                    fontSize: 13, color: theme.txt, resize: 'vertical', fontFamily: 'var(--adm-font-mono)',
                     boxSizing: 'border-box', lineHeight: 1.6,
                   }}
                 />

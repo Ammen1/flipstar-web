@@ -1070,7 +1070,7 @@ function ThemeTab({ settings, handleChange, setSettings, theme }) {
             <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
               <div style={{ width: 18, height: 18, borderRadius: 6, background: color, border: `2px solid ${theme.border}`, flexShrink: 0 }} />
               <span style={{ fontSize: 12, color: theme.txt, flex: 1, fontWeight: 500 }}>{label}</span>
-              <span style={{ fontSize: 10, color: theme.sub, fontFamily: 'monospace' }}>{color}</span>
+              <span style={{ fontSize: 10, color: theme.sub, fontFamily: 'var(--adm-font-mono)' }}>{color}</span>
             </div>
           ))}
         </div>

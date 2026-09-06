@@ -4,6 +4,7 @@ import api from '../../api';
 import config from '../../config';
 import { useLegacyT } from '../../contexts/ThemeContext';
 import { isVideoUrl } from '../../utils/media';
+import { SharePostSheet } from '../../components/feed/SharePostSheet';
 
 export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscriptionStatus, onShowSubscription }) {
   const T = useLegacyT();
@@ -27,6 +28,7 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
   const [replyingTo, setReplyingTo] = useState(null);
   const [replyText, setReplyText] = useState('');
   const [audioEnabled, setAudioEnabled] = useState(true);
+  const [showShare, setShowShare] = useState(false);
   const videoRef = useRef(null);
 
   useEffect(() => {
@@ -143,11 +145,17 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
     }
   };
 
-  const handleShare = () => {
-    const url = `${window.location.origin}/post/${reelId}`;
-    navigator.clipboard.writeText(url).then(() => {
-      alert('Link copied to clipboard!');
-    });
+  const handleShare = (e) => {
+    // The share control sits over the video, whose own click handler toggles
+    // playback -- without this, opening the sheet also paused the post.
+    e?.stopPropagation?.();
+
+    // Previously this called navigator.clipboard.writeText directly. That
+    // object does not exist outside a secure context, which is every phone
+    // opening the site over plain HTTP, so the call threw before the .then()
+    // and the button looked dead. Sharing now goes through the sheet, which
+    // needs no browser API at all.
+    setShowShare(true);
   };
 
   const handleAudioToggle = async () => {
@@ -675,6 +683,24 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
           )}
         </div>
       )}
+
+      {/* Rendered at the root of the page, outside the media stack, so the
+          overlay cannot inherit the video's click handling. */}
+      <SharePostSheet
+        post={reel}
+        currentUser={user}
+        open={showShare}
+        onClose={() => setShowShare(false)}
+        onShared={({ shares }) => {
+          // The server counts one share per action regardless of how many
+          // recipients were chosen, so its number is taken as given rather
+          // than incremented locally.
+          if (typeof shares === 'number') {
+            setReel((prev) => (prev ? { ...prev, shares } : prev));
+          }
+        }}
+        T={T}
+      />
     </div>
   );
 }

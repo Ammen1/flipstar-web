@@ -2924,7 +2924,7 @@ export const ReelLayout = memo(function ReelLayout({
                           e.stopPropagation();
                           const campaignId = video.campaign_id || video.campaign?.id;
                           if (campaignId) {
-                            window.location.hash = `#campaign/${campaignId}`;
+                            (onCampaignClick || onShowCampaigns)?.(campaignId);
                           }
                         }}
                         style={{

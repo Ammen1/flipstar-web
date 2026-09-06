@@ -1,17 +1,79 @@
-import { AlertTriangle, AlertCircle, CheckCircle2, Info } from 'lucide-react';
-import { adminTheme } from '../../theme';
+/**
+ * Confirmation dialog.
+ *
+ * Same props, same callbacks, same behaviour -- `loading` still blocks both the
+ * confirm and the dismiss, so a destructive action in flight cannot be
+ * cancelled halfway.
+ *
+ * What changed:
+ *
+ *   palette    the type tints were light (#FEF2F2, #ECFDF5) on a near-black
+ *              admin, so a "danger" dialog rendered a white slab. They are now
+ *              alpha tints of the semantic colours, readable on the real
+ *              background.
+ *
+ *   escape     there was no keyboard dismiss. Escape now closes, except while
+ *              loading, matching what clicking the backdrop already did.
+ *
+ *   focus      focus moves to the dialog on open and returns to whatever
+ *              opened it on close. Without that, a keyboard user's focus stays
+ *              on a button behind the overlay.
+ *
+ *   responsive fixed 460px with 24px padding overflowed a small phone. It now
+ *              uses the shared .adm-modal, which is width-capped rather than
+ *              width-fixed.
+ */
 
-export function ConfirmModal({ theme = {}, isOpen, onClose, onConfirm, title, message, confirmText = 'Confirm', cancelText = 'Cancel', type = 'danger', loading = false }) {
+import { AlertCircle, AlertTriangle, CheckCircle2, Info, Loader2 } from 'lucide-react';
+import { useEffect, useRef } from 'react';
+import { buildTokens } from '../../tokens';
+
+export function ConfirmModal({
+  theme = {},
+  isOpen,
+  onClose,
+  onConfirm,
+  title,
+  message,
+  confirmText = 'Confirm',
+  cancelText = 'Cancel',
+  type = 'danger',
+  loading = false,
+}) {
+  const dialogRef = useRef(null);
+  const openerRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+
+    // Remember what had focus so it can be handed back -- otherwise focus is
+    // left on a control behind the overlay after the dialog closes.
+    openerRef.current = document.activeElement;
+    dialogRef.current?.focus();
+
+    const onKey = (e) => {
+      if (e.key === 'Escape' && !loading) onClose?.();
+    };
+    window.addEventListener('keydown', onKey);
+
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      if (openerRef.current instanceof HTMLElement) openerRef.current.focus();
+    };
+  }, [isOpen, loading, onClose]);
+
   if (!isOpen) return null;
 
-  const palette = {
-    danger:  { color: adminTheme.colors.error,    bg: '#FEF2F2', Icon: AlertTriangle },
-    warning: { color: adminTheme.colors.warning, bg: '#F0F9E8', Icon: AlertCircle },
-    success: { color: adminTheme.colors.success,  bg: '#ECFDF5', Icon: CheckCircle2 },
-    info:    { color: adminTheme.colors.info,    bg: '#EFF6FF', Icon: Info },
-  }[type] || { color: adminTheme.colors.primary, bg: '#EFF6FF', Icon: Info };
+  const t = buildTokens(theme);
 
-  const { color, bg, Icon } = palette;
+  const palette = {
+    danger: { color: t.danger, Icon: AlertTriangle, btn: 'adm-btn-danger' },
+    warning: { color: t.warning, Icon: AlertCircle, btn: 'adm-btn-primary' },
+    success: { color: t.success, Icon: CheckCircle2, btn: 'adm-btn-success' },
+    info: { color: t.info, Icon: Info, btn: 'adm-btn-primary' },
+  }[type] || { color: t.pri, Icon: Info, btn: 'adm-btn-primary' };
+
+  const { color, Icon, btn } = palette;
 
   const handleConfirm = () => {
     if (loading) return;
@@ -21,141 +83,53 @@ export function ConfirmModal({ theme = {}, isOpen, onClose, onConfirm, title, me
 
   return (
     <div
-      className="admin-modal-overlay"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(15, 23, 42, 0.55)',
-        backdropFilter: 'blur(4px)',
-        WebkitBackdropFilter: 'blur(4px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 99999,
-        padding: adminTheme.spacing.xl,
-      }}
+      className="adm-overlay"
+      style={{ zIndex: 99999 }}
       onClick={loading ? undefined : onClose}
     >
       <div
-        className="admin-modal-content"
+        ref={dialogRef}
+        tabIndex={-1}
+        className="adm-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-modal-title"
-        style={{
-          background: adminTheme.colors.card,
-          borderRadius: adminTheme.borderRadius.xl,
-          padding: adminTheme.spacing['2xl'],
-          width: '100%',
-          maxWidth: 460,
-          boxShadow: adminTheme.shadows.xl,
-        }}
+        style={{ maxWidth: 460 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{
-          display: 'flex',
-          alignItems: 'flex-start',
-          gap: adminTheme.spacing.lg,
-          marginBottom: adminTheme.spacing.lg,
-        }}>
-          <div style={{
-            width: 48,
-            height: 48,
-            borderRadius: adminTheme.borderRadius.lg,
-            background: bg,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color,
-            flexShrink: 0,
-          }}>
-            <Icon size={24} strokeWidth={2.2} />
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <h3 id="confirm-modal-title" style={{
-              margin: `0 0 ${adminTheme.spacing.sm}`,
-              fontSize: adminTheme.typography.fontSize.lg,
-              fontWeight: adminTheme.typography.fontWeight.semibold,
-              color: adminTheme.colors.textPrimary,
-              letterSpacing: '-0.01em',
-            }}>
+        <div className="adm-modal-body" style={{ display: 'flex', gap: 14 }}>
+          <span
+            className="adm-stat-icon"
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 12,
+              background: `${color}1F`,
+              color,
+              flexShrink: 0,
+            }}
+          >
+            <Icon size={20} />
+          </span>
+
+          <div style={{ minWidth: 0 }}>
+            <h3 id="confirm-modal-title" className="adm-modal-title" style={{ marginBottom: 6 }}>
               {title}
             </h3>
-            <p style={{
-              margin: 0,
-              fontSize: adminTheme.typography.fontSize.base,
-              color: adminTheme.colors.textSecondary,
-              lineHeight: 1.6,
-            }}>
-              {message}
-            </p>
+            <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: t.sub }}>{message}</p>
           </div>
         </div>
 
-        <div style={{
-          display: 'flex',
-          gap: adminTheme.spacing.md,
-          flexDirection: typeof window !== 'undefined' && window.innerWidth < 640 ? 'column' : 'row',
-        }}>
-          <button
-            onClick={onClose}
-            disabled={loading}
-            style={{
-              flex: 1,
-              padding: `${adminTheme.spacing.sm} ${adminTheme.spacing.lg}`,
-              background: adminTheme.colors.background,
-              border: `1px solid ${adminTheme.colors.border}`,
-              borderRadius: adminTheme.borderRadius.md,
-              color: '#000',
-              fontSize: adminTheme.typography.fontSize.base,
-              fontWeight: adminTheme.typography.fontWeight.semibold,
-              cursor: loading ? 'not-allowed' : 'pointer',
-              transition: `all ${adminTheme.transitions.base}`,
-            }}
-            onMouseEnter={(e) => {
-              if (!loading) e.currentTarget.style.background = adminTheme.colors.hover;
-            }}
-            onMouseLeave={(e) => {
-              if (!loading) e.currentTarget.style.background = adminTheme.colors.background;
-            }}
-          >
+        <div className="adm-modal-foot">
+          <button type="button" className="adm-btn adm-btn-outline" onClick={onClose} disabled={loading}>
             {cancelText}
           </button>
-          <button
-            onClick={handleConfirm}
-            disabled={loading}
-            style={{
-              flex: 1,
-              padding: `${adminTheme.spacing.sm} ${adminTheme.spacing.lg}`,
-              background: color,
-              border: 'none',
-              borderRadius: adminTheme.borderRadius.md,
-              color: adminTheme.colors.textLight,
-              fontSize: adminTheme.typography.fontSize.base,
-              fontWeight: adminTheme.typography.fontWeight.semibold,
-              cursor: loading ? 'not-allowed' : 'pointer',
-              boxShadow: `0 4px 12px ${color}33`,
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: adminTheme.spacing.sm,
-              transition: `all ${adminTheme.transitions.base}`,
-            }}
-            onMouseEnter={(e) => {
-              if (!loading) e.currentTarget.style.filter = 'brightness(1.1)';
-            }}
-            onMouseLeave={(e) => {
-              if (!loading) e.currentTarget.style.filter = 'none';
-            }}
-          >
-            {loading && <span className="admin-spinner sm" style={{ borderTopColor: '#fff', borderColor: 'rgba(255,255,255,0.4)' }} />}
-            {loading ? 'Working...' : confirmText}
+          <button type="button" className={`adm-btn ${btn}`} onClick={handleConfirm} disabled={loading}>
+            {loading && <Loader2 size={15} className="adm-spin" />}
+            {confirmText}
           </button>
         </div>
       </div>
     </div>
   );
 }
-
-
-
-

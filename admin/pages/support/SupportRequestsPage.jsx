@@ -82,8 +82,8 @@ export function SupportRequestsPage({ theme }) {
     }
   };
 
-  const BG = '#0F0F0F';
-  const CARD = '#1A1A1A';
+  const BG = theme.bg;
+  const CARD = theme.card;
   const BORDER = '#262626';
   const TXT = '#fff';
   const SUB = '#9CA3AF';

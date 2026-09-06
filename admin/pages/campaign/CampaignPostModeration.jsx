@@ -10,8 +10,10 @@ const mediaUrl = (url) => {
 };
 
 const PRI = '#8fc441';
-const BG = '#FAFAF9';
-const CARD = '#FFFFFF';
+// Surfaces come from the theme now; these were pinned light, so the page
+// stayed white when the rest of the admin went dark.
+const BG = 'var(--adm-bg)';
+const CARD = 'var(--adm-card)';
 const BORDER = '#E7E5E4';
 const TXT = '#1C1917';
 const SUB = '#78716C';

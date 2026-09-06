@@ -7,6 +7,7 @@ import api from '../../api';
 import { PostCaptionOverlay } from './PostCaptionOverlay';
 import { isVideoUrl, isVideoPost } from '../../utils/media';
 import { likeCountOf, commentCountOf, shareCountOf, formatCount } from '../../utils/engagement';
+import { SharePostSheet } from './SharePostSheet';
 
 /**
  * TikTok-style desktop viewer: one full-height 9:16 clip at a time, with the
@@ -57,6 +58,7 @@ export function DesktopReelViewer({
   // show that something is happening rather than a frozen frame.
   const [buffering, setBuffering] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  const [showShare, setShowShare] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const suppressTap = useRef(false);
 
@@ -220,15 +222,17 @@ export function DesktopReelViewer({
     }
   };
 
-  const handleShare = async () => {
+  const handleShare = (e) => {
+    // The rail sits over the player, which toggles playback on click.
+    e?.stopPropagation?.();
     if (!post) return;
-    const url = `${window.location.origin}/post/${post.id}`;
-    try {
-      if (navigator.share) await navigator.share({ title: post.caption || 'FlipStar', url });
-      else await navigator.clipboard?.writeText(url);
-      patch(post.id, { shares: eng(post).shares + 1 });
-      api.request(`/reels/${post.id}/share/`, { method: 'POST' }).catch(() => {});
-    } catch { /* user dismissed the share sheet */ }
+
+    // This used to hand off to navigator.share, falling back to the clipboard.
+    // Both are external-only -- neither could send a post to another user on
+    // FlipStar, which is what Share is for here. The count is no longer
+    // incremented optimistically either: the server owns it, and it moves once
+    // per action however many recipients are picked.
+    setShowShare(true);
   };
 
   const author = post?.user || {};
@@ -581,6 +585,17 @@ export function DesktopReelViewer({
           <ChevronDown size={22} />
         </button>
       </div>
+
+      <SharePostSheet
+        post={post}
+        currentUser={currentUser}
+        open={showShare}
+        onClose={() => setShowShare(false)}
+        onShared={({ shares }) => {
+          if (typeof shares === 'number' && post) patch(post.id, { shares });
+        }}
+        T={T}
+      />
     </div>
   );
 }

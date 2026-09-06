@@ -359,7 +359,7 @@ const CampaignLeaderboard = ({ campaignId, onBack }) => {
                       </div>
                       <Medal size={18} color="#A8A8A8" style={{ marginBottom: 4 }} />
                       <div style={{ fontSize: 14, fontWeight: 700, color: T.txt, marginBottom: 2 }}>{top3[1].username}</div>
-                      <div style={{ fontSize: 18, fontWeight: 800, color: '#A8A8A8' }}>{top3[1].total_score || top3[1].score}</div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: '#A8A8A8' }}>{top3[1].leaderboard_score ?? top3[1].total_score ?? top3[1].score ?? 0}</div>
                       <div style={{ fontSize: 11, color: T.sub }}>pts</div>
                     </div>
                   )}
@@ -383,7 +383,7 @@ const CampaignLeaderboard = ({ campaignId, onBack }) => {
                         )}
                       </div>
                       <div style={{ fontSize: 16, fontWeight: 800, color: T.txt, marginBottom: 2 }}>{top3[0].username}</div>
-                      <div style={{ fontSize: 22, fontWeight: 900, color: '#fff' }}>{top3[0].total_score || top3[0].score}</div>
+                      <div style={{ fontSize: 22, fontWeight: 900, color: '#fff' }}>{top3[0].leaderboard_score ?? top3[0].total_score ?? top3[0].score ?? 0}</div>
                       <div style={{ fontSize: 11, color: T.sub }}>pts · Champion</div>
                     </div>
                   )}
@@ -406,7 +406,7 @@ const CampaignLeaderboard = ({ campaignId, onBack }) => {
                       </div>
                       <Medal size={18} color="#CD7F32" style={{ marginBottom: 4 }} />
                       <div style={{ fontSize: 14, fontWeight: 700, color: T.txt, marginBottom: 2 }}>{top3[2].username}</div>
-                      <div style={{ fontSize: 18, fontWeight: 800, color: '#CD7F32' }}>{top3[2].total_score || top3[2].score}</div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: '#CD7F32' }}>{top3[2].leaderboard_score ?? top3[2].total_score ?? top3[2].score ?? 0}</div>
                       <div style={{ fontSize: 11, color: T.sub }}>pts</div>
                     </div>
                   )}
@@ -464,19 +464,19 @@ const CampaignLeaderboard = ({ campaignId, onBack }) => {
                         <div style={{ display: 'flex', gap: 10, marginTop: 4, flexWrap: 'wrap' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                             <Heart size={11} color="#EF4444" />
-                            <span style={{ fontSize: 12, color: T.sub }}>{entry.likes_count || 0}</span>
+                            <span style={{ fontSize: 12, color: T.sub }}>{entry.likes ?? entry.likes_count ?? 0}</span>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                             <MessageCircle size={11} color="#888" />
-                            <span style={{ fontSize: 12, color: T.sub }}>{entry.comments_count || 0}</span>
+                            <span style={{ fontSize: 12, color: T.sub }}>{entry.comments ?? entry.comments_count ?? 0}</span>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                             <Share2 size={11} color="#3B82F6" />
-                            <span style={{ fontSize: 12, color: T.sub }}>{entry.shares_count || 0}</span>
+                            <span style={{ fontSize: 12, color: T.sub }}>{entry.shares ?? entry.shares_count ?? 0}</span>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                             <Gift size={11} color="#8fc441" />
-                            <span style={{ fontSize: 12, color: T.sub }}>{entry.gifts_count || 0}</span>
+                            <span style={{ fontSize: 12, color: T.sub }}>{entry.gifts ?? entry.gifts_count ?? 0}</span>
                           </div>
                           {(entry.post_count || entry.posts_count) > 0 && (
                             <span style={{ fontSize: 12, color: T.sub }}>{entry.post_count || entry.posts_count} posts</span>
@@ -486,7 +486,7 @@ const CampaignLeaderboard = ({ campaignId, onBack }) => {
                       {/* Score */}
                       <div style={{ textAlign: 'right', flexShrink: 0 }}>
                         <div style={{ fontSize: 18, fontWeight: 800, color: rank <= 3 ? T.pri : T.txt }}>
-                          {entry.total_score ?? entry.score ?? 0}
+                          {entry.leaderboard_score ?? entry.total_score ?? entry.score ?? 0}
                         </div>
                         <div style={{ fontSize: 11, color: T.sub }}>points</div>
                       </div>

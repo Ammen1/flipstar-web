@@ -330,7 +330,7 @@ export function CampaignManagementPage({ theme, onManageCampaign }) {
             onClick={() => setStatusFilter(status)}
             style={{
               padding: '8px 16px',
-              background: statusFilter === status ? '#2563EB20' : '#1A1A1A',
+              background: statusFilter === status ? '#2563EB20' : theme.surface2,
               border: `1px solid ${statusFilter === status ? '#2563EB' : '#333333'}`,
               borderRadius: 8,
               color: statusFilter === status ? '#2563EB' : '#FFFFFF',
@@ -366,7 +366,7 @@ export function CampaignManagementPage({ theme, onManageCampaign }) {
             onClick={() => setCampaignTypeFilter(type.value)}
             style={{
               padding: '8px 16px',
-              background: campaignTypeFilter === type.value ? '#3B82F620' : '#1A1A1A',
+              background: campaignTypeFilter === type.value ? '#3B82F620' : theme.surface2,
               border: `1px solid ${campaignTypeFilter === type.value ? '#3B82F6' : '#333333'}`,
               borderRadius: 8,
               color: campaignTypeFilter === type.value ? '#3B82F6' : '#FFFFFF',
@@ -1370,7 +1370,7 @@ function CreateCampaignModal({ theme, onClose, onSuccess, selectedMasterCampaign
                         outline: 'none',
                         color: theme.txt,
                         background: theme.bg,
-                        colorScheme: theme.bg === '#000000' || theme.bg === '#0D0D0D' ? 'dark' : 'light',
+                        colorScheme: theme.mode || 'dark',
                       }}
                     />
                     <select
@@ -1424,7 +1424,7 @@ function CreateCampaignModal({ theme, onClose, onSuccess, selectedMasterCampaign
                         outline: 'none',
                         color: theme.txt,
                         background: theme.bg,
-                        colorScheme: theme.bg === '#000000' || theme.bg === '#0D0D0D' ? 'dark' : 'light',
+                        colorScheme: theme.mode || 'dark',
                       }}
                     />
                     <select
@@ -1478,7 +1478,7 @@ function CreateCampaignModal({ theme, onClose, onSuccess, selectedMasterCampaign
                         outline: 'none',
                         color: theme.txt,
                         background: theme.bg,
-                        colorScheme: theme.bg === '#000000' || theme.bg === '#0D0D0D' ? 'dark' : 'light',
+                        colorScheme: theme.mode || 'dark',
                       }}
                     />
                     <select
@@ -1532,7 +1532,7 @@ function CreateCampaignModal({ theme, onClose, onSuccess, selectedMasterCampaign
                         outline: 'none',
                         color: theme.txt,
                         background: theme.bg,
-                        colorScheme: theme.bg === '#000000' || theme.bg === '#0D0D0D' ? 'dark' : 'light',
+                        colorScheme: theme.mode || 'dark',
                       }}
                     />
                     <select

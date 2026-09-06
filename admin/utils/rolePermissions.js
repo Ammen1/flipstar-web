@@ -5,7 +5,7 @@ export const ROLE_PERMISSIONS = {
   super_admin: {
     // Super admin has access to everything
     pages: [
-      'dashboard', 'analytics', 'performance',
+      'dashboard', 'analytics',
       'mobile-app', 'judging', 'reports', 'support',
       'users', 'content', 'master-campaigns', 'campaigns',
       'gifts', 'coins', 'subscriptions', 'charging',

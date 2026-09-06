@@ -3,8 +3,9 @@ import api from '../../../api';
 import { ArrowLeft, Plus, Edit2, Trash2, CheckCircle, Calendar, Hash, X, Save } from 'lucide-react';
 
 const PRI = '#8fc441';
-const BG = '#FAFAF9';
-const CARD = '#FFFFFF';
+// See CampaignPostModeration: pinned surfaces ignored the theme entirely.
+const BG = 'var(--adm-bg)';
+const CARD = 'var(--adm-card)';
 const BORDER = '#E7E5E4';
 const TXT = '#1C1917';
 const SUB = '#78716C';

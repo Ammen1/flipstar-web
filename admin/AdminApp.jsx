@@ -9,7 +9,6 @@ import { SubscriptionManagement } from './pages/financial/SubscriptionManagement
 import { SettingsPage } from './pages/general/SettingsPage';
 import { APIKeysPage } from './pages/system/APIKeysPage';
 import { SystemLogsPage } from './pages/system/SystemLogsPage';
-import { PerformancePage } from './pages/analytics/PerformancePage';
 import { NotificationsPage } from './pages/system/NotificationsPage';
 import { AdminManagementPage } from './pages/user/AdminManagementPage';
 import { JudgingPortalPage } from './pages/legal/JudgingPortalPage';
@@ -21,6 +20,9 @@ import CampaignThemeManagement from './pages/campaign/CampaignThemeManagement';
 import CampaignPostModeration from './pages/campaign/CampaignPostModeration';
 import { LeaderboardPage } from './pages/legal/LeaderboardPage';
 import { AdminSidebar } from './components/layout/AdminSidebar';
+import { AdminStyles } from './AdminStyles';
+import { buildTokens, MOBILE_BREAKPOINT, SIDEBAR_WIDTH } from './tokens';
+import { useThemeMode } from './useThemeMode';
 import { AdminLogin } from './pages/general/AdminLogin';
 import { ReportsPage } from './pages/support/ReportsPage';
 import { SupportRequestsPage } from './pages/support/SupportRequestsPage';
@@ -43,19 +45,20 @@ import './admin.css';
 
 export function AdminApp() {
   // Force admin to use admin theme for proper contrast
+  // Palette comes from the selected mode. The KEY NAMES are deliberately
+  // unchanged: the pages carry 2,327 references to theme.txt, theme.sub,
+  // theme.border and friends, so renaming anything here blanks out a thousand
+  // styles. New keys are additive.
+  const { mode: themeMode, palette, setMode: setThemeMode } = useThemeMode();
+
   const T = {
-    pri: adminTheme.colors.primary,
-    dark: adminTheme.colors.primaryDark,
-    bg: adminTheme.colors.background,
-    card: adminTheme.colors.card,
-    txt: adminTheme.colors.textPrimary,
-    sub: adminTheme.colors.textSecondary,
-    border: adminTheme.colors.border,
-    red: '#EF4444',
-    green: '#10B981',
-    blue: '#3B82F6',
-    purple: '#8B5CF6',
-    orange: '#8fc441',
+    ...palette,
+    dark: palette.priHover,
+    // `theme.text` is read in 22 places and never existed on this object, so
+    // those styles have been resolving to undefined. Aliased rather than
+    // hunted down, which would be 22 edits for no behavioural gain.
+    text: palette.txt,
+    cardBg: palette.card,
   };
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -272,7 +275,12 @@ export function AdminApp() {
   const renderPage = () => {
     switch (currentPage) {
       case 'dashboard':
-        return <AdminDashboard theme={T} key={userRoleKey} />;
+        return <AdminDashboard
+            theme={T}
+            key={userRoleKey}
+            adminUser={adminUser}
+            onPageChange={handlePageChange}
+          />;
       case 'mobile-app':
         return <MobileAppPage theme={T} key={userRoleKey} />;
       case 'users':
@@ -289,8 +297,6 @@ export function AdminApp() {
         return <APIKeysPage theme={T} key={userRoleKey} />;
       case 'logs':
         return <SystemLogsPage theme={T} key={userRoleKey} />;
-      case 'performance':
-        return <PerformancePage theme={T} key={userRoleKey} />;
       case 'notifications':
         return <NotificationsPage theme={T} key={userRoleKey} />;
       case 'admins':
@@ -350,7 +356,12 @@ export function AdminApp() {
       case 'crm-winners':
         return <CRMWinnersPage theme={T} key={userRoleKey} />;
       default:
-        return <AdminDashboard theme={T} key={userRoleKey} />;
+        return <AdminDashboard
+            theme={T}
+            key={userRoleKey}
+            adminUser={adminUser}
+            onPageChange={handlePageChange}
+          />;
     }
   };
 
@@ -359,10 +370,38 @@ export function AdminApp() {
       display: 'flex',
       width: '100vw',
       height: '100vh',
-      background: '#000000', // Force pure black background
+      background: T.bg,
       overflow: 'hidden',
       fontFamily: adminFont,
     }}>
+      <AdminStyles tokens={buildTokens(T)} />
+      <style>{`
+        /* Theme changes ease rather than snap. Scoped to the properties
+           that actually change -- a blanket transition-all on a page this
+           size costs real frames. */
+        .admin-root, .admin-page, .adm-card, .adm-table-wrap, .adm-modal {
+          transition: background-color .18s ease, border-color .18s ease;
+        }
+
+        /* The content column, sized against the sidebar. Previously a hard
+           marginLeft: 240 at every width, so below the drawer breakpoint the
+           page was pushed off screen by a sidebar that was no longer there. */
+        .admin-page {
+          margin-left: ${SIDEBAR_WIDTH}px;
+          padding: 32px;
+          /* Nothing inside a page may widen the viewport -- a single wide
+             table used to make the whole admin scroll sideways. */
+          max-width: 100%;
+          box-sizing: border-box;
+        }
+        @media (max-width: ${MOBILE_BREAKPOINT}px) {
+          .admin-page { margin-left: 0; padding: 68px 18px 28px; }
+        }
+        @media (max-width: 560px) {
+          .admin-page { padding: 64px 14px 24px; }
+        }
+      `}</style>
+
       <AdminSidebar
         theme={T}
         currentPage={currentPage}
@@ -370,6 +409,8 @@ export function AdminApp() {
         adminUser={adminUser}
         onLogout={handleLogout}
         onShowProfile={() => setShowProfileModal(true)}
+        themeMode={themeMode}
+        onThemeModeChange={setThemeMode}
       />
       <div
         key={currentPage}
@@ -377,11 +418,9 @@ export function AdminApp() {
         style={{
           flex: 1,
           overflow: 'auto',
-          padding: '32px',
-          marginLeft: 240,
           position: 'relative',
           zIndex: 1,
-          background: '#000000', // Force pure black background
+          background: T.bg,
         }}
       >
         {renderPage()}

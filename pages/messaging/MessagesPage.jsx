@@ -297,13 +297,21 @@ function NewChatModal({ onClose, onSelectUser, T }) {
 }
 
 // ─── Message Bubble ────────────────────────────────────────────────────────────
-const MessageBubble = memo(function MessageBubble({ msg, T, onEdit, onDelete, priColor, onShowPostPage }) {
+const MessageBubble = memo(function MessageBubble({ msg, T, onEdit, onDelete, priColor, onShowPostPage, onOpenPost }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const own = msg.is_own;
 
-  // Detect POST_ID in message text for shared posts
+  // A shared post now arrives as a real object on the message: the server
+  // holds a foreign key to the reel and serializes a small preview of it.
+  //
+  // The regex below is the fallback for messages sent before that existed,
+  // which embedded a literal "[POST_ID:35]" marker in the text for the client
+  // to pick back out. Those messages are already in people's inboxes, so the
+  // parse stays -- but nothing new is written in that form, and the marker is
+  // stripped from the visible text either way.
+  const sharedPost = msg.shared_post || null;
   const postIdMatch = msg.text?.match(/\[POST_ID:(\d+)\]/);
-  const sharedPostId = postIdMatch ? postIdMatch[1] : null;
+  const sharedPostId = sharedPost?.id ?? (postIdMatch ? postIdMatch[1] : null);
   const messageWithoutPostId = msg.text?.replace(/\[POST_ID:\d+\]/, '').trim() || '';
 
   const bubbleStyle = own
@@ -468,7 +476,7 @@ const MessageBubble = memo(function MessageBubble({ msg, T, onEdit, onDelete, pr
             <div>
               {sharedPostId && (
                 <div
-                  onClick={() => onShowPostPage?.(sharedPostId)}
+                  onClick={() => onOpenPost?.(sharedPostId)}
                   style={{
                     padding: '12px',
                     background: own ? 'rgba(255,255,255,0.15)' : 'rgba(143,196,65,0.1)',
@@ -485,29 +493,46 @@ const MessageBubble = memo(function MessageBubble({ msg, T, onEdit, onDelete, pr
                     e.currentTarget.style.background = own ? 'rgba(255,255,255,0.15)' : 'rgba(143,196,65,0.1)';
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{
-                      width: 32, height: 32, borderRadius: 8,
-                      background: '#8fc441',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      flexShrink: 0,
-                    }}>
-                      <Play size={16} color="#000" />
-                    </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    {/* The post's own still when the server sent one. Older
+                        shares carry no preview at all, so the play glyph
+                        remains the fallback rather than an empty box. */}
+                    {sharedPost?.thumbnail ? (
+                      <img
+                        src={sharedPost.thumbnail}
+                        alt=""
+                        style={{
+                          width: 46, height: 46, borderRadius: 8,
+                          objectFit: 'cover', flexShrink: 0,
+                          background: 'rgba(0,0,0,0.15)',
+                        }}
+                      />
+                    ) : (
+                      <div style={{
+                        width: 46, height: 46, borderRadius: 8,
+                        background: '#8fc441',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        flexShrink: 0,
+                      }}>
+                        <Play size={18} color="#000" />
+                      </div>
+                    )}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{
                         fontSize: 12, fontWeight: 700,
                         color: own ? '#fff' : '#8fc441',
                         marginBottom: 2,
                       }}>
-                        Shared Post
+                        {sharedPost?.author?.username
+                          ? `Post by @${sharedPost.author.username}`
+                          : 'Shared Post'}
                       </div>
                       <div style={{
-                        fontSize: 11, opacity: 0.8,
+                        fontSize: 11, opacity: 0.85,
                         color: own ? '#fff' : T.txt,
                         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                       }}>
-                        Tap to view
+                        {sharedPost?.caption?.trim() || 'Tap to view'}
                       </div>
                     </div>
                   </div>
@@ -1092,7 +1117,7 @@ const Composer = memo(function Composer({
 });
 
 // ─── Thread View (single conversation) ────────────────────────────────────────
-function ThreadView({ conversation, onBack, user, T, priColor, onShowProfile, onMessageChanged, onShowPostPage }) {
+function ThreadView({ conversation, onBack, user, T, priColor, onShowProfile, onMessageChanged, onShowPostPage, onOpenPost }) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
@@ -1308,6 +1333,7 @@ function ThreadView({ conversation, onBack, user, T, priColor, onShowProfile, on
               onDelete={handleDelete}
               priColor={priColor}
               onShowPostPage={onShowPostPage}
+              onOpenPost={onOpenPost}
             />
           ))
         )}
@@ -1390,7 +1416,7 @@ function ConvRow({ conv, active, currentUserId, onClick, T }) {
   );
 }
 
-export function MessagesPage({ user, onShowProfile, onRequireAuth, onShowPostPage }) {
+export function MessagesPage({ user, onShowProfile, onRequireAuth, onShowPostPage, onOpenPost }) {
   const { colors: T } = useTheme();
   const priColor = T.priGradient || T.pri;
   
@@ -1692,6 +1718,7 @@ export function MessagesPage({ user, onShowProfile, onRequireAuth, onShowPostPag
                 onShowProfile={onShowProfile}
                 onMessageChanged={onMessageChanged}
                 onShowPostPage={onShowPostPage}
+                onOpenPost={onOpenPost}
               />
             </div>
           )}
@@ -1717,6 +1744,7 @@ export function MessagesPage({ user, onShowProfile, onRequireAuth, onShowPostPag
                 onShowProfile={onShowProfile}
                 onMessageChanged={onMessageChanged}
                 onShowPostPage={onShowPostPage}
+                onOpenPost={onOpenPost}
               />
             ) : (
               <div style={{

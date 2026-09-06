@@ -154,23 +154,8 @@ export function MasterCampaignManagementPage({ theme }) {
             Manage campaign seasons and generate sub-campaigns
           </p>
         </div>
-        <button
-          onClick={handleCreate}
-          style={{
-            padding: '12px 24px',
-            background: theme.pri,
-            color: '#fff',
-            border: 'none',
-            borderRadius: 8,
-            fontSize: 16,
-            fontWeight: 600,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-          }}
-        >
-          <Plus size={20} />
+        <button className="adm-btn adm-btn-cta" onClick={handleCreate}>
+          <Plus size={17} />
           Create Master Campaign
         </button>
       </div>
@@ -186,18 +171,10 @@ export function MasterCampaignManagementPage({ theme }) {
         {['all', 'draft', 'upcoming', 'active', 'completed', 'cancelled'].map((status) => (
           <button
             key={status}
+            type="button"
             onClick={() => setStatusFilter(status)}
-            style={{
-              padding: '8px 16px',
-              background: statusFilter === status ? theme.pri : 'transparent',
-              border: 'none',
-              borderRadius: 8,
-              cursor: 'pointer',
-              fontSize: 14,
-              fontWeight: statusFilter === status ? 600 : 500,
-              color: statusFilter === status ? '#fff' : theme.txt,
-              textTransform: 'capitalize',
-            }}
+            className={`adm-tab${statusFilter === status ? ' is-on' : ''}`}
+            aria-pressed={statusFilter === status}
           >
             {status}
           </button>
@@ -377,108 +354,48 @@ export function MasterCampaignManagementPage({ theme }) {
                   flexWrap: 'wrap',
                 }}>
                   <button
+                    type="button"
+                    className="adm-btn adm-btn-sm adm-btn-tint"
                     onClick={() => handleViewStats(campaign)}
-                    style={{
-                      flex: 1,
-                      padding: '8px 12px',
-                      background: theme.blue,
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: 6,
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 4,
-                    }}
+                    style={{ flex: 1, minWidth: 104, '--tint': theme.blue }}
                   >
-                    <BarChart3 size={14} />
+                    <BarChart3 size={16} />
                     Stats
                   </button>
                   <button
+                    type="button"
+                    className="adm-btn adm-btn-sm adm-btn-tint"
                     onClick={() => handleViewLeaderboard(campaign)}
-                    style={{
-                      flex: 1,
-                      padding: '8px 12px',
-                      background: '#8fc441',
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: 6,
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 4,
-                    }}
+                    style={{ flex: 1, minWidth: 104, '--tint': theme.green }}
                   >
-                    <Trophy size={14} />
+                    <Trophy size={16} />
                     Leaderboard
                   </button>
                   <button
+                    type="button"
+                    className="adm-btn adm-btn-sm adm-btn-tint"
                     onClick={() => handleGenerateSubCampaigns(campaign)}
-                    style={{
-                      flex: 1,
-                      padding: '8px 12px',
-                      background: theme.green,
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: 6,
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 4,
-                    }}
+                    style={{ flex: 1, minWidth: 104, '--tint': theme.cyan || theme.accent }}
                   >
-                    <Settings size={14} />
+                    <Settings size={16} />
                     Generate
                   </button>
                   <button
+                    type="button"
+                    className="adm-btn adm-btn-sm adm-btn-outline"
                     onClick={() => handleEdit(campaign)}
-                    style={{
-                      flex: 1,
-                      padding: '8px 12px',
-                      background: theme.pri,
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: 6,
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 4,
-                    }}
+                    style={{ flex: 1, minWidth: 104 }}
                   >
-                    <Edit size={14} />
+                    <Edit size={16} />
                     Edit
                   </button>
                   <button
+                    type="button"
+                    className="adm-btn adm-btn-sm adm-btn-tint"
                     onClick={() => handleDelete(campaign)}
-                    style={{
-                      flex: 1,
-                      padding: '8px 12px',
-                      background: theme.red,
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: 6,
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 4,
-                    }}
+                    style={{ flex: 1, minWidth: 104, '--tint': theme.red }}
                   >
-                    <Trash2 size={14} />
+                    <Trash2 size={16} />
                     Delete
                   </button>
                 </div>

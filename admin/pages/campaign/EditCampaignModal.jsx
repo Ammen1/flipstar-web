@@ -30,7 +30,7 @@ const inputStyle = (theme) => ({
 
 const dateInputStyle = (theme) => ({
   ...inputStyle(theme),
-  colorScheme: theme.bg === '#000000' || theme.bg === '#0D0D0D' ? 'dark' : 'light',
+  colorScheme: theme.mode || 'dark',
 });
 
 const Section = ({ icon: Icon, title, color, children }) => (

@@ -332,7 +332,7 @@ export function SecurityMonitoringPage({ theme }) {
                     </span>
                   </td>
                   <td style={{ padding: 12, fontSize: 13 }}>{event.username || 'Anonymous'}</td>
-                  <td style={{ padding: 12, fontSize: 13, fontFamily: 'monospace' }}>{event.ip_address || '-'}</td>
+                  <td style={{ padding: 12, fontSize: 13, fontFamily: 'var(--adm-font-mono)' }}>{event.ip_address || '-'}</td>
                   <td style={{ padding: 12, fontSize: 13 }}>{event.endpoint || event.page || '-'}</td>
                   <td style={{ padding: 12, fontSize: 13, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{event.details || '-'}</td>
                   <td style={{ padding: 12, fontSize: 13 }}>{new Date(event.timestamp).toLocaleString()}</td>

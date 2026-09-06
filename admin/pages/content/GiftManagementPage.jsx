@@ -281,37 +281,21 @@ export function GiftManagementPage({ theme }) {
         paddingBottom: '4px',
       }}>
         <button
+          type="button"
           onClick={() => setActiveTab('gifts')}
-          style={{
-            background: activeTab === 'gifts' ? theme.pri : 'transparent',
-            color: activeTab === 'gifts' ? '#fff' : theme.sub,
-            border: 'none',
-            padding: '12px 24px',
-            borderRadius: '8px',
-            fontSize: '14px',
-            fontWeight: '600',
-            cursor: 'pointer',
-          }}
+          className={`adm-tab${activeTab === 'gifts' ? ' is-on' : ''}`}
+          aria-pressed={activeTab === 'gifts'}
         >
           Gifts
         </button>
         <button
+          type="button"
           onClick={() => setActiveTab('restrictions')}
-          style={{
-            background: activeTab === 'restrictions' ? theme.pri : 'transparent',
-            color: activeTab === 'restrictions' ? '#fff' : theme.sub,
-            border: 'none',
-            padding: '12px 24px',
-            borderRadius: '8px',
-            fontSize: '14px',
-            fontWeight: '600',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-          }}
+          className={`adm-tab${activeTab === 'restrictions' ? ' is-on' : ''}`}
+          aria-pressed={activeTab === 'restrictions'}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
         >
-          <Shield size={16} />
+          <Shield size={15} />
           Restrictions
         </button>
       </div>
@@ -324,23 +308,8 @@ export function GiftManagementPage({ theme }) {
             alignItems: 'center',
             marginBottom: '24px',
           }}>
-            <button
-              onClick={() => setShowModal(true)}
-              style={{
-                background: theme.pri,
-                color: '#fff',
-                border: 'none',
-                padding: '12px 24px',
-                borderRadius: '8px',
-                fontSize: '14px',
-                fontWeight: '600',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-              }}
-            >
-              <Plus size={18} />
+            <button type="button" className="adm-btn adm-btn-cta" onClick={() => setShowModal(true)}>
+              <Plus size={17} />
               Add New Gift
             </button>
           </div>
@@ -367,85 +336,64 @@ export function GiftManagementPage({ theme }) {
                   gap: '8px',
                 }}>
                   <button
+                    type="button"
+                    className="adm-btn adm-btn-tint adm-icon-btn"
                     onClick={() => handleEdit(gift)}
-                    style={{
-                      background: theme.pri,
-                      border: 'none',
-                      borderRadius: '6px',
-                      padding: '6px',
-                      cursor: 'pointer',
-                      color: '#fff',
-                    }}
+                    style={{ '--tint': theme.pri }}
+                    aria-label={`Edit ${gift.name}`}
                   >
-                    <Edit2 size={16} />
+                    <Edit2 size={15} />
                   </button>
                   <button
+                    type="button"
+                    className="adm-btn adm-btn-tint adm-icon-btn"
                     onClick={() => handleDelete(gift.id)}
-                    style={{
-                      background: theme.red,
-                      border: 'none',
-                      borderRadius: '6px',
-                      padding: '6px',
-                      cursor: 'pointer',
-                      color: '#fff',
-                    }}
+                    style={{ '--tint': theme.red }}
+                    aria-label={`Delete ${gift.name}`}
                   >
-                    <Trash2 size={16} />
+                    <Trash2 size={15} />
                   </button>
                 </div>
 
                 <div style={{
-                  width: '80px',
-                  height: '80px',
-                  borderRadius: '12px',
-                  overflow: 'hidden',
-                  marginBottom: '16px',
-                  background: theme.bg,
                   display: 'flex',
                   alignItems: 'center',
-                  justifyContent: 'center',
-                  position: 'relative',
+                  gap: 13,
+                  marginBottom: 14,
+                  paddingRight: 76,
                 }}>
-                  {gift.image_url ? (
-                    <img
-                      src={gift.image_url}
-                      alt={gift.name}
-                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                    />
-                  ) : (
-                    <GiftIcon size={32} color={theme.sub} />
-                  )}
                   <div style={{
-                    position: 'absolute',
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    background: 'rgba(0,0,0,0.7)',
-                    padding: '4px 8px',
-                    fontSize: '10px',
-                    color: '#fff',
-                    fontWeight: '600',
-                    textAlign: 'center',
-                    whiteSpace: 'nowrap',
+                    width: 52,
+                    height: 52,
+                    borderRadius: 14,
+                    flexShrink: 0,
+                    overflow: 'hidden',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 26,
+                    lineHeight: 1,
+                    background: `color-mix(in srgb, ${getRarityColor(gift.rarity)} 14%, transparent)`,
+                    border: `1px solid color-mix(in srgb, ${getRarityColor(gift.rarity)} 30%, transparent)`,
+                  }}>
+                    {gift.image_url ? (
+                      <img
+                        src={gift.image_url}
+                        alt=""
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                    ) : (
+                      <span role="img" aria-hidden="true">{getCategoryIcon(gift.category)}</span>
+                    )}
+                  </div>
+
+                  <h3 className="adm-t-card" style={{
+                    fontSize: 17,
+                    color: theme.txt,
+                    minWidth: 0,
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
-                  }}>
-                    {gift.name}
-                  </div>
-                </div>
-
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  marginBottom: '8px',
-                }}>
-                  <span style={{ fontSize: '24px' }}>{getCategoryIcon(gift.category)}</span>
-                  <h3 style={{
-                    fontSize: '18px',
-                    fontWeight: '600',
-                    color: theme.text,
-                    margin: 0,
+                    whiteSpace: 'nowrap',
                   }}>
                     {gift.name}
                   </h3>
@@ -474,23 +422,15 @@ export function GiftManagementPage({ theme }) {
                   flexWrap: 'wrap',
                   marginBottom: '12px',
                 }}>
-                  <span style={{
-                    fontSize: '12px',
-                    padding: '4px 8px',
-                    borderRadius: '4px',
-                    background: theme.bg,
+                  <span className="adm-badge" style={{
                     color: getRarityColor(gift.rarity),
-                    fontWeight: '500',
+                    background: `color-mix(in srgb, ${getRarityColor(gift.rarity)} 15%, transparent)`,
+                    borderColor: `color-mix(in srgb, ${getRarityColor(gift.rarity)} 38%, transparent)`,
+                    textTransform: 'capitalize',
                   }}>
                     {gift.rarity}
                   </span>
-                  <span style={{
-                    fontSize: '12px',
-                    padding: '4px 8px',
-                    borderRadius: '4px',
-                    background: theme.bg,
-                    color: theme.sub,
-                  }}>
+                  <span className="adm-badge adm-badge-neutral" style={{ textTransform: 'capitalize' }}>
                     {gift.category}
                   </span>
                 </div>

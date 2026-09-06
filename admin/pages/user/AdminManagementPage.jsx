@@ -784,7 +784,7 @@ export function AdminManagementPage({ theme }) {
                     <td style={cellStyle}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         {visiblePasswords[user.id] ? (
-                          <span style={{ fontSize: 13, color: theme.txt, fontFamily: 'monospace' }}>
+                          <span style={{ fontSize: 13, color: theme.txt, fontFamily: 'var(--adm-font-mono)' }}>
                             {visiblePasswords[user.id]}
                           </span>
                         ) : (

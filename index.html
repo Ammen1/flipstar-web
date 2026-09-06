@@ -7,7 +7,28 @@
       type="image/png"
       href="./static/images/Flip_Star_Final_Logo_v3_side__2_-removebg-preview.png"
     />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!--
+      Inter, actually loaded.
+
+      The admin and the app both ask for `font-family: Inter` in dozens of
+      places, and it was never fetched -- no link, no @font-face, no package.
+      Every one of those declarations fell through to the generic sans-serif,
+      which is why the typography looked inconsistent: the font named
+      everywhere was not the font being drawn anywhere.
+
+      preconnect first so the font request does not wait on a fresh DNS and TLS
+      handshake; display=swap so text paints in the fallback immediately rather
+      than sitting invisible while the file downloads -- which matters a great
+      deal more on a mobile connection than on a desk.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
     <meta
       name="description"
       content="FlipStar - Modern social media platform for sharing videos and images"

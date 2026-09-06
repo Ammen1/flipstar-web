@@ -22,6 +22,28 @@ const RARITY_COLORS = {
   legendary: '#F59E0B',
 };
 
+/**
+ * Coins that can actually pay for a gift.
+ *
+ * Not the same as the wallet total, and not `purchased` either. Exactly one
+ * bucket is giftable -- coins bought with money via Telebirr. Reward coins,
+ * airtime top-ups and subscription bonus coins all spend fine elsewhere in the
+ * app and are all refused here, so showing any of them next to the Send button
+ * promises a gift the backend will decline.
+ *
+ * `giftable` is sent by the wallet endpoint for exactly this purpose; the
+ * fallbacks cover a response from before that field existed.
+ */
+function giftableFrom(balance) {
+  if (!balance) return 0;
+  return balance.giftable ?? balance.telebirr_purchased ?? 0;
+}
+
+/** Subscription bonus coins, which are shown but never counted as spendable here. */
+function bonusFrom(balance) {
+  return balance?.bonus ?? 0;
+}
+
 export default function GiftPage({ username, reelId, onClose, onShowWallet, onShowCoinPurchase }) {
   const { colors: T } = useTheme();
   const { openTopUpModal } = useAuth();
@@ -66,7 +88,7 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
   const loadCoinBalance = async () => {
     try {
       const response = await api.request('/wallet/');
-      setCoinBalance(response.balance?.purchased || 0);
+      setCoinBalance(giftableFrom(response.balance));
       setBalanceData(response.balance);
     } catch (error) {
       console.error('Error loading coin balance:', error);
@@ -108,7 +130,7 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
     // Refresh coin balance before sending to avoid stale data (especially in H5 SuperApp)
     try {
       const freshBalance = await api.request('/wallet/');
-      setCoinBalance(freshBalance.balance?.purchased || 0);
+      setCoinBalance(giftableFrom(freshBalance.balance));
       setBalanceData(freshBalance.balance);
       try {
         await api.request('/client-log/', {
@@ -116,7 +138,7 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
           body: JSON.stringify({
             level: 'info',
             message: '[GiftPage] Balance refreshed before send',
-            context: { oldBalance: coinBalance, newBalance: freshBalance.balance?.purchased || 0 }
+            context: { oldBalance: coinBalance, newBalance: giftableFrom(freshBalance.balance) }
           }),
         });
       } catch (e) {}
@@ -227,7 +249,7 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
       // Refresh coin balance after successful send to reflect the deduction
       try {
         const freshBalance = await api.request('/wallet/');
-        setCoinBalance(freshBalance.balance?.purchased || 0);
+        setCoinBalance(giftableFrom(freshBalance.balance));
         setBalanceData(freshBalance.balance);
         // Emit global event so other components (header, wallet page) can refresh
         window.dispatchEvent(new CustomEvent('walletBalanceChanged', { detail: freshBalance }));
@@ -237,7 +259,7 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
             body: JSON.stringify({
               level: 'info',
               message: '[GiftPage] Balance refreshed after send',
-              context: { newBalance: freshBalance.balance?.purchased || 0 }
+              context: { newBalance: giftableFrom(freshBalance.balance) }
             }),
           });
         } catch (e) {}
@@ -668,7 +690,7 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
                 marginBottom: 24,
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                  <span style={{ fontSize: 13, color: T.sub, fontWeight: 500 }}>Current Balance</span>
+                  <span style={{ fontSize: 13, color: T.sub, fontWeight: 500 }}>Giftable Balance</span>
                   <span style={{ fontSize: 18, fontWeight: 800, color: '#8fc441' }}>🪙 {coinBalance}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -679,10 +701,20 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
                   <span style={{ fontSize: 12, color: T.sub }}>Airtime (Not Giftable)</span>
                   <span style={{ fontSize: 14, fontWeight: 600, color: '#F59E0B' }}>🪙 {balanceData?.airtime_purchased || 0}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                   <span style={{ fontSize: 12, color: T.sub }}>Earned (Not Giftable)</span>
                   <span style={{ fontSize: 14, fontWeight: 600, color: '#10B981' }}>🪙 {balanceData?.earned || 0}</span>
                 </div>
+                {/* Subscription bonus coins. Listed with the other buckets the
+                    backend will not accept for a gift, rather than folded into
+                    the headline figure -- a user shown 500 spendable coins and
+                    then refused would reasonably think the wallet was broken. */}
+                {bonusFrom(balanceData) > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <span style={{ fontSize: 12, color: T.sub }}>Subscription Bonus (Not Giftable)</span>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: '#A855F7' }}>🪙 {bonusFrom(balanceData)}</span>
+                  </div>
+                )}
                 <div style={{
                   height: 1,
                   background: 'rgba(143,196,65,0.2)',

@@ -282,7 +282,7 @@ export function SecurityPage({ theme, onNavigate }) {
                           </button>
                         )}
                         {ev.ip_address && (
-                          <span style={{ fontSize: 11, color: T.sub, fontFamily: 'monospace', display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <span style={{ fontSize: 11, color: T.sub, fontFamily: 'var(--adm-font-mono)', display: 'flex', alignItems: 'center', gap: 4 }}>
                             🌐 {ev.ip_address}
                           </span>
                         )}
@@ -294,7 +294,7 @@ export function SecurityPage({ theme, onNavigate }) {
                         <details style={{ marginTop: 5 }}>
                           <summary style={{ fontSize: 11, color: T.pri, cursor: 'pointer', fontWeight: 600 }}>Details</summary>
                           <pre style={{ marginTop: 4, padding: 8, background: T.bg, borderRadius: 6, fontSize: 10,
-                            fontFamily: 'monospace', maxHeight: 120, overflow: 'auto', color: T.txt }}>
+                            fontFamily: 'var(--adm-font-mono)', maxHeight: 120, overflow: 'auto', color: T.txt }}>
                             {JSON.stringify(ev.details, null, 2)}
                           </pre>
                         </details>
@@ -439,7 +439,7 @@ export function SecurityPage({ theme, onNavigate }) {
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   }}>
                     <div>
-                      <div style={{ fontSize: 15, fontWeight: 700, color: T.txt, fontFamily: 'monospace', marginBottom: 4 }}>{ip.ip}</div>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: T.txt, fontFamily: 'var(--adm-font-mono)', marginBottom: 4 }}>{ip.ip}</div>
                       <div style={{ fontSize: 12, color: T.sub }}>
                         {ip.failed_attempts} failed attempts · Last: {new Date(ip.last_attempt).toLocaleString()}
                       </div>

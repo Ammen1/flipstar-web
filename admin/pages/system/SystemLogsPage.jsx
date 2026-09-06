@@ -227,19 +227,19 @@ export function SystemLogsPage({ theme }) {
                         {new Date(log.created_at).toLocaleString()}
                       </span>
                       {log.user && <span style={{ fontSize: 12, color: theme.sub }}>· {log.user}</span>}
-                      {log.ip_address && <span style={{ fontSize: 11, color: theme.sub, fontFamily: 'monospace' }}>{log.ip_address}</span>}
+                      {log.ip_address && <span style={{ fontSize: 11, color: theme.sub, fontFamily: 'var(--adm-font-mono)' }}>{log.ip_address}</span>}
                     </div>
                     <div style={{ fontSize: 14, fontWeight: 600, color: theme.txt, marginBottom: log.endpoint ? 4 : 0 }}>
                       {log.message}
                     </div>
                     {log.endpoint && (
-                      <div style={{ fontSize: 12, color: theme.sub, fontFamily: 'monospace' }}>{log.endpoint}</div>
+                      <div style={{ fontSize: 12, color: theme.sub, fontFamily: 'var(--adm-font-mono)' }}>{log.endpoint}</div>
                     )}
                     {log.details && (
                       <details style={{ marginTop: 6 }}>
                         <summary style={{ fontSize: 12, color: theme.pri, cursor: 'pointer', fontWeight: 600 }}>Details</summary>
                         <pre style={{ marginTop: 6, padding: 10, background: theme.bg, borderRadius: 6,
-                          fontSize: 11, fontFamily: 'monospace', overflow: 'auto', maxHeight: 160, color: theme.txt }}>
+                          fontSize: 11, fontFamily: 'var(--adm-font-mono)', overflow: 'auto', maxHeight: 160, color: theme.txt }}>
                           {JSON.stringify(log.details, null, 2)}
                         </pre>
                       </details>

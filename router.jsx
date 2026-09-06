@@ -122,6 +122,11 @@ function MessagesPageWrapper() {
       onShowProfile={(userId) => h.navigate(userId ? `/profile/${userId}` : '/profile')}
       onRequireAuth={h.openLoginModal}
       onShowPostPage={() => h.navigate('/create')}
+      /* Distinct from onShowPostPage, which across this app means "open the
+         composer" and ignores its argument. Tapping a shared post card was
+         wired to that one, so it navigated to /create instead of to the post.
+         This is the same mapping every other screen uses for a post. */
+      onOpenPost={(reelId) => h.navigate(`/post/${reelId}`)}
     />
   );
 }

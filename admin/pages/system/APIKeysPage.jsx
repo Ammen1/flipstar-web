@@ -200,7 +200,7 @@ export function APIKeysPage({ theme }) {
                         background: theme.bg,
                         borderRadius: 6,
                         fontSize: 13,
-                        fontFamily: 'monospace',
+                        fontFamily: 'var(--adm-font-mono)',
                         color: theme.txt,
                         flex: 1,
                       }}>
