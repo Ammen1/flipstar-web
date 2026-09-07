@@ -809,6 +809,31 @@ export function CampaignManagementPage({ theme, onManageCampaign }) {
 
 function CreateCampaignModal({ theme, onClose, onSuccess, selectedMasterCampaign }) {
   const [masterCampaigns, setMasterCampaigns] = useState([]);
+  // Organizations the campaign can be created for.
+  //
+  // Loaded from /admin/organizations/, never hardcoded. The endpoint is
+  // Super-Admin-only, so an organization admin simply gets an error and the
+  // selector stays empty -- which is correct: they may not choose, and the
+  // backend derives their organization from their account regardless of what
+  // this form sends.
+  const [organizations, setOrganizations] = useState([]);
+  const [selectedOrganization, setSelectedOrganization] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.request('/admin/organizations/?status=active');
+        if (!cancelled) setOrganizations(res?.results || []);
+      } catch {
+        // Not Super Admin, or the call failed. Either way there is nothing to
+        // choose from and the field below does not render.
+        if (!cancelled) setOrganizations([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -863,6 +888,12 @@ function CreateCampaignModal({ theme, onClose, onSuccess, selectedMasterCampaign
       formDataToSend.append('description', formData.description);
       formDataToSend.append('campaign_type', formData.campaign_type);
       formDataToSend.append('master_campaign', formData.master_campaign);
+      // Honoured by the backend only for platform staff. For an organization
+      // user the field is ignored and their own organization is used, so
+      // sending it can never move a campaign to another organization.
+      if (selectedOrganization) {
+        formDataToSend.append('organization', selectedOrganization);
+      }
       formDataToSend.append('prize_title', formData.prize_title);
       formDataToSend.append('prize_description', formData.prize_description || formData.prize_title);
       formDataToSend.append('prize_value', prizeType === 'data' ? '0' : formData.prize_value);
@@ -1074,6 +1105,68 @@ function CreateCampaignModal({ theme, onClose, onSuccess, selectedMasterCampaign
               )}
             </div>
             
+            {/* Organization.
+                Rendered only when the backend returned organizations, which
+                happens only for Super Admin -- /admin/organizations/ is
+                IsFlipstarUser-gated. An organization admin sees the read-only
+                note instead: their campaigns go to their own organization and
+                the field is not theirs to choose. Neither branch is a security
+                control; the backend ignores this value for non-staff. */}
+            {organizations.length > 0 ? (
+              <div>
+                <label
+                  htmlFor="campaign-organization"
+                  style={{ display: 'block', fontSize: 13, fontWeight: 600, color: theme.txt, marginBottom: 8 }}
+                >
+                  Organization
+                </label>
+                <select
+                  id="campaign-organization"
+                  value={selectedOrganization}
+                  onChange={(e) => setSelectedOrganization(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: 12,
+                    border: `2px solid ${theme.border}`,
+                    borderRadius: 8,
+                    fontSize: 14,
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                    background: theme.bg,
+                    color: theme.txt,
+                  }}
+                >
+                  <option value="">Flipstar (platform campaign)</option>
+                  {organizations.map((org) => (
+                    <option key={org.id} value={org.id}>
+                      {org.name} ({org.code})
+                    </option>
+                  ))}
+                </select>
+                <div style={{ marginTop: 6, fontSize: 12, color: theme.sub }}>
+                  The campaign will belong to the selected organization.
+                </div>
+              </div>
+            ) : (
+              <div>
+                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: theme.txt, marginBottom: 8 }}>
+                  Organization
+                </label>
+                <div
+                  style={{
+                    padding: 12,
+                    border: `2px solid ${theme.border}`,
+                    borderRadius: 8,
+                    fontSize: 14,
+                    background: theme.subtleBg || theme.bg,
+                    color: theme.sub,
+                  }}
+                >
+                  Assigned automatically from your account
+                </div>
+              </div>
+            )}
+
             <div>
               <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: theme.txt, marginBottom: 8 }}>
                 Campaign Title *

@@ -17,6 +17,7 @@ import { PostCaptionOverlay, captionOf } from '../../components/feed/PostCaption
 import { DesktopReelViewer } from '../../components/feed/DesktopReelViewer';
 import { dedupeById } from '../../utils/collections';
 import { likeCountOf, commentCountOf, shareCountOf } from '../../utils/engagement';
+import { getCampaignId, isCampaignPost as postIsCampaign, getCampaignTitle } from '../../utils/campaign';
 import { ModernCommentSection } from '../../components/messaging/ModernCommentSection';
 import { isVideoUrl, isVideoPost } from '../../utils/media';
 import { connectionTier, videoPreload, pickVideoSource, pickImageSource } from '../../utils/connection';
@@ -1009,13 +1010,13 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
   // (is_campaign_post) or it is linked to a campaign (campaign_id/campaign).
   const boostEndsAt = post.boost_ends_at || boostEndTimeCache.get(post.id);
   const isBoostCurrentlyActive = isBoostedPost && (!boostEndsAt || new Date(boostEndsAt) > new Date());
-  const isCampaignPost = !!(post.is_campaign_post || post.campaign_id || post.campaign);
+  const isCampaignPost = postIsCampaign(post);
   const CAPTION_LIMIT = 140;
   const rafRef = useRef(null);
   const viewTracked = useRef(false);
 
   // Debug campaign post detection
-  if (post.is_campaign_post || post.campaign_id || post.campaign) {
+  if (isCampaignPost) {
     console.log('[Campaign Badge Debug] Post ID:', post.id, 'is_campaign_post:', post.is_campaign_post, 'campaign_id:', post.campaign_id, 'campaign:', post.campaign);
   }
 
@@ -1600,7 +1601,7 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
           <div
             onClick={(e) => {
               e.stopPropagation();
-              const campaignId = post.campaign_id || post.campaign?.id;
+              const campaignId = getCampaignId(post);
               console.log('[Campaign Badge] Clicked, campaignId:', campaignId);
               if (campaignId) {
                 onShowCampaignDetail?.(campaignId);
@@ -1634,7 +1635,7 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
                     WebkitBoxOrient: 'vertical',
                     overflow: 'hidden',
                   }}>
-                    {post.campaign?.title || post.campaign_title || post.campaign_name || 'Campaign Entry'}
+                    {getCampaignTitle(post)}
                   </span>
                   <span style={{
                     fontSize: 10,
@@ -1661,7 +1662,7 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                const campaignId = post.campaign_id || post.campaign?.id;
+                const campaignId = getCampaignId(post);
                 console.log('[Campaign Badge] View button clicked, campaignId:', campaignId);
                 if (campaignId) {
                   onShowCampaignDetail?.(campaignId);

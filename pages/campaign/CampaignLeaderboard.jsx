@@ -191,27 +191,32 @@ const CampaignLeaderboard = ({ campaignId, onBack }) => {
           >
             <ArrowLeft size={16} /> Back to Campaign
           </button>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+          {/* Compact header, matching pages/leaderboard/GlobalLeaderboardPage.jsx:
+              a small square badge with the title and subtitle beside it, rather
+              than a 40px circular mark and a 20px heading. Keeps the two
+              leaderboards reading as one feature. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 10 }}>
             <div style={{
-              width: 40, height: 40, borderRadius: '50%', flexShrink: 0,
-              background: `linear-gradient(135deg, ${T.pri}, #8fc441)`,
+              width: 26, height: 26, borderRadius: 8, flexShrink: 0,
+              background: `linear-gradient(135deg, ${BRAND}, #F59E0B)`,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
-              <TrendingUp size={20} color="#fff" />
+              <TrendingUp size={15} color="#000" />
             </div>
-            <div>
-              <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: T.txt }}>Leaderboard</h1>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
-                <p style={{ margin: 0, fontSize: 13, color: T.sub }}>{campaign?.title}</p>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: T.txt }}>Leaderboard</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 1 }}>
+                <p style={{ margin: 0, fontSize: 8, color: T.sub, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{campaign?.title}</p>
                 {campaign?.campaign_type && (
                   <span style={{
-                    padding: '2px 6px',
-                    background: `${T.pri}15`,
-                    color: T.pri,
+                    padding: '1px 5px',
+                    background: `${BRAND}15`,
+                    color: BRAND,
                     borderRadius: 4,
-                    fontSize: 10,
+                    fontSize: 8,
                     fontWeight: 700,
                     textTransform: 'uppercase',
+                    flexShrink: 0,
                   }}>
                     {campaign.campaign_type === 'grand' ? 'Grand' : 
                      campaign.campaign_type === 'daily' ? 'Daily' : 
@@ -230,14 +235,22 @@ const CampaignLeaderboard = ({ campaignId, onBack }) => {
                     key={p.id}
                     onClick={() => handleChangePeriodType(p.id)}
                     style={{
-                      padding: '7px 18px',
-                      background: isActive ? BRAND : T.card,
-                      color: isActive ? '#000' : T.txt,
-                      border: `1.5px solid ${isActive ? BRAND : T.border}`,
-                      borderRadius: 20, cursor: 'pointer',
-                      fontSize: 13, fontWeight: isActive ? 800 : 600,
+                      // Full-width rectangles, as on the global leaderboard:
+                      // flex:1 so the row of periods fills the width, a tinted
+                      // rest state rather than a bordered card, and a glow on
+                      // the active one.
+                      flex: '1 0 auto',
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                      minHeight: 38,
+                      padding: '8px 12px',
+                      background: isActive ? BRAND : `${BRAND}15`,
+                      color: isActive ? '#000' : T.sub,
+                      border: 'none',
+                      borderRadius: 10, cursor: 'pointer',
+                      fontSize: 12, fontWeight: 700,
+                      boxShadow: isActive ? `0 4px 12px ${BRAND}40` : 'none',
                       whiteSpace: 'nowrap',
-                      transition: 'all 0.18s ease',
+                      transition: 'background .18s ease, color .18s ease',
                     }}
                   >
                     {p.label}
@@ -265,23 +278,28 @@ const CampaignLeaderboard = ({ campaignId, onBack }) => {
                       }}
                       disabled={isMissing}
                       style={{
-                        padding: '10px 14px',
+                        // Flatter, matching the global page's date controls:
+                        // a tinted fill instead of an outlined card, and
+                        // centred rather than left-aligned.
+                        flex: '1 0 auto',
                         minWidth: 88,
-                        background: isSnapshotActive ? BRAND + '22' : T.card,
-                        color: isSnapshotActive ? BRAND : item.missing ? T.sub : T.txt,
-                        border: `1.5px solid ${isSnapshotActive ? BRAND : T.border}`,
-                        borderRadius: 14,
+                        padding: '8px 12px',
+                        background: isSnapshotActive ? BRAND : `${BRAND}15`,
+                        color: isSnapshotActive ? '#000' : item.missing ? T.sub : T.txt,
+                        border: 'none',
+                        borderRadius: 10,
                         cursor: isMissing ? 'not-allowed' : 'pointer',
                         opacity: isMissing ? 0.45 : 1,
-                        textAlign: 'left',
+                        textAlign: 'center',
                         whiteSpace: 'nowrap',
-                        fontWeight: isSnapshotActive ? 700 : 500,
-                        transition: 'all 0.18s ease',
+                        fontWeight: 700,
+                        boxShadow: isSnapshotActive ? `0 4px 12px ${BRAND}40` : 'none',
+                        transition: 'background .18s ease, color .18s ease',
                       }}
                     >
-                      <div style={{ fontSize: 12, fontWeight: isSnapshotActive ? 800 : 600 }}>{item.label}</div>
+                      <div style={{ fontSize: 12, fontWeight: 700 }}>{item.label}</div>
                       {item.subtitle && (
-                        <div style={{ fontSize: 11, marginTop: 3, opacity: 0.8 }}>{item.subtitle}</div>
+                        <div style={{ fontSize: 11, marginTop: 2, opacity: 0.85 }}>{item.subtitle}</div>
                       )}
                     </button>
                   );
@@ -320,13 +338,11 @@ const CampaignLeaderboard = ({ campaignId, onBack }) => {
             Loading rankings...
           </div>
         ) : leaderboard.length === 0 ? (
-          <div style={{
-            background: T.card, borderRadius: 14, padding: '48px 24px',
-            textAlign: 'center', border: `1px solid ${T.border}`,
-          }}>
-            <Trophy size={44} color={T.pri} style={{ marginBottom: 16, opacity: 0.4 }} />
-            <h3 style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 700, color: T.txt }}>No Rankings Yet</h3>
-            <p style={{ margin: 0, color: T.sub, fontSize: 14 }}>Be the first to participate!</p>
+          /* Plain centred message, as on the global leaderboard -- no card,
+             a muted trophy and a single line. */
+          <div style={{ textAlign: 'center', padding: 60, color: T.sub }}>
+            <Trophy size={40} color={T.border} style={{ marginBottom: 12 }} />
+            <div>No rankings yet. Be the first to participate!</div>
           </div>
         ) : (
           <>

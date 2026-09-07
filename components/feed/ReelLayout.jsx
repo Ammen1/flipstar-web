@@ -44,6 +44,7 @@ import './ReelLayout.css';
 import { isVideoUrl, hasVideoExtension } from '../../utils/media';
 import { DesktopReelViewer } from './DesktopReelViewer';
 import { dedupeById } from '../../utils/collections';
+import { getCampaignId, isCampaignPost } from '../../utils/campaign';
 const ShareIconFilled = ({ size = 26, color = '#fff', style = {} }) => (
   <Share2 size={size} color={color} style={style} />
 );
@@ -2918,13 +2919,19 @@ export const ReelLayout = memo(function ReelLayout({
                       )}
                     </div>
                     {/* Campaign Badge */}
-                    {video.is_campaign_post && (
+                    {isCampaignPost(video) && (
                       <div
                         onClick={(e) => {
                           e.stopPropagation();
-                          const campaignId = video.campaign_id || video.campaign?.id;
+                          const campaignId = getCampaignId(video);
                           if (campaignId) {
                             (onCampaignClick || onShowCampaigns)?.(campaignId);
+                          } else {
+                            // The badge can render on is_campaign_post alone,
+                            // so there may be no id to open. Fall back to the
+                            // campaigns list rather than a dead click, which is
+                            // what HomePage's badge does.
+                            onShowCampaigns?.();
                           }
                         }}
                         style={{
@@ -3023,7 +3030,7 @@ export const ReelLayout = memo(function ReelLayout({
                         count={video.likes === 0 ? '' : video.likes}
                         onLike={() => handleLike(video.id)}
                         size={32}
-                        isCampaign={!!(video.is_campaign_post || video.campaign_id || video.campaign)}
+                        isCampaign={isCampaignPost(video)}
                       />
                     </div>
 

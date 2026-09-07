@@ -14,6 +14,9 @@ import { AdminManagementPage } from './pages/user/AdminManagementPage';
 import { JudgingPortalPage } from './pages/legal/JudgingPortalPage';
 import { SecurityMonitoringPage } from './pages/security/SecurityMonitoringPage';
 import { CampaignManagementPage } from './pages/campaign/CampaignManagementPage';
+import { OrganizationCoinManagementPage } from './pages/coin/OrganizationCoinManagementPage';
+import { OrganizationAdminDashboard } from './pages/organization/OrganizationAdminDashboard';
+import { OrganizationManagementPage } from './pages/organization/OrganizationManagementPage';
 import { MasterCampaignManagementPage } from './pages/campaign/MasterCampaignManagementPage';
 import { TypeSpecificScoringConfig } from './pages/campaign/TypeSpecificScoringConfig';
 import CampaignThemeManagement from './pages/campaign/CampaignThemeManagement';
@@ -176,14 +179,22 @@ export function AdminApp() {
       try {
         api.setAdminToken(token);
         const response = await api.getProfile();
-        if (response.user && response.user.is_staff) {
-          // Fetch admin role for the user
-          try {
-            const roleResponse = await api.request(`/admin/users/${response.user.id}/admin-role/`);
-            response.user.admin_role = roleResponse;
-          } catch (e) {
-            // If role fetch fails, default to super_admin
-            response.user.admin_role = { role: 'super_admin' };
+        if (response.user && (response.user.is_staff || response.user?.realm === 'ORGANIZATION')) {
+          // Admin roles are a staff concept, exactly as in handleLogin below.
+          // Requesting one as an organization account 403s, and the catch
+          // would then stamp `super_admin` on it -- so it is skipped rather
+          // than caught. Harmless today, because the realm branch returns the
+          // organization dashboard before anything reads admin_role, but it
+          // leaves a mislabelled role sitting on the account for the next
+          // reader to trust.
+          if (response.user.is_staff) {
+            try {
+              const roleResponse = await api.request(`/admin/users/${response.user.id}/admin-role/`);
+              response.user.admin_role = roleResponse;
+            } catch (e) {
+              // If role fetch fails, default to super_admin
+              response.user.admin_role = { role: 'super_admin' };
+            }
           }
           setAdminUser(response.user);
           setIsAuthenticated(true);
@@ -201,16 +212,25 @@ export function AdminApp() {
     try {
       const response = await api.login(email, password);
       
-      if (response.user && response.user.is_staff) {
+      // Two kinds of account reach this console: platform staff, and
+      // organization accounts. Both are admitted here and separated below --
+      // an organization user is served a different component entirely rather
+      // than the staff shell with items hidden.
+      const isOrganisationAccount = response.user?.realm === 'ORGANIZATION';
+
+      if (response.user && (response.user.is_staff || isOrganisationAccount)) {
         api.setAdminToken(response.token);
-        
-        // Fetch admin role for the user to update sidebar immediately
-        try {
-          const roleResponse = await api.request(`/admin/users/${response.user.id}/admin-role/`);
-          response.user.admin_role = roleResponse;
-        } catch (e) {
-          // If role fetch fails, default to super_admin
-          response.user.admin_role = { role: 'super_admin' };
+
+        // Admin roles are a staff concept. Requesting one as an organization
+        // account would 403, and the catch below would then mislabel them
+        // super_admin -- so it is skipped rather than caught.
+        if (response.user.is_staff) {
+          try {
+            const roleResponse = await api.request(`/admin/users/${response.user.id}/admin-role/`);
+            response.user.admin_role = roleResponse;
+          } catch (e) {
+            response.user.admin_role = { role: 'super_admin' };
+          }
         }
         
         setAdminUser(response.user);
@@ -272,6 +292,18 @@ export function AdminApp() {
     return <AdminLogin onLogin={handleLogin} theme={T} />;
   }
 
+  // An organization account gets its own dashboard, returned before the staff
+  // shell is constructed. Not the staff sidebar with entries hidden: hiding a
+  // nav item is a rendering decision, and a user who guessed a page id would
+  // still mount the component. Returning early means the Super Admin pages are
+  // never instantiated for this account at all.
+  //
+  // Still not the security boundary -- every endpoint is scoped server-side,
+  // and a staff-only route answers 403 whatever this file renders.
+  if (adminUser?.realm === 'ORGANIZATION') {
+    return <OrganizationAdminDashboard theme={T} user={adminUser} />;
+  }
+
   const renderPage = () => {
     switch (currentPage) {
       case 'dashboard':
@@ -301,6 +333,10 @@ export function AdminApp() {
         return <NotificationsPage theme={T} key={userRoleKey} />;
       case 'admins':
         return <AdminManagementPage theme={T} key={`${adminPageKey}-${userRoleKey}`} />;
+      case 'organization-coins':
+        return <OrganizationCoinManagementPage theme={T} key={userRoleKey} />;
+      case 'organizations':
+        return <OrganizationManagementPage theme={T} key={userRoleKey} />;
       case 'master-campaigns':
         return <MasterCampaignManagementPage theme={T} key={userRoleKey} />;
       case 'campaigns':

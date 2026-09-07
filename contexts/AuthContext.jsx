@@ -100,50 +100,72 @@ export function AuthProvider({ children }) {
     return () => clearTimeout(timer);
   }, []);
 
-  // Check subscription status
+  // Check subscription status.
+  //
+  // Keyed on the user's id, not on the authUser object. The startup profile
+  // refresh above replaces authUser with a freshly built object about 1.5s
+  // after load -- a new identity every time, since its JSON is compared
+  // against a stored user that carries a different set of keys. Depending on
+  // the object therefore re-ran all three effects below on every load: a
+  // second status request, plus a torn-down and recreated poll interval and
+  // focus listener. The id is stable across that refresh and still changes on
+  // login and logout, which is when a re-check is genuinely wanted.
+  const authUserId = authUser?.id ?? null;
+
   useEffect(() => {
+    let cancelled = false;
     const checkSubscription = async () => {
-      if (!authUser || !api.hasToken()) {
+      if (!authUserId || !api.hasToken()) {
         setSubscriptionStatus(null);
         setSubscriptionChecked(false);
         return;
       }
       try {
         const status = await api.checkSubscriptionStatus();
+        // The account changed while this was in flight; the newer effect owns
+        // the state now.
+        if (cancelled) return;
         setSubscriptionStatus(status);
         setSubscriptionChecked(true);
       } catch (e) {
+        if (cancelled) return;
         console.log('Could not check subscription status:', e.message);
         setSubscriptionChecked(true);
       }
     };
     checkSubscription();
-  }, [authUser]);
+    return () => { cancelled = true; };
+  }, [authUserId]);
 
   // Poll subscription status every 30s
   useEffect(() => {
-    if (!authUser || !api.hasToken()) return;
+    if (!authUserId || !api.hasToken()) return;
+    let cancelled = false;
     const interval = setInterval(async () => {
       try {
         const status = await api.checkSubscriptionStatus();
-        setSubscriptionStatus(status);
+        if (!cancelled) setSubscriptionStatus(status);
       } catch {}
     }, 30000);
-    return () => clearInterval(interval);
-  }, [authUser]);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [authUserId]);
 
   // Check subscription on window focus
   useEffect(() => {
-    if (!authUser || !api.hasToken()) return;
+    if (!authUserId || !api.hasToken()) return;
+    let cancelled = false;
     const handleFocus = async () => {
       try {
         const status = await api.checkSubscriptionStatus();
-        setSubscriptionStatus(status);
+        if (!cancelled) setSubscriptionStatus(status);
       } catch {}
     };
     window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
-  }, [authUser]);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [authUserId]);
 
   const value = {
     authUser,

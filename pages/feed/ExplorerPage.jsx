@@ -122,7 +122,7 @@ function VideoThumb({ reel, rank, index = 0, hero = false, onOpen, T }) {
       {finalThumb
         ? <img src={finalThumb} alt="" loading={isEager ? 'eager' : 'lazy'}
             decoding="async"
-            fetchPriority={isEager ? 'high' : 'low'}
+            fetchpriority={isEager ? 'high' : 'low'}
             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
         : <div style={{ width: '100%', height: '100%',
             background: `linear-gradient(135deg,${T.pri}30,#00000080)`,

@@ -29,6 +29,15 @@ const RETRY_DELAY = 1000; // Delay between retries in ms
 
 let _e2eEnabled = false;
 
+// The subscription status request currently in flight, if any.
+//
+// Three separate triggers can ask for it at once -- the mount check, the 30s
+// poll and the window-focus handler -- and `skipCache: true` means each would
+// otherwise issue its own identical GET. Concurrent callers share the one
+// request instead; it is cleared as soon as it settles, so this dedupes
+// overlap without ever serving a stale answer to a later caller.
+let _subscriptionStatusInFlight = null;
+
 const ENCRYPTED_ENDPOINT_PREFIXES = [
   "/auth/register/",
   "/auth/login/",
@@ -333,21 +342,61 @@ const api = {
         headers["Authorization"] = `Token ${currentToken}`;
       }
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(
-        () => controller.abort(),
-        options.timeout || 30_000,
-      );
+      // Uploads get a far longer deadline than ordinary calls.
+      //
+      // Every request shared a 30s abort, including multipart uploads. A
+      // campaign created with an image on a slow connection -- or against a
+      // cold-started backend -- passed the CORS preflight and was then killed
+      // mid-body, so the server logged an OPTIONS with no POST after it and
+      // the browser reported only "signal is aborted without reason".
+      //
+      // createPost already allowed 5 minutes for exactly this reason (see its
+      // xhr.timeout). This applies the same allowance to uploads that go
+      // through fetch, so the two paths no longer disagree about how long an
+      // upload may take.
+      const UPLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+      const DEFAULT_TIMEOUT_MS = 30_000;
+      const isUpload = options.isFormData || bodyIsFormData;
+      const timeoutMs =
+        options.timeout || (isUpload ? UPLOAD_TIMEOUT_MS : DEFAULT_TIMEOUT_MS);
 
-      const response = await retryWithBackoff(async () => {
-        return await fetch(`${API_BASE_URL}${endpoint}`, {
-          ...options,
-          body: encryptedBody,
-          headers,
-          signal: controller.signal,
+      const controller = new AbortController();
+      // Distinguishes our own deadline from an abort someone else triggered,
+      // so the error below can say which happened instead of surfacing the
+      // browser's reasonless message.
+      let timedOut = false;
+      const timeoutId = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs);
+
+      let response;
+      try {
+        response = await retryWithBackoff(async () => {
+          return await fetch(`${API_BASE_URL}${endpoint}`, {
+            ...options,
+            body: encryptedBody,
+            headers,
+            signal: controller.signal,
+          });
         });
-      });
-      clearTimeout(timeoutId);
+      } catch (err) {
+        if (timedOut || err?.name === "AbortError") {
+          const seconds = Math.round(timeoutMs / 1000);
+          const timeoutError = new Error(
+            isUpload
+              ? `Upload timed out after ${seconds}s. The file may be too large or the connection too slow.`
+              : `Request timed out after ${seconds}s. Please try again.`,
+          );
+          timeoutError.name = "TimeoutError";
+          timeoutError.status = 0;
+          timeoutError.timedOut = true;
+          throw timeoutError;
+        }
+        throw err;
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       let data;
       // 204 No Content has no body (common for DELETE responses)
@@ -974,7 +1023,8 @@ const api = {
   // Subscription status check
   checkSubscriptionStatus: () => {
     if (!api.hasToken()) return Promise.resolve({ has_subscription: false });
-    return api
+    if (_subscriptionStatusInFlight) return _subscriptionStatusInFlight;
+    _subscriptionStatusInFlight = api
       .request("/subscription/status/", { skipCache: true })
       .then((data) => {
         console.log("[SUBSCRIPTION STATUS] Raw response:", data);
@@ -1001,7 +1051,11 @@ const api = {
         console.error("Subscription status check failed:", err);
         // Return false on any error to be safe
         return { has_subscription: false };
+      })
+      .finally(() => {
+        _subscriptionStatusInFlight = null;
       });
+    return _subscriptionStatusInFlight;
   },
 
   // Settings
