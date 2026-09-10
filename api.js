@@ -868,14 +868,29 @@ const api = {
       body: JSON.stringify({ following_id: userId }),
     }),
 
+  // A missing id is not a request worth making.
+  //
+  // Callers pass `currentUser?.id`, which is undefined until the profile has
+  // loaded. Interpolated into the URL that became the literal string
+  // "undefined" -- `/follows/?follower=undefined` -- which the backend could
+  // only answer with an error. Treated like the no-token case above: no id,
+  // no followers to report yet.
   getFollowers: (userId) => {
-    if (!api.getToken()) return Promise.resolve([]);
-    return api.request(`/follows/?following=${userId}`, { noCache: true });
+    if (!api.getToken() || userId === undefined || userId === null) {
+      return Promise.resolve([]);
+    }
+    return api.request(`/follows/?following=${encodeURIComponent(userId)}`, {
+      noCache: true,
+    });
   },
 
   getFollowing: (userId) => {
-    if (!api.getToken()) return Promise.resolve([]);
-    return api.request(`/follows/?follower=${userId}`, { noCache: true });
+    if (!api.getToken() || userId === undefined || userId === null) {
+      return Promise.resolve([]);
+    }
+    return api.request(`/follows/?follower=${encodeURIComponent(userId)}`, {
+      noCache: true,
+    });
   },
 
   getUserSuggestions: () => api.request("/follows/suggestions/"),

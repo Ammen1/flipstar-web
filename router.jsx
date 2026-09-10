@@ -45,7 +45,7 @@ const Lazy = ({ children }) => (
 
 function useNavHelpers() {
   const navigate = useNavigate();
-  const { authUser, logout, openTopUpModal, subscriptionStatus, subscriptionChecked, setAuthUser } = useAuth();
+  const { authUser, requestLogout, openTopUpModal, subscriptionStatus, subscriptionChecked, setAuthUser } = useAuth();
   const { colors } = useTheme();
   const { reelId: paramReelId } = useParams();
 
@@ -57,7 +57,7 @@ function useNavHelpers() {
   }, [authUser, openLoginModal]);
 
   return {
-    navigate, authUser, logout, openLoginModal, openTopUpModal,
+    navigate, authUser, requestLogout, openLoginModal, openTopUpModal,
     subscriptionStatus, subscriptionChecked, setAuthUser,
     colors, requireAuth, paramReelId,
   };
@@ -96,7 +96,7 @@ function ReelLayoutWrapper() {
       user={h.authUser}
       activeTab="reels"
       videosOnly={true}
-      onLogout={h.logout}
+      onLogout={h.requestLogout}
       onRequireAuth={h.openLoginModal}
       onShowPostPage={() => h.navigate('/create')}
       onShowProfile={(userId) => h.navigate(userId ? `/profile/${userId}` : '/profile')}
@@ -225,7 +225,7 @@ function NotificationsPageWrapper() {
       onUserClick={(userId) => h.navigate(`/profile/${userId}`)}
       onBack={() => h.navigate(-1)}
       onShowPostPage={() => h.navigate('/create')}
-      onLogout={h.logout}
+      onLogout={h.requestLogout}
       onShowProfile={() => h.navigate('/profile')}
       onShowSettings={() => h.navigate('/settings')}
       onShowCampaigns={() => h.navigate('/campaigns')}
@@ -240,7 +240,7 @@ function SettingsPageWrapper() {
     <SettingsPage
       user={h.authUser}
       onClose={() => h.navigate(-1)}
-      onLogout={h.logout}
+      onLogout={h.requestLogout}
       onShowWallet={() => h.navigate('/wallet')}
       onShowSubscription={() => h.navigate('/subscription')}
       onShowEditProfile={() => h.navigate('/profile/edit')}

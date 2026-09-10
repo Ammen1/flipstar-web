@@ -4,6 +4,14 @@ import webPush from '../services/WebPushService';
 
 const AuthContext = createContext(null);
 
+// Per-account data cached in localStorage. Left behind after logout, the next
+// person on the device inherits it -- joined_campaign_ids alone marks
+// campaigns as "Joined" for a guest who never entered them.
+const ACCOUNT_STORAGE_KEYS = ['authToken', 'user', 'joined_campaign_ids', 'notifications', 'privacy'];
+
+// How long logout waits on the push unsubscribe before clearing regardless.
+const PUSH_UNSUBSCRIBE_TIMEOUT_MS = 3000;
+
 export const useAuth = () => {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
@@ -21,9 +29,14 @@ export function AuthProvider({ children }) {
   const [subscriptionChecked, setSubscriptionChecked] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showTopUpModal, setShowTopUpModal] = useState(false);
+  const [logoutPromptOpen, setLogoutPromptOpen] = useState(false);
 
   const openLoginModal = useCallback(() => setShowLoginModal(true), []);
   const openTopUpModal = useCallback(() => setShowTopUpModal(true), []);
+
+  // Every logout button asks through here; LogoutDialog does the rest.
+  const requestLogout = useCallback(() => setLogoutPromptOpen(true), []);
+  const dismissLogout = useCallback(() => setLogoutPromptOpen(false), []);
 
   const setAndPersistUser = useCallback((user) => {
     setAuthUser(user);
@@ -34,12 +47,30 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  const logout = useCallback(() => {
-    try { webPush.unsubscribe(); } catch (_) {}
-    api.setAuthToken(null);
-    localStorage.removeItem('authToken');
-    localStorage.removeItem('user');
+  /**
+   * End the session on this device.
+   *
+   * The push subscription goes first, while the token still authenticates
+   * the request. It used to be fired unawaited with the token cleared on the
+   * next line, so the server call went out without it and the subscription
+   * stayed registered to the account. Bounded, so a slow network cannot hold
+   * logout open.
+   *
+   * `beforeClear` runs in the same tick as the clear. Navigate there: the page
+   * being left then never renders a frame without its user.
+   */
+  const logout = useCallback(async ({ beforeClear } = {}) => {
+    await Promise.race([
+      Promise.resolve().then(() => webPush.unsubscribe()).catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, PUSH_UNSUBSCRIBE_TIMEOUT_MS)),
+    ]);
+    beforeClear?.();
+    api.setAuthToken(null); // also empties the API response cache
+    ACCOUNT_STORAGE_KEYS.forEach((key) => {
+      try { localStorage.removeItem(key); } catch (_) {}
+    });
     setAuthUser(null);
+    setLogoutPromptOpen(false);
   }, []);
 
   // Restore auth token synchronously
@@ -173,6 +204,9 @@ export function AuthProvider({ children }) {
     subscriptionStatus,
     subscriptionChecked,
     logout,
+    logoutPromptOpen,
+    requestLogout,
+    dismissLogout,
     showLoginModal,
     setShowLoginModal,
     openLoginModal,

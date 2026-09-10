@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { AppShell } from './AppShell';
+import { LogoutDialog } from '../auth/LogoutDialog';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api';
 import webPush from '../../services/WebPushService';
@@ -8,7 +9,7 @@ import telebirrH5 from '../../services/TelebirrH5Service';
 
 export default function AppLayout() {
   const {
-    authUser, logout,
+    authUser, requestLogout,
     showTopUpModal, setShowTopUpModal,
     subscriptionStatus, subscriptionChecked, setAuthUser,
   } = useAuth();
@@ -183,7 +184,7 @@ export default function AppLayout() {
           const tabRoutes = { home: '/', reels: '/reels', messages: '/messages', explore: '/explore', create: '/create', notifications: '/notifications', settings: '/settings', wallet: '/wallet', campaigns: '/campaigns', profile: '/profile' };
           navigate(tabRoutes[tab] || '/');
         }}
-        onLogout={() => { logout(); navigate('/login', { replace: true }); }}
+        onLogout={requestLogout}
         onShowProfile={() => navigate(authUser ? '/profile' : '/login')}
         onShowPostPage={() => {
           if (!authUser) { navigate('/login'); return; }
@@ -199,6 +200,7 @@ export default function AppLayout() {
       >
         <Outlet />
       </AppShell>
+      <LogoutDialog />
     </>
   );
 }

@@ -892,6 +892,8 @@ const STG_CSS = (T) => `
             })}
           </div>
 
+          {/* Logout - hide in SuperApp since it auto-logs in */}
+          {!telebirrH5.isInSuperApp() && (
           <div className="stg-foot" style={{ padding: 16, borderTop: `1px solid ${T.border}` }}>
             <button
               onClick={onLogout}
@@ -917,6 +919,7 @@ const STG_CSS = (T) => `
               {t('logout')}
             </button>
           </div>
+          )}
         </div>
 
         {/* Content */}
