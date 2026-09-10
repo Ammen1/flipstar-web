@@ -28,6 +28,17 @@ const FILTERS = [
 ];
 
 const SPEEDS = ['0.3x', '0.5x', '1x', '2x', '3x'];
+
+// Text colour that stays readable on the theme's accent. The accent is chosen
+// in the admin panel, so it can be a light green or a near-black; dark text on
+// the first, white on the second.
+function readableOn(hex) {
+  const h = String(hex || '').replace('#', '');
+  if (!/^[0-9a-f]{6}$/i.test(h)) return '#FFFFFF';
+  const n = parseInt(h, 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#0B0F07' : '#FFFFFF';
+}
 const MAX_REC = 90;
 const FREE_LIMIT = 60;
 const PAID_LIMIT = 90;
@@ -1553,6 +1564,8 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
   ];
 
   // ── Render ───────────────────────────────────────────────────────────────
+  const heroText = readableOn(T.pri);
+
   return (
     <div style={{
       position: 'fixed', inset: 0, background: T.bg, zIndex: 4000,
@@ -1568,6 +1581,17 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
         .ep-btn:active { transform:scale(0.94); }
         .ep-filter-scroll::-webkit-scrollbar { display:none; }
         .ep-hash { color:${T.pri}; font-weight:700; }
+        .ep-rise { animation: ep-fade-in .45s cubic-bezier(.2,.8,.2,1) both; }
+        .ep-card { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+        @media (hover: hover) { .ep-card:hover { transform: translateY(-3px); box-shadow: 0 14px 34px rgba(0,0,0,0.22); } }
+        .ep-card:active { transform: scale(0.97); }
+        .ep-card:focus-visible { outline: 2px solid ${T.pri}; outline-offset: 3px; }
+        @keyframes ep-rec { 0%,100% { transform: scale(1); } 50% { transform: scale(0.84); } }
+        .ep-rec-dot { animation: ep-rec 1.8s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) {
+          .ep-rise, .ep-rec-dot { animation: none !important; }
+          .ep-card { transition: none; }
+        }
       `}</style>
 
       {/* ── BOTTOM NAV BAR ──────────────────────────────────────────────── */}
@@ -2061,159 +2085,142 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
               flex: 1, display: 'flex', flexDirection: 'column',
               height: '100%',
               overflowY: 'auto',
-              paddingBottom: 24,
-              background: 'linear-gradient(160deg, #0D0A06 0%, #0D0D0D 60%, #0A0806 100%)',
+              paddingBottom: 'calc(24px + env(safe-area-inset-bottom))',
+              // A soft glow of the accent behind the header, the rest plain page.
+              background: `radial-gradient(120% 55% at 50% -12%, ${T.pri}2E 0%, transparent 62%), ${T.bg}`,
             }}>
 
               {/* Header */}
               <div style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: 'max(16px, env(safe-area-inset-top)) 16px 12px',
-                background: 'transparent',
-                position: 'relative', zIndex: 1,
+                padding: 'max(14px, env(safe-area-inset-top)) 16px 8px',
+                width: '100%', maxWidth: 520, margin: '0 auto', boxSizing: 'border-box',
               }}>
-                <button aria-label="Go back" className="ep-btn" onClick={onBack}
-                  style={{ background: 'rgba(249,224,139,0.15)', border: '1.5px solid #8fc441', borderRadius: 10, width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <ArrowLeft size={20} color="#8fc441" />
+                <button type="button" aria-label="Go back" className="ep-btn" onClick={onBack}
+                  style={{ background: T.cardBg, border: `1px solid ${T.border}`, borderRadius: '50%', width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <ArrowLeft size={20} color={T.txt} />
                 </button>
-                <span style={{ fontSize: 18, fontWeight: 800, background: 'linear-gradient(to bottom, #8fc441 0%, #D4AF37 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>New Post</span>
+                <span style={{ fontSize: 17, fontWeight: 800, color: T.txt, letterSpacing: '-0.01em' }}>Create</span>
                 {drafts.length > 0 ? (
-                  <button className="ep-btn" onClick={() => setShowDrafts(true)}
-                    style={{ background: 'rgba(249,224,139,0.12)', border: '1.5px solid #8fc441', borderRadius: 20, padding: '7px 13px', color: '#8fc441', fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <FileText size={14} /> Drafts ({drafts.length})
+                  <button type="button" className="ep-btn" onClick={() => setShowDrafts(true)}
+                    aria-label={`Open drafts (${drafts.length})`}
+                    style={{ background: T.cardBg, border: `1px solid ${T.border}`, borderRadius: 999, padding: '0 12px 0 10px', height: 36, color: T.txt, fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <FileText size={15} color={T.pri} />
+                    Drafts
+                    <span style={{ minWidth: 20, height: 20, padding: '0 6px', boxSizing: 'border-box', borderRadius: 999, background: T.pri, color: heroText, fontSize: 11, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      {drafts.length}
+                    </span>
                   </button>
                 ) : <div style={{ width: 40 }} />}
               </div>
 
-              {/* Hero icon + title */}
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 20, paddingBottom: 4, position: 'relative', zIndex: 1 }}>
-                <div style={{ position: 'relative', marginBottom: 14 }}>
-                  <img
-                    src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23D99B2A'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z'/%3E%3C/svg%3E"
-                    alt="Create"
-                    style={{
-                      width: 72,
-                      height: 72,
-                      borderRadius: '50%',
-                      objectFit: 'cover'
-                    }} 
-                  />
-                  <div style={{ position: 'absolute', top: -2, right: -2, width: 22, height: 22, background: '#8fc441', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, border: '2px solid #0D0D0D', boxShadow: '0 2px 6px rgba(249,224,139,0.5)' }}>✨</div>
+              <div style={{ width: '100%', maxWidth: 520, margin: '0 auto', padding: '8px 20px 0', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+                {/* Hero */}
+                <div className="ep-rise" style={{ padding: '6px 2px 4px' }}>
+                  <h1 style={{ margin: 0, fontSize: 27, lineHeight: 1.15, fontWeight: 800, letterSpacing: '-0.025em', color: T.txt }}>
+                    What will you<br />create today?
+                  </h1>
+                  <p style={{ margin: '8px 0 0', fontSize: 14, lineHeight: 1.45, color: T.sub }}>
+                    Share a moment with the FlipStar community.
+                  </p>
                 </div>
-                <div style={{ fontSize: 22, fontWeight: 800, background: 'linear-gradient(to bottom, #8fc441 0%, #D4AF37 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', marginBottom: 4 }}>Create Post</div>
-                <div style={{ fontSize: 13, color: '#8fc441', opacity: 0.7, textAlign: 'center' }}>Choose how you want to create content</div>
+
+                {/* ── Primary: record a video ── */}
+                <button type="button" className="ep-btn ep-card ep-rise"
+                  onClick={() => { setCamMode('video'); setCaptureMode('camera'); }}
+                  style={{
+                    animationDelay: '60ms',
+                    position: 'relative', overflow: 'hidden',
+                    width: '100%', minHeight: 156, padding: 20, borderRadius: 24,
+                    display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 18,
+                    textAlign: 'left', color: heroText,
+                    background: `radial-gradient(circle at 88% 12%, rgba(255,255,255,0.38) 0%, transparent 46%), radial-gradient(circle at 100% 100%, rgba(0,0,0,0.20) 0%, transparent 58%), ${T.pri}`,
+                    boxShadow: `0 12px 30px ${T.pri}45`,
+                  }}>
+                  {/* Watermark */}
+                  <Video size={132} color={heroText} strokeWidth={1.4} aria-hidden="true"
+                    style={{ position: 'absolute', right: -22, bottom: -30, opacity: 0.12, transform: 'rotate(-12deg)', pointerEvents: 'none' }} />
+
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                    {/* Record button */}
+                    <div aria-hidden="true" style={{
+                      width: 56, height: 56, borderRadius: '50%',
+                      border: '4px solid rgba(255,255,255,0.95)', background: 'rgba(0,0,0,0.16)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      boxShadow: '0 4px 14px rgba(0,0,0,0.18)', boxSizing: 'border-box',
+                    }}>
+                      <div className="ep-rec-dot" style={{ width: 30, height: 30, borderRadius: '50%', background: '#FF3B5C' }} />
+                    </div>
+                    <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '5px 10px', borderRadius: 999, background: `${heroText}1F`, border: `1px solid ${heroText}26` }}>
+                      Most popular
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, width: '100%', position: 'relative' }}>
+                    <div>
+                      <div style={{ fontSize: 21, fontWeight: 800, letterSpacing: '-0.015em' }}>Record a video</div>
+                      <div style={{ fontSize: 13, fontWeight: 500, opacity: 0.8, marginTop: 4 }}>
+                        Up to {FREE_LIMIT}s · music, filters &amp; text
+                      </div>
+                    </div>
+                    <div aria-hidden="true" style={{ width: 36, height: 36, borderRadius: '50%', background: `${heroText}1F`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <ChevronRight size={20} color={heroText} />
+                    </div>
+                  </div>
+                </button>
+
+                {/* ── Secondary: photo + upload ── */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  {[
+                    { key: 'photo', Icon: Camera, title: 'Take a photo', sub: 'Snap with your camera', onClick: () => { setCamMode('photo'); setCaptureMode('camera'); } },
+                    { key: 'upload', Icon: ImageIcon, title: 'Upload', sub: 'Photos & videos from your gallery', onClick: () => fileInputRef.current?.click() },
+                  ].map(({ key, Icon, title, sub, onClick }, i) => (
+                    <button key={key} type="button" className="ep-btn ep-card ep-rise" onClick={onClick}
+                      style={{
+                        animationDelay: `${120 + i * 60}ms`,
+                        display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 14,
+                        minHeight: 138, padding: 16, borderRadius: 20, textAlign: 'left',
+                        background: T.cardBg, border: `1px solid ${T.border}`,
+                        boxShadow: '0 2px 10px rgba(0,0,0,0.06)',
+                      }}>
+                      <div style={{ width: 44, height: 44, borderRadius: 14, background: `${T.pri}1F`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Icon size={22} color={T.pri} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 15, fontWeight: 700, color: T.txt }}>{title}</div>
+                        <div style={{ fontSize: 12, lineHeight: 1.35, color: T.sub, marginTop: 3 }}>{sub}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                {/* ── What the camera can do ── */}
+                <div className="ep-rise" style={{ animationDelay: '240ms', marginTop: 4 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: T.sub, margin: '0 2px 10px' }}>
+                    Built into the camera
+                  </div>
+                  <div role="list" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, padding: '14px 8px', borderRadius: 20, background: T.cardBg, border: `1px solid ${T.border}` }}>
+                    {[
+                      { Icon: Music, label: 'Music' },
+                      { Icon: Sparkles, label: `${FILTERS.length - 1} filters` },
+                      { Icon: Type, label: 'Text' },
+                      { Icon: Zap, label: `${SPEEDS[0]}–${SPEEDS[SPEEDS.length - 1]}` },
+                    ].map(({ Icon, label }) => (
+                      <div key={label} role="listitem" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7 }}>
+                        <div style={{ width: 38, height: 38, borderRadius: '50%', background: `${T.pri}17`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <Icon size={18} color={T.pri} aria-hidden="true" />
+                        </div>
+                        <span style={{ fontSize: 11.5, fontWeight: 600, color: T.txt, whiteSpace: 'nowrap' }}>{label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
 
-              {/* Cards */}
-              <div style={{ 
-                display: 'flex', 
-                flexDirection: 'column', 
-                gap: 16, 
-                padding: '20px 20px 32px', 
-                position: 'relative', 
-                zIndex: 1, 
-                alignItems: 'center', 
-                justifyContent: 'center', 
-                width: '100%',
-                maxWidth: '450px',
-                margin: '0 auto'
-              }}>
-
-                {/* ── Take Photo card ── */}
-                <button className="ep-btn" onClick={() => { setCamMode('photo'); setCaptureMode('camera'); }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    background: '#1a1a1a',
-                    border: '1.5px solid #8fc441',
-                    borderRadius: 10,
-                    padding: '10px 14px',
-                    cursor: 'pointer',
-                    boxShadow: 'none',
-                    transition: 'transform 0.15s',
-                    textAlign: 'left',
-                    position: 'relative',
-                    overflow: 'hidden',
-                    width: '100%',
-                    height: '52px',
-                    minWidth: '240px',
-                    maxWidth: '300px',
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; }}
-                >
-                  <div style={{ width: 32, height: 32, borderRadius: 8, background: '#111', border: '1px solid #8fc44144', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <svg width="18" height="18" fill="none" viewBox="0 0 24 24"><path d="M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7z" fill="#8fc441"/><path d="M9 3L7.17 5H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.17L15 3H9z" stroke="#8fc441" strokeWidth="1.8" fill="none" strokeLinejoin="round"/></svg>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: '#8fc441', marginBottom: 2 }}>Take Photo</div>
-                    <div style={{ fontSize: 11.5, color: '#8fc441', opacity: 0.6 }}>Use camera for photos</div>
-                  </div>
-                </button>
-
-                {/* ── Record Video card ── */}
-                <button className="ep-btn" onClick={() => { setCamMode('video'); setCaptureMode('camera'); }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    background: '#1a1a1a',
-                    border: '1.5px solid #8fc441',
-                    borderRadius: 10,
-                    padding: '10px 14px',
-                    cursor: 'pointer',
-                    boxShadow: 'none',
-                    transition: 'transform 0.15s',
-                    textAlign: 'left',
-                    position: 'relative',
-                    overflow: 'hidden',
-                    width: '100%',
-                    height: '52px',
-                    minWidth: '240px',
-                    maxWidth: '300px',
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; }}
-                >
-                  <div style={{ width: 32, height: 32, borderRadius: 8, background: '#111', border: '1px solid #8fc44144', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <svg width="18" height="18" fill="none" viewBox="0 0 24 24"><rect x="2" y="6" width="14" height="12" rx="2" stroke="#8fc441" strokeWidth="1.8" fill="none"/><path d="M22 8l-6 4 6 4V8z" fill="#8fc441"/></svg>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: '#8fc441', marginBottom: 2 }}>Record Video</div>
-                    <div style={{ fontSize: 11.5, color: '#8fc441', opacity: 0.6 }}>Record up to 60 seconds</div>
-                  </div>
-                </button>
-
-                {/* ── Upload Photo/Video card ── */}
-                <button className="ep-btn" onClick={() => fileInputRef.current?.click()}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    background: '#1a1a1a',
-                    border: '1.5px solid #8fc441',
-                    borderRadius: 10,
-                    padding: '10px 14px',
-                    cursor: 'pointer',
-                    boxShadow: 'none',
-                    transition: 'transform 0.15s',
-                    textAlign: 'left',
-                    position: 'relative',
-                    overflow: 'hidden',
-                    width: '100%',
-                    height: '52px',
-                    minWidth: '240px',
-                    maxWidth: '300px',
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; }}
-                >
-                  <div style={{ width: 32, height: 32, borderRadius: 8, background: '#111', border: '1px solid #8fc44144', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <svg width="18" height="18" fill="none" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke="#8fc441" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/><polyline points="17 8 12 3 7 8" stroke="#8fc441" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/><line x1="12" y1="3" x2="12" y2="15" stroke="#8fc441" strokeWidth="2.2" strokeLinecap="round"/></svg>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: '#8fc441', marginBottom: 2 }}>Upload Photo/Video</div>
-                    <div style={{ fontSize: 11.5, color: '#8fc441', opacity: 0.6 }}>From gallery or files</div>
-                  </div>
-                  <input ref={fileInputRef} type="file" accept="image/*,video/*"
-                    onChange={handleFileSelect} style={{ display: 'none' }} />
-                </button>
-              </div>
+              {/* Hidden input -- outside the buttons: an input nested in a button is invalid markup */}
+              <input ref={fileInputRef} type="file" accept="image/*,video/*"
+                onChange={handleFileSelect} style={{ display: 'none' }} />
             </div>
           )}
         </div>
