@@ -1,26 +1,22 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
-  Search, X, TrendingUp, Flame, Music, Laugh, Dumbbell, Utensils,
-  Plane, Palette, Play, Heart, Eye, Hash, User, Clock, ChevronRight,
-  Gamepad2, Sparkles, BookOpen, Baby, Shirt, ChevronLeft, ChevronDown, Zap,
+  Search, X, TrendingUp, Play, Heart, Eye, Hash, User, Clock, ChevronRight,
+  ChevronLeft, ChevronDown, Zap, RefreshCw, LayoutGrid, CalendarRange,
 } from 'lucide-react';
 import api from '../../api';
 import { useTheme } from '../../contexts/ThemeContext';
 import config from '../../config';
-import realtimeService from '../../services/RealtimeService';
 import { isVideoUrl } from '../../utils/media';
+import { ALL, DEFAULT_TIME_RANGE, isTimeRange, timeRangePhrase } from '../../utils/explorerFeed';
+import { readableOn } from '../../utils/color';
+import { useExplorerFeed } from '../../hooks/useExplorerFeed';
+import { CategoryIcon, ExplorerFilters, explorerFilterStyles } from '../../components/feed/ExplorerFilters';
 
 // ── Constants ────────────────────────────────────────────────────────────────
-// Only the "all" pill is fixed. The rest come from /categories/, which is
+// Only the "All" chip is fixed. The rest come from /categories/, which is
 // admin-managed -- a hardcoded list here silently stops matching the backend
 // the moment someone adds or renames a category.
-const ALL_CATEGORY = { id: 'all', label: 'All', emoji: '✨' };
-
-const TIME_RANGES = [
-  { id: '24h', label: '24h'    },
-  { id: '7d',  label: '7 days' },
-  { id: '30d', label: '30d'    },
-];
+const ALL_CATEGORY = { id: ALL, name: 'All', slug: null, icon: '' };
 
 const RECENT_KEY = 'ep_recent_searches';
 const MAX_RECENT = 8;
@@ -55,7 +51,7 @@ const addRecent = (q) => {
 // ── Skeleton shimmer ─────────────────────────────────────────────────────────
 function GridSkeleton({ T }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 3 }}>
+    <div aria-hidden="true" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 3 }}>
       {Array.from({ length: 9 }).map((_, i) => (
         <div key={i} style={{
           aspectRatio: '9/16', borderRadius: 8,
@@ -89,15 +85,22 @@ function VideoThumb({ reel, rank, index = 0, hero = false, onOpen, T }) {
       : videoUrl ? mediaUrl(videoUrl) : null;
 
   // Fallback: if no thumbnail found, try different URL patterns
-  const finalThumb = thumb || (reel.image ? mediaUrl(reel.image) : null) || 
+  const finalThumb = thumb || (reel.image ? mediaUrl(reel.image) : null) ||
                      (reel.media && !isVid ? mediaUrl(reel.media) : null) ||
                      (reel.file_url && !isVid ? mediaUrl(reel.file_url) : null);
 
   const isEager = hero || index < EAGER_LOAD_COUNT;
+  const author = reel.user?.username ? `@${reel.user.username}` : 'a creator';
 
   return (
     <div
+      role="button"
+      tabIndex={0}
+      aria-label={`${isVid ? 'Video' : 'Post'} by ${author}, ${fmt(reel.votes || 0)} likes`}
+      className="ex-focus"
+      data-post-id={reel.id}
       onClick={() => onOpen?.(reel)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen?.(reel); } }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
@@ -216,17 +219,61 @@ function VideoThumb({ reel, rank, index = 0, hero = false, onOpen, T }) {
   );
 }
 
+// ── Empty / error panel ──────────────────────────────────────────────────────
+function StatePanel({ icon: Icon, title, message, actions = [], T, role }) {
+  const onAccent = readableOn(T.pri);
+  return (
+    <div role={role} style={{ textAlign: 'center', padding: '48px 20px 32px', color: T.sub }}>
+      <div style={{
+        width: 64, height: 64, borderRadius: '50%', margin: '0 auto 14px',
+        background: `${T.pri}18`, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <Icon size={28} color={T.pri} aria-hidden="true" />
+      </div>
+      <div style={{ fontSize: 17, fontWeight: 800, color: T.txt, marginBottom: 6 }}>{title}</div>
+      <div style={{ fontSize: 13.5, lineHeight: 1.5, maxWidth: 320, margin: '0 auto' }}>{message}</div>
+      {actions.length > 0 && (
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap', marginTop: 18 }}>
+          {actions.map((a, i) => (
+            <button key={a.label} type="button" className="ex-focus" onClick={a.onClick}
+              style={{
+                minHeight: 40, padding: '0 18px', borderRadius: 999, fontSize: 13.5, fontWeight: 700,
+                cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+                border: `1px solid ${i === 0 ? T.pri : T.border}`,
+                background: i === 0 ? T.pri : 'transparent',
+                color: i === 0 ? onAccent : T.txt,
+              }}>
+              {a.icon && <a.icon size={15} aria-hidden="true" />}
+              {a.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main ExplorerPage ─────────────────────────────────────────────────────────
-export function ExplorerPage({ user, onBack, onShowProfile, onShowVideoDetail, onShowPostDetail, onShowPostPage, onRequireAuth, onShowSettings, onShowNotifications }) {
+export function ExplorerPage({
+  user, onBack, onShowProfile, onShowVideoDetail, onShowPostDetail, onShowPostPage, onRequireAuth,
+  onShowSettings, onShowNotifications,
+  // Filter state carried in the URL by the router (/explore?category=dance&range=7d).
+  initialCategorySlug = null, initialTimeRange = DEFAULT_TIME_RANGE, onFiltersChange,
+}) {
   const { colors: T } = useTheme();
 
-  // ── Explore state ──────────────────────────────────────────────────────────
-  const [activeCategory, setActiveCategory] = useState('all');
-  const [loadError, setLoadError] = useState(null);
+  // ── Filters ────────────────────────────────────────────────────────────────
+  // `category` is what the API filters on: 'all' or a category id. A slug
+  // from the URL waits in `pendingSlug` until /categories/ says which id it
+  // is; the feed does not load until then, so it never flashes "All" first.
   const [categories, setCategories] = useState([ALL_CATEGORY]);
+  const [categoriesReady, setCategoriesReady] = useState(false);
+  const [pendingSlug, setPendingSlug] = useState(initialCategorySlug ? String(initialCategorySlug).toLowerCase() : null);
+  const [category, setCategory] = useState(ALL);
+  const [timeRange, setTimeRange] = useState(isTimeRange(initialTimeRange) ? initialTimeRange : DEFAULT_TIME_RANGE);
 
-  // Loaded once. A failure leaves the "All" pill alone rather than an empty
-  // row, so Explore still works with the filter simply unavailable.
+  // Loaded once. A failure leaves only the "All" chip, so Explore still works
+  // with the category filter simply unavailable.
   useEffect(() => {
     let cancelled = false;
     api
@@ -235,20 +282,46 @@ export function ExplorerPage({ user, onBack, onShowProfile, onShowVideoDetail, o
         if (cancelled || !Array.isArray(rows)) return;
         setCategories([
           ALL_CATEGORY,
-          ...rows.map((c) => ({ id: c.slug, label: c.name, emoji: c.icon || '' })),
+          ...rows
+            .filter((c) => c && c.id != null && c.name)
+            .map((c) => ({ id: c.id, name: c.name, slug: c.slug || null, icon: c.icon || '' })),
         ]);
       })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setCategoriesReady(true); });
+    return () => { cancelled = true; };
   }, []);
-  const [timeRange, setTimeRange] = useState('7d');
-  const [videos, setVideos]       = useState([]);
-  const [loading, setLoading]     = useState(true);
+
+  // A category named in the URL, resolved to its id once the list is here.
+  // One that no longer exists is dropped from the URL rather than shown as an
+  // error the person did not cause.
+  useEffect(() => {
+    if (!pendingSlug || !categoriesReady) return;
+    const match = categories.find((c) => c.slug && c.slug.toLowerCase() === pendingSlug);
+    if (match) setCategory(match.id);
+    else onFiltersChange?.({ categorySlug: null, timeRange });
+    setPendingSlug(null);
+  }, [pendingSlug, categoriesReady, categories]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const activeCategory = categories.find((c) => c.id === category) || ALL_CATEGORY;
+  const isAll = category === ALL;
+  const categoryLabel = isAll ? '' : activeCategory.name;
+
+  const feed = useExplorerFeed({
+    category,
+    timeRange,
+    enabled: !pendingSlug,
+    categoryName: categoryLabel,
+  });
+
+  // ── Hashtags ───────────────────────────────────────────────────────────────
   const [hashtags, setHashtags]   = useState([]);
   const [hashLoading, setHashLoading] = useState(true);
   const [showHashtagDropdown, setShowHashtagDropdown] = useState(false);
+  // A hashtag's posts live apart from the category feed, so opening one never
+  // overwrites the feed and closing it shows the feed again without a reload.
+  const [hashtagView, setHashtagView] = useState(null); // { tag, items, count, status }
+  const hashtagSeq = useRef(0);
 
   // ── Search state ───────────────────────────────────────────────────────────
   const [query, setQuery]             = useState('');
@@ -261,100 +334,38 @@ export function ExplorerPage({ user, onBack, onShowProfile, onShowVideoDetail, o
   const inputRef    = useRef(null);
   const inSearchMode = debouncedQ.trim().length > 0;
 
-  // ── Fetch trending grid — initial page is small so the grid paints fast.
-  //    Subsequent pages are loaded on scroll (infinite scroll, below).
-  const INITIAL_LIMIT = 12;      // enough to fill 1.5 screens of 3-column grid
-  const PAGE_LIMIT    = 12;
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore]         = useState(true);
-  const loadMoreRef = useRef(null);
+  const chooseCategory = (id) => {
+    closeHashtag();
+    if (id === category && !pendingSlug) return;
+    setPendingSlug(null);
+    setCategory(id);
+    const chosen = categories.find((c) => c.id === id);
+    onFiltersChange?.({ categorySlug: id === ALL ? null : (chosen && chosen.slug) || null, timeRange });
+  };
 
-  const fetchTrending = useCallback(async ({ showSpinner = true, limit = INITIAL_LIMIT } = {}) => {
-    if (showSpinner) setLoading(true);
-    setHasMore(true);
-
-    try {
-      const d = await api.request(`/explorer/trending/?category=${activeCategory}&time_range=${timeRange}&limit=${limit}`, { skipCache: true });
-      const list = Array.isArray(d) ? d : (d?.results || []);
-      setVideos(list);
-      setLoadError(null);
-      setHasMore(list.length >= limit);
-    } catch (err) {
-      // A swallowed error rendered "Nothing trending yet" -- identical to a
-      // genuinely empty feed. That made a failing request indistinguishable
-      // from no content, on the screen and in the console alike.
-      console.error('[Explorer] trending fetch failed:', err);
-      setVideos([]);
-      setLoadError(err?.error || err?.message || 'Could not load trending posts.');
-    } finally {
-      if (showSpinner) setLoading(false);
-    }
-  }, [activeCategory, timeRange]);
-
-  useEffect(() => {
-    fetchTrending({ showSpinner: true, limit: INITIAL_LIMIT });
-  }, [fetchTrending]);
-
-  useEffect(() => {
-    const handleRefresh = () => {
-      fetchTrending({ showSpinner: false, limit: INITIAL_LIMIT });
-    };
-
-    const handleFocus = () => {
-      fetchTrending({ showSpinner: false, limit: INITIAL_LIMIT });
-    };
-
-    const handleVisibility = () => {
-      if (!document.hidden) {
-        fetchTrending({ showSpinner: false, limit: INITIAL_LIMIT });
-      }
-    };
-
-    realtimeService.addEventListener('FEED_REFRESH', handleRefresh);
-    window.addEventListener('focus', handleFocus);
-    document.addEventListener('visibilitychange', handleVisibility);
-
-    return () => {
-      realtimeService.removeEventListener('FEED_REFRESH', handleRefresh);
-      window.removeEventListener('focus', handleFocus);
-      document.removeEventListener('visibilitychange', handleVisibility);
-    };
-  }, [fetchTrending]);
+  const chooseTimeRange = (id) => {
+    closeHashtag();
+    if (id === timeRange) return;
+    setTimeRange(id);
+    onFiltersChange?.({ categorySlug: isAll ? null : activeCategory.slug || null, timeRange: id });
+  };
 
   // ── Infinite scroll ────────────────────────────────────────────────────────
-  // An IntersectionObserver on a sentinel below the grid fires the next page
-  // only when the user nears the bottom — no work or requests until needed.
+  // An IntersectionObserver on a sentinel below the grid asks for the next
+  // page -- same category, same time range, next offset -- only when the
+  // person nears the bottom. After a failed page it waits for a tap instead
+  // of retrying in a loop.
+  const loadMoreRef = useRef(null);
   useEffect(() => {
-    if (inSearchMode) return;      // search has its own flow
+    if (inSearchMode || hashtagView) return undefined;
     const node = loadMoreRef.current;
-    if (!node || !hasMore || loading) return;
-
-    const observer = new IntersectionObserver(async (entries) => {
-      if (!entries[0]?.isIntersecting || loadingMore || !hasMore) return;
-      setLoadingMore(true);
-      try {
-        const offset = videos.length;
-        const d = await api.request(
-          `/explorer/trending/?category=${activeCategory}&time_range=${timeRange}&limit=${PAGE_LIMIT}&offset=${offset}`
-        );
-        const page = Array.isArray(d) ? d : (d?.results || []);
-        if (page.length === 0) {
-          setHasMore(false);
-        } else {
-          // Dedup by id in case the backend re-sent overlapping items.
-          setVideos(prev => {
-            const seen = new Set(prev.map(v => v.id));
-            return [...prev, ...page.filter(v => !seen.has(v.id))];
-          });
-          if (page.length < PAGE_LIMIT) setHasMore(false);
-        }
-      } catch { /* keep what we have */ }
-      finally { setLoadingMore(false); }
+    if (!node || !feed.hasMore || feed.status !== 'ready' || feed.loadingMore || feed.moreError) return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) feed.loadMore();
     }, { rootMargin: '400px 0px' });
-
     observer.observe(node);
     return () => observer.disconnect();
-  }, [activeCategory, timeRange, videos.length, hasMore, loading, loadingMore, inSearchMode]);
+  }, [feed.hasMore, feed.status, feed.items.length, feed.loadingMore, feed.moreError, feed.loadMore, inSearchMode, hashtagView]);
 
   // ── Fetch trending hashtags ────────────────────────────────────────────────
   useEffect(() => {
@@ -401,29 +412,25 @@ export function ExplorerPage({ user, onBack, onShowProfile, onShowVideoDetail, o
     setSearchFocused(false);
   };
 
-  // State for hashtag view
-  const [hashtagView, setHashtagView] = useState(null); // { tag, videos }
-  
-  const handleHashtagClick = async (tag) => {
-    const cleanTag = tag.replace(/^#/, '');
-    setLoading(true);
+  function closeHashtag() {
+    hashtagSeq.current += 1;
+    setHashtagView(null);
+  }
+
+  const openHashtag = async (tag) => {
+    const cleanTag = String(tag).replace(/^#/, '');
+    const requestId = ++hashtagSeq.current;
+    setHashtagView({ tag: cleanTag, items: [], count: 0, status: 'loading' });
     try {
       const data = await api.request(`/explorer/hashtag/?tag=${encodeURIComponent(cleanTag)}&limit=30`);
+      if (requestId !== hashtagSeq.current) return;
       const results = data?.results || [];
-      setHashtagView({ tag: cleanTag, videos: results, count: data?.count || results.length });
-      setVideos(results);
+      setHashtagView({ tag: cleanTag, items: results, count: data?.count || results.length, status: 'ready' });
     } catch (e) {
+      if (requestId !== hashtagSeq.current) return;
       console.error('Failed to fetch hashtag:', e);
-      setHashtagView({ tag: cleanTag, videos: [], count: 0 });
-      setVideos([]);
-    } finally {
-      setLoading(false);
+      setHashtagView({ tag: cleanTag, items: [], count: 0, status: 'error' });
     }
-  };
-
-  const clearHashtagView = () => {
-    setHashtagView(null);
-    fetchTrending({ showSpinner: true, limit: 30 });
   };
 
   const openReel = (reel) => {
@@ -445,10 +452,109 @@ export function ExplorerPage({ user, onBack, onShowProfile, onShowVideoDetail, o
 
   const showRecentDropdown = searchFocused && query.length === 0 && recentSearches.length > 0;
 
+  // ── What the grid shows ──────────────────────────────────────────────────
+  const showingHashtag = !!hashtagView;
+  const gridItems = showingHashtag ? hashtagView.items : feed.items;
+  const gridStatus = showingHashtag
+    ? hashtagView.status
+    : pendingSlug || feed.status === 'idle' ? 'loading' : feed.status;
+  const phrase = timeRangePhrase(timeRange);
+  const widerRange = timeRange !== '30d'
+    ? { label: 'Try the last 30 days', icon: CalendarRange, onClick: () => chooseTimeRange('30d') }
+    : null;
+  const showAll = { label: 'Show all categories', icon: LayoutGrid, onClick: () => chooseCategory(ALL) };
+
+  const renderFeedState = () => {
+    if (gridStatus === 'loading') return <GridSkeleton T={T} />;
+
+    if (gridStatus === 'error') {
+      if (showingHashtag) {
+        return (
+          <StatePanel T={T} role="alert" icon={Hash} title={`Unable to load #${hashtagView.tag}`}
+            message="Check your connection and try again."
+            actions={[{ label: 'Try again', icon: RefreshCw, onClick: () => openHashtag(hashtagView.tag) }]} />
+        );
+      }
+      if (feed.error && feed.error.code === 'invalid_category') {
+        return (
+          <StatePanel T={T} role="alert" icon={LayoutGrid} title="Category unavailable"
+            message={feed.error.message} actions={[showAll]} />
+        );
+      }
+      return (
+        <StatePanel T={T} role="alert" icon={TrendingUp}
+          title={isAll ? 'Unable to load trending' : 'Unable to load this category'}
+          message={(feed.error && feed.error.message) || 'Something went wrong.'}
+          actions={[{ label: 'Try again', icon: RefreshCw, onClick: feed.retry }, ...(isAll ? [] : [showAll])]} />
+      );
+    }
+
+    if (gridItems.length === 0) {
+      if (showingHashtag) {
+        return (
+          <StatePanel T={T} icon={Hash} title={`No posts with #${hashtagView.tag}`}
+            message="Be the first to post with this hashtag!" />
+        );
+      }
+      return isAll ? (
+        <StatePanel T={T} icon={TrendingUp} title="Nothing trending yet"
+          message={`No posts from ${phrase} yet.`} actions={widerRange ? [widerRange] : []} />
+      ) : (
+        <StatePanel T={T} icon={LayoutGrid} title={`No ${categoryLabel} posts yet`}
+          message={`There are no posts in this category from ${phrase}.`}
+          actions={[showAll, ...(widerRange ? [widerRange] : [])]} />
+      );
+    }
+
+    return (
+      <>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4 }}>
+          {gridItems.map((reel, idx) => (
+            <VideoThumb
+              key={reel.id}
+              reel={reel}
+              rank={idx}
+              index={idx}
+              hero={idx === 0}
+              onOpen={openReel}
+              T={T}
+            />
+          ))}
+        </div>
+        {/* Infinite-scroll sentinel -- only while there is more to fetch, so
+            the observer stops at the end. */}
+        {!showingHashtag && feed.hasMore && (
+          <div ref={loadMoreRef} style={{ padding: '16px 0', textAlign: 'center', minHeight: 24 }}>
+            {feed.loadingMore && (
+              <span role="status" style={{ fontSize: 13, color: T.sub }}>Loading more…</span>
+            )}
+            {feed.moreError && (
+              <button type="button" className="ex-focus" onClick={feed.loadMore}
+                style={{ minHeight: 40, padding: '0 16px', borderRadius: 999, border: `1px solid ${T.border}`,
+                  background: 'transparent', color: T.txt, fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                  display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <RefreshCw size={14} aria-hidden="true" /> Couldn't load more — tap to retry
+              </button>
+            )}
+          </div>
+        )}
+        {!showingHashtag && !feed.hasMore && gridItems.length > 12 && (
+          <div style={{ textAlign: 'center', padding: '18px 0', fontSize: 12, color: T.sub }}>
+            You're all caught up
+          </div>
+        )}
+      </>
+    );
+  };
+
   return (
     <div style={{ minHeight: '100%', background: T.bg, display: 'flex', flexDirection: 'column' }}>
       <style>{`
         @keyframes ex-shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+        .ex-wrap { width: 100%; max-width: 760px; margin: 0 auto; box-sizing: border-box; }
+        .ex-hashtag-row { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding: 10px 2px 4px; }
+        .ex-hashtag-row::-webkit-scrollbar { display: none; }
+        ${explorerFilterStyles(T)}
       `}</style>
 
       {/* ── STICKY HEADER ───────────────────────────────────────────────── */}
@@ -457,117 +563,89 @@ export function ExplorerPage({ user, onBack, onShowProfile, onShowVideoDetail, o
         background: T.bg,
         borderBottom: inSearchMode ? 'none' : `1px solid ${T.border}`,
       }}>
-        {/* Row 1 – title + search bar */}
-        <div style={{ padding: '12px 16px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* Back button */}
-          <button aria-label="Go back"
-            onClick={onBack}
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              padding: '4px 6px 4px 0', display: 'flex', alignItems: 'center',
-              color: T.txt, flexShrink: 0,
-            }}
-          >
-            <ChevronLeft size={20} strokeWidth={2.5} />
-          </button>
-          
-          {/* Search input wrapper */}
-          <div style={{ flex: 1, position: 'relative' }}>
-            <Search size={14} color={T.sub} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
-            <input
-              ref={inputRef}
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              onFocus={() => setSearchFocused(true)}
-              onBlur={() => setTimeout(() => setSearchFocused(false), 180)}
-              onKeyDown={e => { if (e.key === 'Enter') commitSearch(); }}
-              placeholder="Search videos, users…"
+        <div className="ex-wrap" style={{ padding: '10px 16px 0' }}>
+          {/* Row 1 – back + search */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 10 }}>
+            <button aria-label="Go back" type="button" className="ex-focus"
+              onClick={onBack}
               style={{
-                width: '100%', boxSizing: 'border-box',
-                padding: '8px 32px 8px 32px',
-                borderRadius: 20, border: `1px solid ${searchFocused ? T.pri : T.border}`,
-                fontSize: 13, background: T.bg, color: T.txt,
-                outline: 'none', transition: 'border-color .2s',
+                width: 38, height: 38, borderRadius: '50%', flexShrink: 0,
+                background: T.cardBg, border: `1px solid ${T.border}`, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.txt,
               }}
-            />
-            {query && (
-              <button onClick={clearSearch} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', alignItems: 'center', color: T.sub }}>
-                <X size={12} />
-              </button>
-            )}
+            >
+              <ChevronLeft size={20} strokeWidth={2.5} />
+            </button>
 
-            {/* Recent searches dropdown */}
-            {showRecentDropdown && (
-              <div style={{
-                position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0,
-                background: '#fff', borderRadius: 12,
-                boxShadow: '0 8px 32px rgba(0,0,0,0.14)',
-                overflow: 'hidden', zIndex: 30,
-                border: `1px solid ${T.border}`,
-              }}>
-                <div style={{ padding: '8px 12px 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: '#8fc441', display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <Clock size={11} /> Recent
-                  </span>
-                  <button onClick={() => { saveRecent([]); setRecentSearches([]); }}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, color: '#8fc441', fontWeight: 600 }}>
-                    Clear
-                  </button>
+            {/* Search input wrapper */}
+            <div style={{ flex: 1, position: 'relative' }}>
+              <Search size={15} color={T.sub} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+              <input
+                ref={inputRef}
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                onFocus={() => setSearchFocused(true)}
+                onBlur={() => setTimeout(() => setSearchFocused(false), 180)}
+                onKeyDown={e => { if (e.key === 'Enter') commitSearch(); }}
+                placeholder="Search videos, users…"
+                aria-label="Search videos and users"
+                style={{
+                  width: '100%', boxSizing: 'border-box', height: 38,
+                  padding: '0 34px 0 34px',
+                  borderRadius: 999, border: `1px solid ${searchFocused ? T.pri : T.border}`,
+                  fontSize: 14, background: T.cardBg, color: T.txt,
+                  outline: 'none', transition: 'border-color .2s',
+                }}
+              />
+              {query && (
+                <button aria-label="Clear search" type="button" onClick={clearSearch} style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: 6, display: 'flex', alignItems: 'center', color: T.sub }}>
+                  <X size={14} />
+                </button>
+              )}
+
+              {/* Recent searches dropdown */}
+              {showRecentDropdown && (
+                <div style={{
+                  position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0,
+                  background: T.cardBg, borderRadius: 12,
+                  boxShadow: '0 8px 32px rgba(0,0,0,0.24)',
+                  overflow: 'hidden', zIndex: 30,
+                  border: `1px solid ${T.border}`,
+                }}>
+                  <div style={{ padding: '8px 12px 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: T.sub, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <Clock size={11} /> Recent
+                    </span>
+                    <button onClick={() => { saveRecent([]); setRecentSearches([]); }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: T.pri, fontWeight: 700 }}>
+                      Clear
+                    </button>
+                  </div>
+                  {recentSearches.map(r => (
+                    <button key={r} onMouseDown={() => { setQuery(r); commitSearch(r); }}
+                      style={{ width: '100%', padding: '9px 12px', border: 'none', background: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left', color: T.txt, fontSize: 13 }}>
+                      <Clock size={12} color={T.sub} />
+                      <span style={{ flex: 1 }}>{r}</span>
+                      <ChevronRight size={12} color={T.sub} />
+                    </button>
+                  ))}
                 </div>
-                {recentSearches.map(r => (
-                  <button key={r} onMouseDown={() => { setQuery(r); commitSearch(r); }}
-                    style={{ width: '100%', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left', color: T.txt, fontSize: 13 }}>
-                    <Clock size={12} color={T.sub} />
-                    <span style={{ flex: 1 }}>{r}</span>
-                    <ChevronRight size={12} color={T.sub} />
-                  </button>
-                ))}
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
-          {/* Time range pills — only in explore mode */}
-          {!inSearchMode && !searchFocused && (
-            <>
-              {/* Category filter. Horizontally scrollable so a long list never
-                  pushes the time ranges off-screen on a phone. */}
-              <div style={{
-                display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 6,
-                marginBottom: 6, scrollbarWidth: 'none',
-              }}>
-                {categories.map(c => (
-                  <button key={c.id}
-                    onClick={() => { setActiveCategory(c.id); setHashtagView(null); }}
-                    aria-pressed={activeCategory === c.id}
-                    style={{
-                      minHeight: 32, padding: '4px 10px', borderRadius: 16,
-                      border: '1px solid ' + (activeCategory === c.id ? T.pri : T.border),
-                      background: activeCategory === c.id ? T.pri : 'transparent',
-                      color: activeCategory === c.id ? '#fff' : '#8fc441',
-                      fontSize: 10, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap',
-                    }}>
-                    {c.emoji ? c.emoji + ' ' : ''}{c.label}
-                  </button>
-                ))}
-              </div>
-
-            <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-              {TIME_RANGES.map(r => (
-                <button key={r.id} onClick={() => { setTimeRange(r.id); setHashtagView(null); }} style={{ minHeight: 32, 
-                  padding: '4px 8px', borderRadius: 16,
-                  border: `1px solid ${timeRange === r.id ? T.pri : T.border}`,
-                  background: timeRange === r.id ? T.pri : 'transparent',
-                  color: timeRange === r.id ? '#fff' : '#8fc441',
-                  fontSize: 10, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap',
-                }}>
-                  {r.label}
-                </button>
-              ))}
-            </div>
-            </>
+          {/* Filters — category and time, each in its own labelled section. */}
+          {!inSearchMode && (
+            <ExplorerFilters
+              categories={categories}
+              category={pendingSlug ? null : category}
+              onCategory={chooseCategory}
+              timeRange={timeRange}
+              onTimeRange={chooseTimeRange}
+              T={T}
+            />
           )}
         </div>
-
       </div>
 
       {/* ── SCROLLABLE CONTENT ─────────────────────────────────────────────── */}
@@ -624,7 +702,8 @@ export function ExplorerPage({ user, onBack, onShowProfile, onShowVideoDetail, o
                     </div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                       {searchResults.hashtags.map(tag => (
-                        <button key={tag} onClick={() => handleHashtagClick(tag)} style={{
+                        // Leaves search, so the hashtag's posts are what is on screen.
+                        <button key={tag} onClick={() => { clearSearch(); openHashtag(tag); }} style={{
                           padding: '7px 14px', borderRadius: 20,
                           background: T.pri + '18', border: `1px solid ${T.pri}40`,
                           color: T.pri, fontSize: 14, fontWeight: 700, cursor: 'pointer',
@@ -665,155 +744,99 @@ export function ExplorerPage({ user, onBack, onShowProfile, onShowVideoDetail, o
 
         {/* ══ EXPLORE MODE ═════════════════════════════════════════════════ */}
         {!inSearchMode && (
-          <div style={{ padding: '12px 16px 32px' }}>
+          <div className="ex-wrap" style={{ padding: '12px 16px calc(96px + env(safe-area-inset-bottom))' }}>
 
-            {/* ── Trending hashtags dropdown ─────────────────────────────── */}
-            {!hashLoading && hashtags.length > 0 && (
-              <div style={{ marginBottom: 20 }}>
+            {/* ── Trending hashtags: a separate discovery shortcut, not a filter ── */}
+            {!showingHashtag && !hashLoading && hashtags.length > 0 && (
+              <section style={{
+                marginBottom: 14, borderRadius: 14, border: `1px solid ${T.border}`,
+                background: T.cardBg, padding: '2px 12px',
+              }}>
                 <button
+                  type="button"
+                  className="ex-focus"
+                  aria-expanded={showHashtagDropdown}
+                  aria-controls="ex-hashtag-list"
                   onClick={() => setShowHashtagDropdown(!showHashtagDropdown)}
                   style={{
-                    width: '100%',
-                    padding: '10px 14px',
-                    borderRadius: 10,
-                    background: T.pri + '15',
-                    border: `1px solid ${T.pri}35`,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    cursor: 'pointer',
-                    marginBottom: showHashtagDropdown ? 10 : 0,
+                    width: '100%', minHeight: 44, padding: 0, background: 'none', border: 'none',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <TrendingUp size={13} color={T.pri} />
-                    <span style={{ fontSize: 13, fontWeight: 800, color: '#8fc441' }}>TRENDING HASHTAGS</span>
-                  </div>
-                  <ChevronDown size={16} color={T.pri} style={{ 
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ width: 26, height: 26, borderRadius: 8, background: `${T.pri}1F`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <TrendingUp size={14} color={T.pri} aria-hidden="true" />
+                    </span>
+                    <span style={{ fontSize: 12.5, fontWeight: 800, letterSpacing: '.06em', color: T.txt }}>TRENDING HASHTAGS</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: T.sub, background: `${T.border}`, borderRadius: 999, padding: '2px 7px' }}>
+                      {hashtags.length}
+                    </span>
+                  </span>
+                  <ChevronDown size={18} color={T.sub} aria-hidden="true" style={{
                     transform: showHashtagDropdown ? 'rotate(180deg)' : 'rotate(0deg)',
-                    transition: 'transform 0.2s'
+                    transition: 'transform 0.2s',
                   }} />
                 </button>
-                
+
                 {showHashtagDropdown && (
-                  <div style={{
-                    display: 'flex',
-                    gap: 8,
-                    flexWrap: 'wrap',
-                    padding: '4px 0',
-                  }}>
+                  <div id="ex-hashtag-list" className="ex-hashtag-row" style={{ borderTop: `1px solid ${T.border}`, marginBottom: 8 }}>
                     {hashtags.map(h => (
-                      <button key={h.tag} onClick={() => handleHashtagClick(h.tag)} style={{
-                        padding: '7px 14px', borderRadius: 20,
-                        background: T.pri + '12', border: `1px solid ${T.pri}35`,
-                        cursor: 'pointer', gap: 1,
-                      }}>
+                      <button key={h.tag} type="button" className="ex-focus" onClick={() => openHashtag(h.tag)}
+                        aria-label={`#${h.tag}, ${fmt(h.posts)} posts`}
+                        style={{
+                          flexShrink: 0, minHeight: 40, padding: '0 14px', borderRadius: 999,
+                          background: `${T.pri}12`, border: `1px solid ${T.pri}35`, cursor: 'pointer',
+                          display: 'inline-flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap',
+                        }}>
                         <span style={{ fontSize: 13, fontWeight: 800, color: T.pri }}>#{h.tag}</span>
-                        <span style={{ fontSize: 10, color: T.sub }}>{fmt(h.posts)} posts</span>
+                        <span style={{ fontSize: 11, color: T.sub }}>{fmt(h.posts)} posts</span>
                       </button>
                     ))}
                   </div>
                 )}
-              </div>
+              </section>
             )}
-            {hashLoading && (
-              <div style={{ display: 'flex', gap: 8, overflowX: 'auto', marginBottom: 20 }}>
-                {[0,1,2,3,4].map(i => (
-                  <div key={i} style={{ flexShrink: 0, width: 80, height: 46, borderRadius: 20,
-                    background: `linear-gradient(90deg,${T.border} 25%,${T.bg} 50%,${T.border} 75%)`,
-                    backgroundSize: '400% 100%', animation: 'ex-shimmer 1.4s ease infinite' }} />
-                ))}
-              </div>
+            {!showingHashtag && hashLoading && (
+              <div aria-hidden="true" style={{ height: 48, borderRadius: 14, marginBottom: 14,
+                background: `linear-gradient(90deg,${T.border} 25%,${T.bg} 50%,${T.border} 75%)`,
+                backgroundSize: '400% 100%', animation: 'ex-shimmer 1.4s ease infinite' }} />
             )}
 
             {/* ── Hashtag view header ─────────────────────────────────── */}
-            {hashtagView && (
-              <div style={{ 
+            {showingHashtag && (
+              <div style={{
                 display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16,
                 padding: '12px 16px', background: T.pri + '15', borderRadius: 12,
               }}>
-                <button onClick={clearHashtagView} style={{
-                  background: 'none', border: 'none', cursor: 'pointer', padding: 4,
+                <button type="button" aria-label="Close hashtag" className="ex-focus" onClick={closeHashtag} style={{
+                  background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex',
                 }}>
                   <X size={20} color={T.txt} />
                 </button>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 18, fontWeight: 800, color: T.pri }}>#{hashtagView.tag}</div>
-                  <div style={{ fontSize: 12, color: T.sub }}>{fmt(hashtagView.count)} posts</div>
+                  <div style={{ fontSize: 12, color: T.sub }}>
+                    {hashtagView.status === 'ready' ? `${fmt(hashtagView.count)} posts` : 'Loading…'}
+                  </div>
                 </div>
                 <Hash size={28} color={T.pri} style={{ opacity: 0.5 }} />
               </div>
             )}
 
-            {/* ── Trending video grid ─────────────────────────────────── */}
-            {loading ? (
-              <GridSkeleton T={T} />
-            ) : loadError ? (
-              <div style={{ textAlign: 'center', padding: '60px 20px', color: T.sub }}>
-                <TrendingUp size={44} style={{ opacity: 0.3, marginBottom: 12 }} />
-                <div style={{ fontSize: 16, fontWeight: 700, color: '#8fc441', marginBottom: 6 }}>
-                  Couldn't load trending
-                </div>
-                <div style={{ fontSize: 13, marginBottom: 14 }}>{loadError}</div>
-                <button
-                  onClick={() => fetchTrending({ showSpinner: true, limit: INITIAL_LIMIT })}
-                  style={{
-                    padding: '8px 18px', borderRadius: 20, border: `1px solid ${T.pri}`,
-                    background: 'transparent', color: T.pri, fontSize: 13, fontWeight: 700,
-                    cursor: 'pointer',
-                  }}
-                >
-                  Try again
-                </button>
+            {/* ── What is showing, in words (and to screen readers) ─────── */}
+            {!showingHashtag && (
+              <div aria-live="polite" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: T.sub, margin: '0 2px 10px' }}>
+                {!isAll && <CategoryIcon category={activeCategory} size={13} color={T.pri} />}
+                <span>
+                  {gridStatus === 'loading'
+                    ? `Loading ${isAll ? 'trending posts' : `${categoryLabel} posts`}…`
+                    : <>Showing <strong style={{ color: T.txt }}>{isAll ? 'all categories' : categoryLabel}</strong> from {phrase}</>}
+                </span>
               </div>
-            ) : videos.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '60px 20px', color: T.sub }}>
-                {hashtagView ? (
-                  <>
-                    <Hash size={44} style={{ opacity: 0.3, marginBottom: 12 }} />
-                    <div style={{ fontSize: 16, fontWeight: 700, color: '#8fc441', marginBottom: 6 }}>No posts with #{hashtagView.tag}</div>
-                    <div style={{ fontSize: 13 }}>Be the first to post with this hashtag!</div>
-                  </>
-                ) : (
-                  <>
-                    <TrendingUp size={44} style={{ opacity: 0.3, marginBottom: 12 }} />
-                    <div style={{ fontSize: 16, fontWeight: 700, color: '#8fc441', marginBottom: 6 }}>Nothing trending yet</div>
-                    <div style={{ fontSize: 13 }}>Check back soon or try a different category</div>
-                  </>
-                )}
-              </div>
-            ) : (
-              <>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4 }}>
-                  {videos.map((reel, idx) => (
-                    <VideoThumb
-                      key={reel.id}
-                      reel={reel}
-                      rank={idx}
-                      index={idx}
-                      hero={idx === 0}
-                      onOpen={openReel}
-                      T={T}
-                    />
-                  ))}
-                </div>
-                {/* Infinite-scroll sentinel + loader — only present when
-                    there's more to fetch; disappears at the end so the
-                    observer doesn't keep firing. */}
-                {hasMore && !hashtagView && (
-                  <div ref={loadMoreRef} style={{ padding: '16px 0', textAlign: 'center' }}>
-                    {loadingMore && (
-                      <span style={{ fontSize: 13, color: T.sub }}>Loading more…</span>
-                    )}
-                  </div>
-                )}
-                {!hasMore && videos.length > INITIAL_LIMIT && (
-                  <div style={{ textAlign: 'center', padding: '18px 0', fontSize: 12, color: T.sub }}>
-                    You're all caught up
-                  </div>
-                )}
-              </>
             )}
+
+            {/* ── Trending grid ───────────────────────────────────────── */}
+            {renderFeedState()}
           </div>
         )}
       </div>
@@ -821,7 +844,3 @@ export function ExplorerPage({ user, onBack, onShowProfile, onShowVideoDetail, o
     </div>
   );
 }
-
-
-
-

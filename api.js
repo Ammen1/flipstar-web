@@ -556,12 +556,17 @@ const api = {
     const resultPromise = doRequest();
     if (inflightKey) {
       _inflight.set(inflightKey, resultPromise);
-      // Always clean up the inflight entry once settled (success OR error)
-      resultPromise.finally(() => {
+      // Always clean up the inflight entry once settled (success OR error).
+      // then(cleanup, cleanup) rather than finally(): finally() returns a
+      // second promise that rejects along with the request, and nothing ever
+      // handled it -- every failed GET logged an "Uncaught (in promise)" on
+      // top of the error its caller had already dealt with.
+      const cleanup = () => {
         if (_inflight.get(inflightKey) === resultPromise) {
           _inflight.delete(inflightKey);
         }
-      });
+      };
+      resultPromise.then(cleanup, cleanup);
     }
     return resultPromise;
   },

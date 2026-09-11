@@ -778,16 +778,24 @@ async function run() {
       try {
         await waitForCameraReady();
       } catch (e) {
-        // On some runs Chromium's fake device opens but never delivers a
-        // frame (seen on Windows headless). That is the test machine, not the
-        // page -- unless the page itself reported an error.
+        // Chromium's fake device misbehaves on some runs (seen on Windows
+        // headless) in two ways: it opens and never delivers a frame, or it
+        // reports that no camera exists. Either is the test machine, not the
+        // page. Any other camera error is still a failure.
         const video = document.querySelector('#root video');
-        const stream = video && video.srcObject;
-        const pageReportedError = !!document.querySelector('#root [role="alert"]');
-        if (stream && stream.getVideoTracks().length && video.readyState < 2 && !pageReportedError) {
-          throw new Skip("Chromium's fake capture device delivered no frames on this run");
+        const cvs = previewCanvas();
+        const alertEl = document.querySelector('#root [role="alert"]');
+        const alertText = alertEl ? alertEl.innerText.replace(/\s+/g, ' ') : '';
+        const track = video && video.srcObject && video.srcObject.getVideoTracks()[0];
+        const state = `readyState=${video && video.readyState} videoWidth=${video && video.videoWidth} ` +
+          `track=${track ? `${track.readyState}${track.muted ? ',muted' : ''}` : 'none'} canvas=${cvs && cvs.width}`;
+        if (!alertEl && (!cvs || cvs.width <= 2)) {
+          throw new Skip(`Chromium's fake capture device delivered no frames on this run (${state})`);
         }
-        throw e;
+        if (/No camera found/.test(alertText)) {
+          throw new Skip(`Chromium's fake capture device was not found on this run (${state})`);
+        }
+        throw new Error(`${e.message}; ${state}; alert: ${alertText}`);
       }
       const url = await record(1500);
       const v = await inspectVideo(url);

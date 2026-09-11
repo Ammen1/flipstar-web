@@ -1,7 +1,8 @@
 import React, { Suspense, lazy, useCallback } from 'react';
-import { createBrowserRouter, Navigate, useNavigate, useParams, useLocation } from 'react-router-dom';
+import { createBrowserRouter, Navigate, useNavigate, useParams, useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import { useTheme } from './contexts/ThemeContext';
+import { readFilterParams, writeFilterParams } from './utils/explorerFeed';
 
 const AppLayout = lazy(() => import('./components/layout/AppLayout'));
 
@@ -133,8 +134,20 @@ function MessagesPageWrapper() {
 
 function ExplorerPageWrapper() {
   const h = useNavHelpers();
+  // The chosen category and time range live in the URL
+  // (/explore?category=dance&range=30d), so a refresh or a shared link keeps
+  // them. `replace` keeps each chip tap out of the back-button history.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { categorySlug, timeRange } = readFilterParams(searchParams);
+  const onFiltersChange = useCallback(
+    (next) => setSearchParams((prev) => writeFilterParams(prev, next), { replace: true }),
+    [setSearchParams]
+  );
   return (
     <ExplorerPage
+      initialCategorySlug={categorySlug}
+      initialTimeRange={timeRange}
+      onFiltersChange={onFiltersChange}
       user={h.authUser}
       onBack={() => h.navigate(-1)}
       onShowProfile={(userId) => h.navigate(userId ? `/profile/${userId}` : '/profile')}

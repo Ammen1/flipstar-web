@@ -1,13 +1,15 @@
 /**
- * End-to-end camera tests in a real browser.
+ * End-to-end tests in a real browser.
  *
- *   npm run test:browser          (CHROME_PATH=... to pick the browser)
+ *   npm run test:browser                 every suite
+ *   npm run test:browser -- explorer     one suite (camera | explorer)
+ *   CHROME_PATH=... npm run test:browser to pick the browser
  *
- * Bundles tests/browser/harness.jsx -- which mounts the real
- * EnhancedPostPage -- with the esbuild that ships inside Vite, serves it
- * from a local server that also stubs the API, and runs it in headless
- * Chrome or Edge with Chromium's fake camera and microphone. The page posts
- * its results back and this script prints them.
+ * Each suite is tests/browser/<suite>.harness.jsx, which mounts a real page
+ * (the post page with its camera; the Explore page). It is bundled with the
+ * esbuild that ships inside Vite, served from a local server that also stubs
+ * the API, and run in headless Chrome or Edge with Chromium's fake camera and
+ * microphone. The page posts its results back and this script prints them.
  *
  * No new dependencies: esbuild is already in node_modules (Vite uses it) and
  * the browser is whatever Chromium the machine has.
@@ -23,6 +25,7 @@ import { build } from 'esbuild';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const TIMEOUT_MS = Number(process.env.BROWSER_TEST_TIMEOUT_MS || 240000);
+const SUITES = ['camera', 'explorer'];
 
 function findBrowser() {
   const candidates = [
@@ -74,9 +77,88 @@ function summariseMultipart(contentType, body) {
   return out;
 }
 
-async function bundle(apiBase) {
+// ── Explore fixture ────────────────────────────────────────────────────────
+// Categories and posts of known ages, and a /explorer/trending/ that filters
+// them the way the backend does (tests/integration/test_explorer_trending_
+// filters.py covers the real one). What the browser suite checks is the page:
+// which requests it makes, and that what it shows is exactly the answer to
+// the latest one.
+const HOUR = 3600e3;
+const DAY = 24 * HOUR;
+const EXPLORE_CATEGORIES = [
+  { id: 3, name: 'Dance', slug: 'dance', icon: '💃', order: 1, is_active: true },
+  { id: 5, name: 'Music', slug: 'music', icon: 'music', order: 2, is_active: true },
+  { id: 7, name: 'Comedy', slug: 'comedy', icon: '', order: 3, is_active: true },
+  { id: 9, name: 'Sport', slug: 'sport', icon: '', order: 4, is_active: true },
+  { id: 11, name: 'Education', slug: 'education', icon: '', order: 5, is_active: true },
+  { id: 13, name: 'Travel', slug: 'travel', icon: '', order: 6, is_active: true },
+  { id: 15, name: 'Food', slug: 'food', icon: '', order: 7, is_active: true },
+  { id: 17, name: 'Gaming', slug: 'gaming', icon: '', order: 8, is_active: true },
+];
+const slugOf = (id) => (EXPLORE_CATEGORIES.find((c) => c.id === id) || {}).slug || null;
+
+function explorePosts(now) {
+  const out = [];
+  let id = 1000;
+  const add = (category, age, votes) => out.push({ id: id++, category, created: now - age, votes });
+  for (let i = 0; i < 10; i++) add(3, (i + 1) * HOUR, 100 - i); // Dance, last 24h
+  for (let i = 0; i < 10; i++) add(3, (2 + i * 0.4) * DAY, 80 - i); // Dance, 2-6 days
+  for (let i = 0; i < 10; i++) add(3, (10 + i) * DAY, 60 - i); // Dance, 10-19 days
+  for (let i = 0; i < 4; i++) add(5, (i + 2) * HOUR, 90 - i); // Music, last 24h
+  for (let i = 0; i < 4; i++) add(5, (3 + i) * DAY, 70 - i); // Music, 3-6 days
+  for (let i = 0; i < 3; i++) add(7, (1.5 + i) * DAY, 50 - i); // Comedy, 1.5-3.5 days
+  for (let i = 0; i < 5; i++) add(null, (i + 1) * DAY, 40 - i); // uncategorised
+  // Sport has none: the empty state.
+  return out;
+}
+
+const PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64'
+);
+
+function newExploreState() {
+  return { posts: explorePosts(Date.now()), requests: [], delays: {}, fail: new Set() };
+}
+
+function exploreTrending(explore, url, origin) {
+  const raw = (url.searchParams.get('category') || '').trim();
+  const timeRange = url.searchParams.get('time_range') || '7d';
+  const limit = Math.max(1, Math.min(50, parseInt(url.searchParams.get('limit'), 10) || 20));
+  const offset = Math.max(0, parseInt(url.searchParams.get('offset'), 10) || 0);
+  explore.requests.push({ category: raw, time_range: timeRange, limit, offset });
+
+  if (explore.fail.has(raw)) return [500, { error: 'Could not load trending posts.', code: 'trending_failed' }];
+  let category = null;
+  if (!['', 'all', 'trending'].includes(raw.toLowerCase())) {
+    const match = EXPLORE_CATEGORIES.find((c) => String(c.id) === raw || c.slug === raw);
+    if (!match) return [400, { error: 'Unknown or inactive category.', code: 'invalid_category', category: raw }];
+    category = match.id;
+  }
+  const windowMs = { '24h': DAY, '7d': 7 * DAY, '30d': 30 * DAY }[timeRange] || 365 * DAY;
+  const now = Date.now();
+  const rows = explore.posts
+    .filter((p) => (category === null || p.category === category) && p.created >= now - windowMs)
+    .sort((a, b) => b.votes - a.votes || b.id - a.id)
+    .slice(offset, offset + limit)
+    .map((p) => ({
+      id: p.id,
+      votes: p.votes,
+      category: p.category,
+      category_slug: slugOf(p.category),
+      thumbnail_url: `${origin}/media/${slugOf(p.category) || 'none'}-${p.id}.png`,
+      user: { username: `creator${p.id}` },
+      created_at: new Date(p.created).toISOString(),
+      comment_count: 0,
+    }));
+  return [200, rows];
+}
+
+// ── bundling and running ───────────────────────────────────────────────────
+
+async function bundle(suite, apiBase) {
   const result = await build({
-    entryPoints: [path.join(ROOT, 'tests/browser/harness.jsx')],
+    entryPoints: [path.join(ROOT, `tests/browser/${suite}.harness.jsx`)],
     bundle: true,
     write: false,
     format: 'iife',
@@ -105,14 +187,17 @@ async function main() {
     console.error('No Chrome or Edge found. Set CHROME_PATH to a Chromium-based browser.');
     process.exit(2);
   }
+  const requested = process.argv.slice(2).filter((a) => SUITES.includes(a));
+  const suites = requested.length ? requested : SUITES;
 
-  const state = { uploads: [], failUpload: false };
-  let resolveResults;
-  const results = new Promise((resolve) => { resolveResults = resolve; });
+  let suite = null;
   let html = '';
+  let state = null;
+  let resolveResults = () => {};
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
+    const origin = `http://${req.headers.host}`;
     const body = await readBody(req);
     const json = (code, obj) => {
       res.writeHead(code, { 'Content-Type': 'application/json' });
@@ -121,7 +206,12 @@ async function main() {
     if (url.pathname === '/') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(html);
-      return;
+      return undefined;
+    }
+    if (url.pathname.startsWith('/media/')) {
+      res.writeHead(200, { 'Content-Type': 'image/png' });
+      res.end(PNG);
+      return undefined;
     }
     if (url.pathname === '/__log') {
       console.log(`  ${body.toString('utf8')}`);
@@ -137,9 +227,28 @@ async function main() {
       return json(200, {});
     }
     if (url.pathname === '/__uploads') return json(200, state.uploads);
+    if (url.pathname === '/__explorer/requests') {
+      const list = state.explore.requests.slice();
+      if (url.searchParams.get('clear') === '1') state.explore.requests.length = 0;
+      return json(200, list);
+    }
+    if (url.pathname === '/__explorer/control') {
+      // ?delay=3:900,5:500  ?fail=7  (keyed by the category value sent)  ?reset=1
+      const e = state.explore;
+      if (url.searchParams.get('reset') === '1') {
+        e.delays = {};
+        e.fail = new Set();
+      }
+      (url.searchParams.get('delay') || '').split(',').filter(Boolean).forEach((pair) => {
+        const [k, ms] = pair.split(':');
+        e.delays[k] = Number(ms) || 0;
+      });
+      if (url.searchParams.has('fail')) e.fail = new Set((url.searchParams.get('fail') || '').split(',').filter(Boolean));
+      return json(200, {});
+    }
     if (!url.pathname.startsWith('/api/v1/')) return json(404, {});
 
-    // ── API stubs: just enough for the post page ──
+    // ── API stubs ──
     const route = url.pathname.slice('/api/v1'.length);
     if (route === '/client-log/') {
       // The page's own diagnostics; shown with VERBOSE=1.
@@ -152,7 +261,26 @@ async function main() {
       return json(200, {});
     }
     if (route === '/crypto/public-key/') return json(404, {}); // E2E off: plain JSON
-    if (route === '/categories/') return json(200, []);
+    if (route === '/categories/') return json(200, suite === 'explorer' ? EXPLORE_CATEGORIES : []);
+    if (route === '/explorer/trending/') {
+      const [code, payload] = exploreTrending(state.explore, url, origin);
+      const delay = state.explore.delays[(url.searchParams.get('category') || '').trim()] || 0;
+      if (delay) await new Promise((r) => setTimeout(r, delay));
+      return json(code, payload);
+    }
+    if (route === '/explorer/trending-hashtags/') {
+      return json(200, [
+        { tag: 'ethiopia', posts: 12, score: 20 },
+        { tag: 'addisababa', posts: 9, score: 14 },
+        { tag: 'eskista', posts: 6, score: 9 },
+      ]);
+    }
+    if (route === '/explorer/hashtag/') {
+      const results = state.explore.posts.slice(0, 2).map((p) => ({
+        id: p.id, votes: p.votes, thumbnail_url: `${origin}/media/tag-${p.id}.png`, user: { username: `creator${p.id}` },
+      }));
+      return json(200, { hashtag: url.searchParams.get('tag'), count: results.length, results });
+    }
     if (route === '/drafts/') return json(200, req.method === 'GET' ? [] : { id: 1 });
     if (route === '/coins/balance/') return json(200, { balance: 1000 });
     if (route === '/wallet/config/') return json(200, { cost_post_create_non_campaign: 0 });
@@ -165,51 +293,59 @@ async function main() {
   });
 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address();
-  const origin = `http://127.0.0.1:${port}`;
-  const script = await bundle(`${origin}/api/v1`);
-  html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>camera e2e</title></head><body style="margin:0"><div id="root"></div><script>${script.replace(/<\/script>/gi, '<\\/script>')}</script></body></html>`;
-
-  const profile = mkdtempSync(path.join(tmpdir(), 'flipstar-camera-e2e-'));
-  const args = [
-    '--headless=new',
-    '--no-first-run',
-    '--no-default-browser-check',
-    `--user-data-dir=${profile}`,
-    // Chromium's synthetic camera and microphone, and "Allow" for every prompt.
-    '--use-fake-device-for-media-stream',
-    '--use-fake-ui-for-media-stream',
-    '--autoplay-policy=no-user-gesture-required',
-    '--enable-unsafe-swiftshader',
-    '--ignore-gpu-blocklist',
-    '--disable-background-timer-throttling',
-    '--disable-renderer-backgrounding',
-    // A phone-sized window, so the page takes its mobile layout.
-    '--window-size=412,915',
-    origin + '/',
-  ];
+  const origin = `http://127.0.0.1:${server.address().port}`;
   console.log(`browser: ${browser}`);
-  const child = spawn(browser, args, { stdio: 'ignore' });
 
-  const timer = setTimeout(() => resolveResults({ timeout: true, tests: [] }), TIMEOUT_MS);
-  const outcome = await results;
-  clearTimeout(timer);
+  let totalFailed = 0;
+  for (const name of suites) {
+    suite = name;
+    state = { uploads: [], failUpload: false, explore: newExploreState() };
+    const script = await bundle(name, `${origin}/api/v1`);
+    html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name} e2e</title></head><body style="margin:0"><div id="root"></div><script>${script.replace(/<\/script>/gi, '<\\/script>')}</script></body></html>`;
+    const results = new Promise((resolve) => { resolveResults = resolve; });
 
-  if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-  else child.kill('SIGKILL');
-  server.close();
-  try { rmSync(profile, { recursive: true, force: true }); } catch (_) { /* the browser may still hold it */ }
+    console.log(`\n── ${name} ──`);
+    const profile = mkdtempSync(path.join(tmpdir(), `flipstar-${name}-e2e-`));
+    const child = spawn(browser, [
+      '--headless=new',
+      '--no-first-run',
+      '--no-default-browser-check',
+      `--user-data-dir=${profile}`,
+      // Chromium's synthetic camera and microphone, and "Allow" for every prompt.
+      '--use-fake-device-for-media-stream',
+      '--use-fake-ui-for-media-stream',
+      '--autoplay-policy=no-user-gesture-required',
+      '--enable-unsafe-swiftshader',
+      '--ignore-gpu-blocklist',
+      '--disable-background-timer-throttling',
+      '--disable-renderer-backgrounding',
+      // A phone-sized window, so pages take their mobile layout.
+      '--window-size=412,915',
+      origin + '/',
+    ], { stdio: 'ignore' });
 
-  if (outcome.timeout) {
-    console.error(`\nTimed out after ${TIMEOUT_MS}ms.`);
-    process.exit(1);
+    const timer = setTimeout(() => resolveResults({ timeout: true, tests: [] }), TIMEOUT_MS);
+    const outcome = await results;
+    clearTimeout(timer);
+    if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+    else child.kill('SIGKILL');
+    try { rmSync(profile, { recursive: true, force: true }); } catch (_) { /* the browser may still hold it */ }
+
+    if (outcome.timeout) {
+      console.error(`\n${name}: timed out after ${TIMEOUT_MS}ms.`);
+      totalFailed += 1;
+      continue;
+    }
+    const failed = outcome.tests.filter((t) => !t.ok);
+    const skipped = outcome.tests.filter((t) => t.skipped);
+    const passed = outcome.tests.length - failed.length - skipped.length;
+    console.log(`\n${name}: ${passed}/${outcome.tests.length} passed${skipped.length ? `, ${skipped.length} skipped` : ''}`);
+    failed.forEach((t) => console.log(`\n✘ ${t.name}\n${t.detail}`));
+    totalFailed += failed.length;
   }
-  const failed = outcome.tests.filter((t) => !t.ok);
-  const skipped = outcome.tests.filter((t) => t.skipped);
-  const passed = outcome.tests.length - failed.length - skipped.length;
-  console.log(`\n${passed}/${outcome.tests.length} passed${skipped.length ? `, ${skipped.length} skipped` : ''}`);
-  failed.forEach((t) => console.log(`\n✘ ${t.name}\n${t.detail}`));
-  process.exit(failed.length ? 1 : 0);
+
+  server.close();
+  process.exit(totalFailed ? 1 : 0);
 }
 
 main().catch((e) => {
