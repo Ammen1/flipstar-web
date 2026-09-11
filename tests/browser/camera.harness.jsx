@@ -374,13 +374,22 @@ async function setFile(file) {
 
 const uploads = () => fetch('/__uploads').then((r) => r.json());
 
+// What the API accepts as a submission id (api/services/media_pipeline.py).
+const UPLOAD_ID = /^[A-Za-z0-9_.:-]{8,64}$/;
+
 async function postAndWait() {
   const before = (await uploads()).length;
   click(await waitFor(() => all('button').find((b) => b.textContent.trim() === 'Post'), 'Post button'), 'Post');
-  await waitFor(() => /is Live/.test(pageText()), 'the success screen', 20000);
+  // The API answers PROCESSING: the post exists, its media is being encoded,
+  // and the page must not claim it is already live.
+  await waitFor(() => /Posted!/.test(pageText()), 'the success screen', 20000);
+  assert(/being prepared/.test(pageText()), 'success screen does not say the post is being prepared');
+  assert(!/is Live/.test(pageText()), 'claims the post is live while it is processing');
   const list = await uploads();
   assert(list.length === before + 1, `expected one upload, got ${list.length - before}`);
-  return list[list.length - 1];
+  const upload = list[list.length - 1];
+  assert(UPLOAD_ID.test(upload.fields.client_upload_id || ''), `no usable client_upload_id: ${JSON.stringify(upload.fields)}`);
+  return upload;
 }
 
 // ── the tests ──────────────────────────────────────────────────────────────
@@ -670,6 +679,65 @@ async function run() {
     assert(!/HTTP 500/.test(pageText()), 'raw status shown');
     click(byText('OK'), 'OK');
     assert(document.querySelector('img[alt="preview"]'), 'the post was lost');
+  });
+
+  // The failure above may have been a lost response to an upload the server
+  // did take. The retry must say it is the same post, so the API can return
+  // that one instead of creating -- and charging for -- a second.
+  await test('retrying a post sends the same upload id; a new post gets a new one', async () => {
+    const failed = (await uploads()).at(-1);
+    const retried = await postAndWait();
+    assert(
+      retried.fields.client_upload_id === failed.fields.client_upload_id,
+      `retry sent ${retried.fields.client_upload_id}, the failed attempt ${failed.fields.client_upload_id}`
+    );
+
+    mountPage();
+    await waitFor(() => byText('Upload'), 'chooser');
+    await setFile(pngFile);
+    await waitFor(() => document.querySelector('img[alt="preview"]'), 'image on the details page');
+    const next = await postAndWait();
+    assert(next.fields.client_upload_id !== retried.fields.client_upload_id, 'a different post reused the id');
+    return `${retried.fields.client_upload_id.slice(0, 8)}… reused on retry`;
+  });
+
+  // The upload reached the server, the answer was lost, and the person
+  // reloaded and posted the same photo from their gallery again: that must
+  // come back as the post already made, not a second one.
+  await test('after a reload, posting the same file again reuses its upload id', async () => {
+    const photo = new File([await pngFile.arrayBuffer()], 'IMG_reload.png', { type: 'image/png', lastModified: 1780000000000 });
+    mountPage();
+    await waitFor(() => byText('Upload'), 'chooser');
+    await setFile(photo);
+    await waitFor(() => document.querySelector('img[alt="preview"]'), 'image on the details page');
+    await fetch('/__control?failUpload=1');
+    click(all('button').find((b) => b.textContent.trim() === 'Post'), 'Post');
+    await waitFor(() => /server couldn't finish the upload/.test(pageText()), 'friendly upload error');
+    await fetch('/__control?failUpload=0');
+    const lost = (await uploads()).at(-1);
+
+    mountPage(); // what a reload leaves: a fresh page, the same tab's sessionStorage
+    await waitFor(() => byText('Upload'), 'chooser');
+    await setFile(new File([photo], photo.name, { type: photo.type, lastModified: photo.lastModified }));
+    await waitFor(() => document.querySelector('img[alt="preview"]'), 'image on the details page');
+    const again = await postAndWait();
+    assert(
+      again.fields.client_upload_id === lost.fields.client_upload_id,
+      `after the reload the post was sent as ${again.fields.client_upload_id}, first as ${lost.fields.client_upload_id}`
+    );
+  });
+
+  await test('the chosen category is sent with the post', async () => {
+    mountPage();
+    await waitFor(() => byText('Upload'), 'chooser');
+    await setFile(pngFile);
+    await waitFor(() => document.querySelector('img[alt="preview"]'), 'image on the details page');
+    const comedy = await waitFor(() => all('button').find((b) => b.textContent.trim() === 'Comedy'), 'the category list');
+    click(comedy, 'Comedy');
+    await waitFor(() => comedy.getAttribute('aria-pressed') === 'true', 'Comedy to be selected');
+    const upload = await postAndWait();
+    assert(upload.fields.category === '7', `category sent as ${JSON.stringify(upload.fields.category)}`);
+    return 'category=7 (Comedy)';
   });
 
   // 3. Failures -----------------------------------------------------------

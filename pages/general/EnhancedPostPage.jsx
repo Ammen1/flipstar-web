@@ -26,6 +26,8 @@ import { ActiveFilterChip, FilterTray } from '../../components/camera/FilterTray
 import { RecordingReview } from '../../components/camera/RecordingReview';
 import { CameraErrorPanel } from '../../components/camera/CameraErrorPanel';
 import { friendlyUploadError } from '../../utils/uploadErrors';
+import { forgetUploadId, newUploadId, uploadIdFor } from '../../utils/uploadId';
+import { mediaStatus } from '../../utils/media';
 
 // Text colour that stays readable on the theme's accent. The accent is chosen
 // in the admin panel, so it can be a light green or a near-black; dark text on
@@ -187,6 +189,9 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [showSuccess, setShowSuccess] = useState(false);
+  // True when the API accepted the post but is still encoding it: it reaches
+  // feeds when that finishes, so "it's live" would not be true yet.
+  const [postIsProcessing, setPostIsProcessing] = useState(false);
   const [showInsufficientCoins, setShowInsufficientCoins] = useState(false);
   const [postCost, setPostCost] = useState(0);
   const [showErrorModal, setShowErrorModal] = useState(false);
@@ -234,6 +239,10 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
   }, [showExtendedInsufficientModal, isRecordingPaused]);
 
   // Refs
+  // One id per post being published, kept across retries of that post (see
+  // utils/uploadId.js). Cleared when the media changes: that is a new post.
+  const uploadIdRef = useRef(null);
+  useEffect(() => { uploadIdRef.current = null; }, [selectedFile, preview]);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const rendererRef = useRef(null);        // filter renderer bound to canvasRef (WebGL, or 2D fallback)
@@ -1798,6 +1807,15 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
       if (textOverlays.length) {
         fd.append('overlay_text', JSON.stringify(textOverlays));
       }
+      // Same id on every retry of this post, so a retry after a lost
+      // response returns the post already made instead of a duplicate.
+      // A form field rather than an Idempotency-Key header: no CORS
+      // preflight change, and a server that predates it simply ignores it.
+      // A gallery file keeps its id across a reload too (uploadIdFor).
+      if (!uploadIdRef.current) {
+        uploadIdRef.current = selectedFile ? uploadIdFor(selectedFile) : newUploadId();
+      }
+      fd.append('client_upload_id', uploadIdRef.current);
       // Real upload progress from XHR.  While the server is still
       // processing after the bytes are uploaded, cap at 97% so the bar
       // doesn't appear frozen — the final 100% fires on successful response.
@@ -1852,6 +1870,9 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
         // Dispatch wallet balance changed event to refresh wallet page
         window.dispatchEvent(new CustomEvent('walletBalanceChanged'));
 
+        uploadIdRef.current = null;
+        if (selectedFile) forgetUploadId(selectedFile);
+        setPostIsProcessing(mediaStatus(newReel) === 'PROCESSING');
         setUploadProgress(100);
         setShowSuccess(true);
         setTimeout(() => {
@@ -3085,8 +3106,20 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
           }}>
             <Check size={48} color={T.white} strokeWidth={3} />
           </div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: T.white }}>{isVideoFile ? 'Video is Live! 🎉' : 'Photo is Live! 🎉'}</div>
-          <div style={{ fontSize: 15, color: T.sub }}>Your post has been uploaded</div>
+          {postIsProcessing ? (
+            <>
+              <div style={{ fontSize: 22, fontWeight: 800, color: T.white }}>Posted! 🎉</div>
+              <div style={{ fontSize: 15, color: T.sub, textAlign: 'center', maxWidth: 300, lineHeight: 1.45 }}>
+                Your post is being prepared. We're optimizing your {isVideoFile ? 'video' : 'photo'} for
+                faster playback; it will appear in the feed in a moment.
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 22, fontWeight: 800, color: T.white }}>{isVideoFile ? 'Video is Live! 🎉' : 'Photo is Live! 🎉'}</div>
+              <div style={{ fontSize: 15, color: T.sub }}>Your post has been uploaded</div>
+            </>
+          )}
         </div>
       )}
 

@@ -8,7 +8,11 @@ import { useLanguage } from "../../contexts/LanguageContext";
 import { useBlock } from "../../contexts/BlockContext";
 import { ReelPostViewer } from "../../components/feed/ReelPostViewer";
 import CampaignStats from "../../components/campaign/CampaignStats";
-import { isVideoUrl } from '../../utils/media';
+import { isMediaReady, isVideoUrl } from '../../utils/media';
+import { pickImageSource, pickImageWebp } from '../../utils/connection';
+import { MediaProcessingState } from '../../components/common/MediaProcessingState';
+import { usePostProcessing } from '../../hooks/usePostProcessing';
+import { forgetUploadId, uploadIdFor } from '../../utils/uploadId';
 
 // Profile page cache helpers
 const PROFILE_CACHE_KEY = (userId) => `profile_cache_${userId}`;
@@ -138,6 +142,10 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
   
   const [profileUser, setProfileUser] = useState(cachedUser || profileCache?.profileUser);
   const [posts, setPosts] = useState(profileCache?.posts || []);
+  // Your own posts that are still being encoded update in place when ready.
+  usePostProcessing(isOwnProfile ? posts : null, (updated) => {
+    setPosts((prev) => prev.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)));
+  });
   const [activeTab, setActiveTab] = useState("posts");
   const [profileData, setProfileData] = useState(cachedUser || profileCache?.profileUser);
   const [loading, setLoading] = useState(!isOwnProfile && !profileCache);
@@ -152,6 +160,7 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
   const [editHashtags, setEditHashtags] = useState('');
   const [editMediaFile, setEditMediaFile] = useState(null);
   const [editMediaPreview, setEditMediaPreview] = useState(null);
+  const [editError, setEditError] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [successMsg, setSuccessMsg] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -279,6 +288,7 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
     setEditHashtags(post.hashtags || '');
     setEditMediaFile(null);
     setEditMediaPreview(null);
+    setEditError('');
   };
 
   const handleRemoveFromSaved = async (postId) => {
@@ -311,6 +321,7 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
   const handleEditSave = async () => {
     if (!editingPost) return;
     setIsSaving(true);
+    setEditError('');
     try {
       // If there's a new media file, use FormData
       if (editMediaFile) {
@@ -318,12 +329,17 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
         formData.append('caption', editCaption);
         formData.append('hashtags', editHashtags);
         formData.append('file', editMediaFile);
-        
+        // Lets the API recognise a retry of this same replacement (the
+        // request layer retries on a dropped connection) instead of
+        // answering it as a second edit of a post that is now processing.
+        formData.append('client_upload_id', uploadIdFor(editMediaFile));
+
         await api.request(`/reels/${editingPost.id}/`, {
           method: 'PATCH',
           body: formData,
           isFormData: true,
         });
+        forgetUploadId(editMediaFile);
       } else {
         // No new media, just update text fields
         await api.updatePost(editingPost.id, { 
@@ -332,17 +348,23 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
         });
       }
       
-      // Refresh posts to get updated data
+      // Refresh posts to get updated data. The list is cached for a minute,
+      // which would otherwise bring back the post as it was before the edit.
+      api.invalidateCache?.('/reels');
       const updatedPosts = await api.request(`/reels/?user=${userId || user?.id}`);
       setPosts(Array.isArray(updatedPosts) ? updatedPosts : updatedPosts.results || []);
-      
+
       setEditingPost(null);
       setEditMediaFile(null);
       setEditMediaPreview(null);
-      setSuccessMsg('Post updated!');
+      // New media is encoded before it is shown; the tile says so meanwhile.
+      setSuccessMsg(editMediaFile ? 'Post updated! Your new media is being prepared.' : 'Post updated!');
       setTimeout(() => setSuccessMsg(''), 2500);
     } catch (err) {
       console.error('Failed to update post:', err);
+      // The API's own message (a file type it cannot use, media still being
+      // processed, a subscription needed for video) is written to be read.
+      setEditError(err?.data?.error || "We couldn't update your post. Please try again.");
     } finally {
       setIsSaving(false);
     }
@@ -1066,6 +1088,12 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
               boxSizing: "border-box",
             }}
             onClick={() => {
+              // Nothing to play yet: the post page shows its state and
+              // updates itself when the media is ready.
+              if (!isMediaReady(post)) {
+                onShowPostDetail?.(post.id, post.media_type === 'video');
+                return;
+              }
               if (activeTab === 'saved') {
                 // Check if post is a video
                 const mediaUrl = post.media || post.image || '';
@@ -1141,10 +1169,22 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
             `}</style>
             
             {(() => {
+              // Not encoded yet, or failed: only the author sees these, and
+              // they see a state rather than a blank tile or the original.
+              if (!isMediaReady(post)) {
+                return <MediaProcessingState post={post} compact />;
+              }
+
+              const toAbsolute = (u) => (u && !u.startsWith('http') ? `${config.API_BASE_URL.replace('/api', '')}${u}` : u || '');
               const mediaUrl = post.media || post.image || '';
-              const fullUrl = mediaUrl.startsWith('http') ? mediaUrl : `${config.API_BASE_URL.replace('/api', '')}${mediaUrl}`;
+              const fullUrl = toAbsolute(mediaUrl);
               const isVideo = isVideoUrl(mediaUrl);
-              
+              // A tile is a third of the screen: the smallest rendition is
+              // plenty, whatever the connection.
+              const tileImage = toAbsolute(pickImageSource(post, 'slow')) || fullUrl;
+              const tileWebp = toAbsolute(pickImageWebp(post, 'slow'));
+              const tilePoster = post.thumbnail ? toAbsolute(post.thumbnail) : undefined;
+
               if (!mediaUrl) {
                 return (
                   <div style={{
@@ -1167,6 +1207,7 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
                   <>
                     <video
                       src={videoUrl}
+                      poster={tilePoster}
                       style={{
                         position: "absolute",
                         top: 0, left: 0, right: 0, bottom: 0,
@@ -1177,7 +1218,9 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
                       muted
                       loop
                       playsInline
-                      preload="metadata"
+                      // With a poster the tile needs nothing from the video
+                      // until it is hovered; without one, the first frame.
+                      preload={tilePoster ? 'none' : 'metadata'}
                       onMouseEnter={(e) => e.target.play().catch((err) => {
                         if (err.name !== 'AbortError') console.log('Play error:', err);
                       })}
@@ -1201,19 +1244,22 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
               }
               
               return (
-                <img
-                  src={fullUrl}
-                  alt={post.caption}
-                  loading="lazy"
-                  decoding="async"
-                  style={{
-                    position: "absolute",
-                    top: 0, left: 0, right: 0, bottom: 0,
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "cover",
-                  }}
-                />
+                <picture>
+                  {tileWebp && <source srcSet={tileWebp} type="image/webp" />}
+                  <img
+                    src={tileImage}
+                    alt={post.caption}
+                    loading="lazy"
+                    decoding="async"
+                    style={{
+                      position: "absolute",
+                      top: 0, left: 0, right: 0, bottom: 0,
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                    }}
+                  />
+                </picture>
               );
             })()}
             <div style={{
@@ -1354,6 +1400,9 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
                 position: 'relative',
               }}>
                 {(() => {
+                  if (!editMediaPreview && !isMediaReady(editingPost)) {
+                    return <MediaProcessingState post={editingPost} compact />;
+                  }
                   // Show new preview if file selected, otherwise show original
                   const displayUrl = editMediaPreview || (() => {
                     const mediaUrl = editingPost.media || editingPost.image || '';
@@ -1453,6 +1502,15 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
                 Separate hashtags with spaces (e.g., #travel #photography)
               </div>
             </div>
+
+            {editError && (
+              <div role="alert" style={{
+                marginBottom: 12, padding: '10px 12px', borderRadius: 10,
+                background: '#fef2f2', color: '#b91c1c', fontSize: 13, lineHeight: 1.4,
+              }}>
+                {editError}
+              </div>
+            )}
 
             {/* Action Buttons */}
             <div style={{ display: 'flex', gap: 12 }}>

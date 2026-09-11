@@ -42,8 +42,63 @@ export function isVideoUrl(url) {
 /**
  * True when the post's media is a video. Mirrors how callers pick a source:
  * `media` is the real upload, `image` is only ever a still.
+ *
+ * A post that is still processing has no `media` URL yet -- the original is
+ * never served -- so its kind comes from `media_type` instead.
  */
 export function isVideoPost(post) {
   if (!post) return false;
-  return Boolean(post.media) && isVideoUrl(post.media);
+  if (post.media) return isVideoUrl(post.media);
+  return post.media_type === 'video';
+}
+
+/**
+ * Where a post's media is in the processing pipeline:
+ *
+ *   'READY'       encoded; `media` / `image` are what should be shown
+ *   'PROCESSING'  uploaded, still being encoded -- nothing to play yet
+ *   'FAILED'      could not be processed; `processing_error` says why
+ *
+ * Feeds only ever carry READY posts; the other two reach their author (their
+ * own profile, a post they just made). A response without the field comes
+ * from before the pipeline and is READY.
+ */
+export function mediaStatus(post) {
+  const s = post?.processing_status;
+  if (s === 'PROCESSING' || s === 'UPLOADING') return 'PROCESSING';
+  if (s === 'FAILED') return 'FAILED';
+  return 'READY';
+}
+
+/** True when the post has media that can be shown now. */
+export function isMediaReady(post) {
+  return mediaStatus(post) === 'READY';
+}
+
+/**
+ * Pause every other <video> on the page. For pages where the viewer starts
+ * playback themselves (controls) rather than a feed that picks the active
+ * card: starting one video stops the rest, so two never play at once.
+ */
+export function pauseOtherVideos(playing, root = typeof document !== 'undefined' ? document : null) {
+  if (!root) return;
+  root.querySelectorAll('video').forEach((v) => {
+    if (v !== playing && !v.paused) {
+      try { v.pause(); } catch { /* detached */ }
+    }
+  });
+}
+
+// What `processing_error` codes mean, for the one person who sees them.
+const FAILURE_TEXT = {
+  invalid_media: "This file couldn't be read. Try exporting it again, or pick another.",
+  video_too_long: 'This video is longer than allowed. Trim it and post again.',
+  source_missing: "The upload didn't arrive completely. Please post it again.",
+  long_video_unpaid: "You didn't have enough coins for a video this long.",
+};
+
+/** A sentence explaining a FAILED post to its author -- a reason they can act
+ * on, never the exception behind it. */
+export function failureText(post) {
+  return FAILURE_TEXT[post?.processing_error] || 'Please try posting it again.';
 }

@@ -1,8 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Trophy, Calendar, Award, Users, Clock, Upload, Video, Check, X, Heart, Share2, ArrowLeft, AlertCircle, Star, Zap, TrendingUp, Medal, Crown, Target, Flame, List, BarChart3, FileText, MessageCircle, ChevronDown, Gift, Camera, RotateCw } from 'lucide-react';
 import api from '../../api';
 import config from '../../config';
 import { useTheme } from '../../contexts/ThemeContext';
+import { ProcessedImage, ProcessedVideo } from '../../components/feed/ProcessedMedia';
+import { MediaProcessingState } from '../../components/common/MediaProcessingState';
+import { isMediaReady, isVideoPost } from '../../utils/media';
+import { newUploadId } from '../../utils/uploadId';
+import { usePostProcessing } from '../../hooks/usePostProcessing';
 
 const mediaUrl = (url) => {
   if (!url) return null;
@@ -14,6 +19,13 @@ export function CampaignDetailPage({ campaignId, onBack, onShowLeaderboard, onSh
   const { colors: T } = useTheme();
   const [campaign, setCampaign] = useState(null);
   const [entries, setEntries] = useState([]);
+  // Your own entry, if its media is still being encoded, updates in place.
+  usePostProcessing(
+    entries.map((e) => e.reel).filter(Boolean),
+    (updated) => setEntries((prev) => prev.map((e) => (
+      e.reel?.id === updated.id ? { ...e, reel: { ...e.reel, ...updated } } : e
+    ))),
+  );
   const [loading, setLoading] = useState(true);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [userEntry, setUserEntry] = useState(null);
@@ -770,58 +782,30 @@ function CampaignEntryCard({ entry, theme: T }) {
         </div>
       )}
       
-      {entry.reel?.thumbnail ? (
-        <div style={{ position: 'relative', minHeight: 280, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000' }}>
-          <img
-            src={mediaUrl(entry.reel.thumbnail)}
-            alt="Entry"
-            style={{
-              maxWidth: '100%',
-              maxHeight: 400,
-              objectFit: 'contain',
-            }}
-          />
+      {/* Only an entry's author ever gets one that is still processing or
+          failed: its state, not an empty box. Otherwise a video plays --
+          thumbnail first, then the rung for the connection -- where it used
+          to be a still thumbnail that could not be played at all. */}
+      {entry.reel && !isMediaReady(entry.reel) ? (
+        <div style={{ position: 'relative', minHeight: 280, background: '#000' }}>
+          <MediaProcessingState post={entry.reel} />
         </div>
-      ) : entry.reel?.media ? (
+      ) : (entry.reel?.media || entry.reel?.image) ? (
         <div style={{ position: 'relative', minHeight: 280, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000' }}>
-          {entry.reel.media.endsWith('.mp4') || entry.reel.media.endsWith('.mov') ? (
-            <video
-              src={mediaUrl(entry.reel.media)}
-              poster={entry.reel.thumbnail ? mediaUrl(entry.reel.thumbnail) : undefined}
-              preload="metadata"
-              style={{
-                maxWidth: '100%',
-                maxHeight: 400,
-                objectFit: 'contain',
-                background: '#000',
-              }}
-              controls
+          {isVideoPost(entry.reel) ? (
+            <ProcessedVideo
+              post={entry.reel}
+              style={{ maxWidth: '100%', maxHeight: 400, objectFit: 'contain', background: '#000' }}
             />
           ) : (
-            <img
-              src={mediaUrl(entry.reel.media)}
+            <ProcessedImage
+              post={entry.reel}
               alt="Entry"
-              style={{
-                maxWidth: '100%',
-                maxHeight: 400,
-                objectFit: 'contain',
-              }}
+              style={{ maxWidth: '100%', maxHeight: 400, objectFit: 'contain' }}
             />
           )}
         </div>
-      ) : entry.reel?.image && (
-        <div style={{ position: 'relative', minHeight: 280, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000' }}>
-          <img
-            src={mediaUrl(entry.reel.image)}
-            alt="Entry"
-            style={{
-              maxWidth: '100%',
-              maxHeight: 400,
-              objectFit: 'contain',
-            }}
-          />
-        </div>
-      )}
+      ) : null}
       
       <div style={{ padding: 16 }}>
         <div style={{
@@ -920,6 +904,10 @@ function SubmitEntryModal({ theme: T, campaign, campaignId, onClose, onSuccess }
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [newReelFile, setNewReelFile] = useState(null);
+  // One id per entry being submitted, kept across retries of it so a retry
+  // after a lost answer gets the post already made (see utils/uploadId.js).
+  const uploadIdRef = useRef(null);
+  useEffect(() => { uploadIdRef.current = null; }, [newReelFile]);
   const [newReelCaption, setNewReelCaption] = useState('');
   const [showCamera, setShowCamera] = useState(false);
   const [stream, setStream] = useState(null);
@@ -1142,7 +1130,9 @@ function SubmitEntryModal({ theme: T, campaign, campaignId, onClose, onSuccess }
       const formData = new FormData();
       formData.append('media', newReelFile);
       formData.append('caption', newReelCaption || 'Campaign Entry');
-      
+      if (!uploadIdRef.current) uploadIdRef.current = newUploadId();
+      formData.append('client_upload_id', uploadIdRef.current);
+
       const newReel = await api.request('/reels/', {
         method: 'POST',
         body: formData,
@@ -1156,10 +1146,15 @@ function SubmitEntryModal({ theme: T, campaign, campaignId, onClose, onSuccess }
       });
       
       console.log('Entry submitted successfully!');
+      uploadIdRef.current = null;
       onSuccess();
     } catch (error) {
       console.error('Error submitting entry:', error);
-      setError(error.message || 'Failed to submit entry');
+      // error.message is the raw response body; the API's own sentence (a
+      // file it cannot use, a subscription needed for video) is in data.
+      setError(
+        error?.data?.error || error?.data?.message || 'We could not submit your entry. Please try again.'
+      );
     } finally {
       setSubmitting(false);
     }

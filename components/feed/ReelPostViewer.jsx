@@ -9,7 +9,9 @@ import config from '../../config';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { PostCaptionOverlay } from './PostCaptionOverlay';
-import { isVideoUrl } from '../../utils/media';
+import { isMediaReady, isVideoPost, isVideoUrl } from '../../utils/media';
+import { pickImageSource, pickVideoSource } from '../../utils/connection';
+import { MediaProcessingState } from '../common/MediaProcessingState';
 
 const MEDIA_ROOT = config.API_BASE_URL.replace('/api', '');
 
@@ -40,7 +42,10 @@ function getPostMedia(post) {
       .filter(Boolean)
       .map((url) => ({ url: absolute(url), isVideo: looksLikeVideo(url) }));
   }
-  const single = post.media || post.image || '';
+  // The rendition that suits the connection (utils/connection.js); the
+  // primary file when a post has no smaller ones.
+  const picked = isVideoPost(post) ? pickVideoSource(post) : pickImageSource(post);
+  const single = picked || post.media || post.image || '';
   if (!single) return [];
   return [{ url: absolute(single), isVideo: looksLikeVideo(single) }];
 }
@@ -410,7 +415,11 @@ export function ReelPostViewer({ posts, initialIndex, user, profileUser, onClose
         }}
         onClick={isVideo ? handleVideoClick : undefined}
       >
-        {mediaState === 'error' ? (
+        {!isMediaReady(currentPost) ? (
+          // One of the author's own posts, still encoding or failed: its
+          // state, not a "could not be loaded" error.
+          <MediaProcessingState post={currentPost} />
+        ) : mediaState === 'error' ? (
           <div style={{
             display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12,
             color: 'rgba(255,255,255,0.75)', textAlign: 'center', padding: 24,

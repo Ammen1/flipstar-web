@@ -117,11 +117,30 @@ export function pickVideoSource(post, tier = connectionTier()) {
  */
 export function pickImageSource(post, tier = connectionTier()) {
   const primary = post?.image || '';
+  const key = imageKey(post, tier);
+  return key === 'full' ? primary : post.image_variants[key];
+}
+
+/**
+ * The WebP twin of whatever pickImageSource chose, or '' when there is none.
+ *
+ * Meant for a <picture> <source type="image/webp">, with pickImageSource as
+ * the <img> fallback: the browser takes the WebP only if it can decode it,
+ * and nothing is downloaded twice. `image_webp_variants` carries "360", "720"
+ * and "full"; the backend leaves a size out when its WebP would not have been
+ * smaller than the JPEG, and posts processed before WebP have none at all --
+ * either way the <img> is what loads.
+ */
+export function pickImageWebp(post, tier = connectionTier()) {
+  if (!post?.image) return '';
+  return post.image_webp_variants?.[imageKey(post, tier)] || '';
+}
+
+// Which rendition to show: "360", "720" (keys of image_variants) or "full".
+function imageKey(post, tier) {
   const variants = post?.image_variants;
+  if (!variants || !post?.image) return 'full';
 
-  if (!variants || !primary) return primary;
-
-  if (tier === 'slow') return variants['360'] || variants['720'] || primary;
-  if (tier === 'fast') return variants['720'] || primary;
-  return variants['720'] || variants['360'] || primary;
+  const order = tier === 'slow' ? ['360', '720'] : tier === 'fast' ? ['720'] : ['720', '360'];
+  return order.find((k) => variants[k]) || 'full';
 }

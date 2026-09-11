@@ -2,11 +2,12 @@
  * End-to-end tests in a real browser.
  *
  *   npm run test:browser                 every suite
- *   npm run test:browser -- explorer     one suite (camera | explorer)
+ *   npm run test:browser -- explorer     one suite (camera | explorer | media)
  *   CHROME_PATH=... npm run test:browser to pick the browser
  *
- * Each suite is tests/browser/<suite>.harness.jsx, which mounts a real page
- * (the post page with its camera; the Explore page). It is bundled with the
+ * Each suite is tests/browser/<suite>.harness.jsx, which mounts real pages
+ * (the post page with its camera; the Explore page; the post page, Reels and
+ * campaign feed playing processed media). It is bundled with the
  * esbuild that ships inside Vite, served from a local server that also stubs
  * the API, and run in headless Chrome or Edge with Chromium's fake camera and
  * microphone. The page posts its results back and this script prints them.
@@ -19,13 +20,14 @@ import http from 'node:http';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const TIMEOUT_MS = Number(process.env.BROWSER_TEST_TIMEOUT_MS || 240000);
-const SUITES = ['camera', 'explorer'];
+const SUITES = ['camera', 'explorer', 'media'];
 
 function findBrowser() {
   const candidates = [
@@ -154,11 +156,130 @@ function exploreTrending(explore, url, origin) {
   return [200, rows];
 }
 
+// ── Media fixture ──────────────────────────────────────────────────────────
+// Posts as api/serializers/core.py sends them once the worker has processed
+// them: `media` is the 720p rung, `media_variants` the 360p/480p ones, and
+// nothing points at the original under source/ -- the API never serves it.
+// The video files themselves are recorded in the browser by the harness and
+// registered here (/__media/put), so the rungs are real, playable files; every
+// /media/ request is logged so the suite can show which files the page
+// actually fetched.
+
+function processedVideo(origin, id, caption) {
+  const base = `${origin}/media/processed/videos/${id}/v1`;
+  return {
+    id,
+    user: { id: 50 + (id % 10), username: `creator${id}` },
+    caption,
+    hashtags_list: [],
+    media: `${base}/720p.webm`,
+    media_variants: { 360: `${base}/360p.webm`, 480: `${base}/480p.webm` },
+    image: null,
+    thumbnail: `${origin}/media/processed/thumbnails/${id}/v1/thumb.png`,
+    media_type: 'video',
+    processing_status: 'READY',
+    processing_error: null,
+    votes: 0,
+    comment_count: 0,
+    shares: 0,
+    created_at: new Date().toISOString(),
+  };
+}
+
+function processedPhoto(origin, id, caption) {
+  const base = `${origin}/media/processed/images/${id}/v1`;
+  return {
+    id,
+    user: { id: 50 + (id % 10), username: `creator${id}` },
+    caption,
+    media: null,
+    image: `${base}/full.jpg`,
+    image_variants: { 360: `${base}/360w.jpg`, 720: `${base}/720w.jpg` },
+    image_webp_variants: { 360: `${base}/360w.webp`, 720: `${base}/720w.webp`, full: `${base}/full.webp` },
+    thumbnail: `${origin}/media/processed/thumbnails/${id}/v1/thumb.png`,
+    media_type: 'image',
+    processing_status: 'READY',
+    processing_error: null,
+    votes: 0,
+    comment_count: 0,
+    created_at: new Date().toISOString(),
+  };
+}
+
+function newMediaState() {
+  return { files: new Map(), requests: [], ready: new Set() };
+}
+
+function mediaApi(media, route, url, origin) {
+  const own = { id: 1, username: 'e2e_author' };
+  if (route === '/reels/') {
+    return [200, {
+      results: [801, 802, 803].map((id, i) => processedVideo(origin, id, `clip ${i + 1}`)),
+      next: null,
+    }];
+  }
+  if (route === '/reels/900/') {
+    // The post the author just made: PROCESSING until the suite says the
+    // worker is done (/__media/control?ready=900).
+    if (media.ready.has(900)) return [200, { ...processedVideo(origin, 900, 'my new clip'), user: own }];
+    return [200, {
+      id: 900, user: own, caption: 'my new clip', media: null, image: null, thumbnail: null,
+      media_variants: null, media_type: 'video', processing_status: 'PROCESSING', processing_error: null,
+      votes: 0, comment_count: 0, created_at: new Date().toISOString(),
+    }];
+  }
+  if (route === '/reels/901/') {
+    return [200, {
+      id: 901, user: own, caption: 'too long', media: null, image: null, thumbnail: null,
+      media_type: 'video', processing_status: 'FAILED', processing_error: 'video_too_long',
+      votes: 0, comment_count: 0, created_at: new Date().toISOString(),
+    }];
+  }
+  if (route === '/campaigns/') return [200, []];
+  if (route === '/campaigns/7/') {
+    return [200, { id: 7, title: 'Spring Challenge', description: 'Show us spring.', campaign_type: 'daily', status: 'active' }];
+  }
+  if (route === '/campaigns/7/feed/') {
+    const entry = (i, reel) => ({
+      id: 70 + i,
+      reel,
+      user: { id: reel.user.id, username: reel.user.username },
+      theme: null,
+      scores: { total: 10 - i, creativity: 0, engagement: 0, quality: 0, theme_relevance: 0 },
+      engagement: { likes: 0, comments: 0, user_liked: false },
+    });
+    return [200, {
+      posts: [
+        entry(0, processedVideo(origin, 811, 'entry one')),
+        entry(1, processedVideo(origin, 812, 'entry two')),
+        entry(2, processedPhoto(origin, 813, 'entry three')),
+      ],
+    }];
+  }
+  return null;
+}
+
 // ── bundling and running ───────────────────────────────────────────────────
+
+// Stylesheets imported by components (ReelLayout.css, ...) are added to the
+// page as <style> tags, as Vite does in development, so layouts like the
+// Reels scroll-snap behave as they do in the app.
+const inlineCss = {
+  name: 'inline-css',
+  setup(b) {
+    b.onLoad({ filter: /\.css$/ }, async (args) => ({
+      contents: `const s = document.createElement('style'); s.textContent = ${JSON.stringify(
+        await readFile(args.path, 'utf8')
+      )}; document.head.appendChild(s);`,
+      loader: 'js',
+    }));
+  },
+};
 
 async function bundle(suite, apiBase) {
   const result = await build({
     entryPoints: [path.join(ROOT, `tests/browser/${suite}.harness.jsx`)],
+    plugins: [inlineCss],
     bundle: true,
     write: false,
     format: 'iife',
@@ -209,9 +330,32 @@ async function main() {
       return undefined;
     }
     if (url.pathname.startsWith('/media/')) {
+      if (state) state.media.requests.push(url.pathname);
+      const file = state && state.media.files.get(url.pathname);
+      if (file) {
+        res.writeHead(200, { 'Content-Type': file.type, 'Content-Length': file.bytes.length });
+        res.end(file.bytes);
+        return undefined;
+      }
       res.writeHead(200, { 'Content-Type': 'image/png' });
       res.end(PNG);
       return undefined;
+    }
+    if (url.pathname === '/__media/put') {
+      state.media.files.set(url.searchParams.get('path'), {
+        type: req.headers['content-type'] || 'application/octet-stream',
+        bytes: body,
+      });
+      return json(200, {});
+    }
+    if (url.pathname === '/__media/requests') {
+      const list = state.media.requests.slice();
+      if (url.searchParams.get('clear') === '1') state.media.requests.length = 0;
+      return json(200, list);
+    }
+    if (url.pathname === '/__media/control') {
+      if (url.searchParams.has('ready')) state.media.ready.add(Number(url.searchParams.get('ready')));
+      return json(200, {});
     }
     if (url.pathname === '/__log') {
       console.log(`  ${body.toString('utf8')}`);
@@ -261,7 +405,11 @@ async function main() {
       return json(200, {});
     }
     if (route === '/crypto/public-key/') return json(404, {}); // E2E off: plain JSON
-    if (route === '/categories/') return json(200, suite === 'explorer' ? EXPLORE_CATEGORIES : []);
+    if (route === '/categories/') return json(200, suite === 'media' ? [] : EXPLORE_CATEGORIES);
+    if (suite === 'media') {
+      const answer = mediaApi(state.media, route, url, origin);
+      if (answer) return json(answer[0], answer[1]);
+    }
     if (route === '/explorer/trending/') {
       const [code, payload] = exploreTrending(state.explore, url, origin);
       const delay = state.explore.delays[(url.searchParams.get('category') || '').trim()] || 0;
@@ -285,9 +433,26 @@ async function main() {
     if (route === '/coins/balance/') return json(200, { balance: 1000 });
     if (route === '/wallet/config/') return json(200, { cost_post_create_non_campaign: 0 });
     if (route === '/posts/create/') {
-      state.uploads.push(summariseMultipart(req.headers['content-type'], body));
+      const upload = summariseMultipart(req.headers['content-type'], body);
+      state.uploads.push(upload);
       if (state.failUpload) return json(500, {});
-      return json(201, { id: 4242, media: '/media/reel.webm', created_at: new Date().toISOString() });
+      // As the API answers now (api/views/core.py create_post): the post is
+      // stored and PROCESSING, with no media URL until the worker is done;
+      // a repeated client_upload_id returns the post already made.
+      const uploadId = upload.fields.client_upload_id;
+      const known = uploadId && state.posts.get(uploadId);
+      const kind = /^image\//.test(upload.files[0]?.type || '') ? 'image' : 'video';
+      const post = known || {
+        id: 4242 + state.posts.size,
+        media: null,
+        image: null,
+        thumbnail: null,
+        media_type: kind,
+        processing_status: 'PROCESSING',
+        created_at: new Date().toISOString(),
+      };
+      if (uploadId) state.posts.set(uploadId, post);
+      return json(known ? 200 : 201, post);
     }
     return json(200, {});
   });
@@ -299,7 +464,13 @@ async function main() {
   let totalFailed = 0;
   for (const name of suites) {
     suite = name;
-    state = { uploads: [], failUpload: false, explore: newExploreState() };
+    state = {
+      uploads: [],
+      posts: new Map(),
+      failUpload: false,
+      explore: newExploreState(),
+      media: newMediaState(),
+    };
     const script = await bundle(name, `${origin}/api/v1`);
     html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name} e2e</title></head><body style="margin:0"><div id="root"></div><script>${script.replace(/<\/script>/gi, '<\\/script>')}</script></body></html>`;
     const results = new Promise((resolve) => { resolveResults = resolve; });

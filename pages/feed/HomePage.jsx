@@ -20,7 +20,7 @@ import { likeCountOf, commentCountOf, shareCountOf } from '../../utils/engagemen
 import { getCampaignId, isCampaignPost as postIsCampaign, getCampaignTitle } from '../../utils/campaign';
 import { ModernCommentSection } from '../../components/messaging/ModernCommentSection';
 import { isVideoUrl, isVideoPost } from '../../utils/media';
-import { connectionTier, videoPreload, pickVideoSource, pickImageSource } from '../../utils/connection';
+import { connectionTier, videoPreload, pickVideoSource, pickImageSource, pickImageWebp } from '../../utils/connection';
 
 const BACKEND = config.API_BASE_URL.replace('/api', '');
 
@@ -1127,6 +1127,10 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
   // the same basis -- a video post must never be handed an image variant.
   const chosen = isVideo ? pickVideoSource(post, netTier) : pickImageSource(post, netTier);
   const mediaSrc = mediaUrl(chosen || raw);
+  // The same rendition as WebP, offered through <picture> so the browser
+  // takes it only if it can decode it; the JPEG above is the fallback.
+  const webpPick = isVideo ? '' : pickImageWebp(post, netTier);
+  const webpSrc = webpPick ? mediaUrl(webpPick) : '';
 
   // The cheap preview. api/tasks/media.py generates a 320x720 thumbnail for
   // every processed post; the feed was ignoring it and using post.image --
@@ -1768,21 +1772,24 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
                     }}
                   />
                 )}
-                <img
-                  src={mediaSrc}
-                  alt={post.caption || ''}
-                  loading={index === 0 ? 'eager' : 'lazy'}
-                  decoding="async"
-                  onLoad={() => setFullImageReady(true)}
-                  style={{
-                    width: '100%', height: 'auto', display: 'block', cursor: 'zoom-in',
-                    ...(previewSrc && !fullImageReady
-                      ? { position: 'absolute', inset: 0, opacity: 0 }
-                      : {}),
-                  }}
-                  onClick={handleImageClick}
-                  onError={() => setImgError(true)}
-                />
+                <picture style={{ display: 'contents' }}>
+                  {webpSrc && <source srcSet={webpSrc} type="image/webp" />}
+                  <img
+                    src={mediaSrc}
+                    alt={post.caption || ''}
+                    loading={index === 0 ? 'eager' : 'lazy'}
+                    decoding="async"
+                    onLoad={() => setFullImageReady(true)}
+                    style={{
+                      width: '100%', height: 'auto', display: 'block', cursor: 'zoom-in',
+                      ...(previewSrc && !fullImageReady
+                        ? { position: 'absolute', inset: 0, opacity: 0 }
+                        : {}),
+                    }}
+                    onClick={handleImageClick}
+                    onError={() => setImgError(true)}
+                  />
+                </picture>
               </div>
             )
           ) : (

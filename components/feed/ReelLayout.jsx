@@ -41,13 +41,27 @@ import realtimeService from '../../services/RealtimeService';
 import { InsufficientCoinsModal } from '../common/InsufficientCoinsModal';
 import { readCoinError, INSUFFICIENT, AUTH } from '../../utils/coinErrors';
 import './ReelLayout.css';
-import { isVideoUrl, hasVideoExtension } from '../../utils/media';
+import { isVideoUrl, hasVideoExtension, isVideoPost, isMediaReady } from '../../utils/media';
+import { pickVideoSource } from '../../utils/connection';
 import { DesktopReelViewer } from './DesktopReelViewer';
 import { dedupeById } from '../../utils/collections';
 import { getCampaignId, isCampaignPost } from '../../utils/campaign';
 const ShareIconFilled = ({ size = 26, color = '#fff', style = {} }) => (
   <Share2 size={size} color={color} style={style} />
 );
+
+// The URL a card plays. For a video, the encode that suits the connection --
+// a 360p/480p rung on a slow one, the 720p primary on a fast one (see
+// utils/connection.js) -- falling back to `media` for posts with no smaller
+// rungs. Stills and older posts resolve exactly as they always have.
+const reelSource = (reel) => {
+  const url = isVideoPost(reel) ? pickVideoSource(reel) || reel.media : reel.media || reel.image;
+  if (!url) return null;
+  if (url.includes('/video/upload/') && !hasVideoExtension(url)) {
+    return url + '.mp4';
+  }
+  return url;
+};
 
 // Helper to shuffle array for randomized feed
 const shuffleArray = (array) => {
@@ -373,14 +387,7 @@ export const ReelLayout = memo(function ReelLayout({
           comments: reel.comment_count || 0,
           shares: reel.shares,
           gift_count: reel.gift_count || 0,
-          imageUrl: (() => {
-            const url = reel.media || reel.image;
-            if (!url) return null;
-            if (url.includes('/video/upload/') && !hasVideoExtension(url)) {
-              return url + '.mp4';
-            }
-            return url;
-          })(),
+          imageUrl: reelSource(reel),
           thumbnail: reel.thumbnail || null,
           liked: reel.is_liked || false,
           saved: reel.is_saved || false,
@@ -527,6 +534,10 @@ export const ReelLayout = memo(function ReelLayout({
         try {
           const reel = await api.request(`/reels/${initialVideoId}/`);
           if (!reel || !reel.id) return;
+          // Its author may reach here before the media is encoded; a card
+          // with nothing to play would only show an error. The feed shows
+          // it once it is ready, like everyone else's.
+          if (!isMediaReady(reel)) return;
           // Transform the reel to match the video format with campaign fields
           const formattedReel = {
             id: reel.id,
@@ -540,14 +551,7 @@ export const ReelLayout = memo(function ReelLayout({
             comments: reel.comment_count || 0,
             shares: reel.shares,
             gift_count: reel.gift_count || 0,
-            imageUrl: (() => {
-              const url = reel.media || reel.image;
-              if (!url) return null;
-              if (url.includes('/video/upload/') && !hasVideoExtension(url)) {
-                return url + '.mp4';
-              }
-              return url;
-            })(),
+            imageUrl: reelSource(reel),
             thumbnail: reel.thumbnail || null,
             liked: reel.is_liked || false,
             saved: reel.is_saved || false,
@@ -823,7 +827,12 @@ export const ReelLayout = memo(function ReelLayout({
       playbackObserver.disconnect();
       lazyObserver.disconnect();
     };
-  }, [videos, manuallyPaused, audioEnabled]);
+    // `mounted` and `loading` too: the cards are only rendered once both
+    // allow it. Videos that arrive first -- from the feed cache, which loads
+    // synchronously, or a fast network -- ran this before any card existed,
+    // it observed nothing, and no reel ever started or stopped on scroll.
+    // The autoPlay attribute used to hide that for the first card only.
+  }, [videos, manuallyPaused, audioEnabled, mounted, loading]);
 
   // Watchdog: whenever the active video changes, hard-mute & pause every other
   // video. This is the single source of truth for "only one video plays at a
@@ -840,9 +849,10 @@ export const ReelLayout = memo(function ReelLayout({
     });
   }, [activeVideoId]);
 
-  // Auto-play first video on initial load
+  // Auto-play first video on initial load -- once it is actually rendered
+  // (see the `mounted` note on the observer effect above).
   useEffect(() => {
-    if (videos.length === 0 || loading) return;
+    if (videos.length === 0 || loading || !mounted) return;
 
     const firstVideo = videos[0];
     const videoElement = videoRefs.current[firstVideo.id];
@@ -872,7 +882,7 @@ export const ReelLayout = memo(function ReelLayout({
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [videos.length > 0 && !loading, audioEnabled]); // Only run when videos first load
+  }, [videos.length > 0 && !loading && mounted, audioEnabled]); // Only run when videos first load
 
   const handleCommentPosted = (comment) => {
     // Update the comment count for the specific video
@@ -1605,7 +1615,7 @@ export const ReelLayout = memo(function ReelLayout({
         comments: reel.comment_count || 0,
         shares: reel.shares || 0,
         gift_count: reel.gift_count || 0,
-        imageUrl: reel.media || reel.image,
+        imageUrl: reelSource(reel),
         thumbnail: reel.thumbnail || null,
         liked: reel.is_liked || false,
         saved: reel.is_saved || false,
@@ -2412,7 +2422,10 @@ export const ReelLayout = memo(function ReelLayout({
                           }
                           loop
                           playsInline
-                          autoPlay
+                          // No autoPlay: playback is started and stopped by
+                          // the IntersectionObserver above, one video at a
+                          // time. As an attribute it made every mounted card
+                          // start downloading at once, whatever `preload` said.
                           muted={!(audioEnabled && String(video.id) === String(activeVideoId))}
                           onLoadedMetadata={(e) => {
                             const w = e.target.videoWidth;

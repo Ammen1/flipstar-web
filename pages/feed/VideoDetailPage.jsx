@@ -3,8 +3,14 @@ import { ChevronLeft, Heart, MessageCircle, Share2, Bookmark, MoreVertical, Volu
 import api from '../../api';
 import config from '../../config';
 import { useLegacyT } from '../../contexts/ThemeContext';
-import { isVideoUrl } from '../../utils/media';
+import { isMediaReady, isVideoPost } from '../../utils/media';
+import { pickImageSource, pickImageWebp, pickVideoSource } from '../../utils/connection';
 import { SharePostSheet } from '../../components/feed/SharePostSheet';
+import { MediaProcessingState } from '../../components/common/MediaProcessingState';
+import { usePostProcessing } from '../../hooks/usePostProcessing';
+
+const absoluteUrl = (url) =>
+  !url ? '' : url.startsWith('http') ? url : `${config.API_BASE_URL.replace('/api', '')}${url}`;
 
 export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscriptionStatus, onShowSubscription }) {
   const T = useLegacyT();
@@ -34,6 +40,12 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
   useEffect(() => {
     loadReel();
   }, [reelId]);
+
+  // The page a new post lands on: its media is usually still being encoded.
+  // Shows a placeholder and swaps the media in when the post is READY.
+  usePostProcessing(reel, (updated) => {
+    setReel((prev) => (prev && prev.id === updated.id ? { ...prev, ...updated } : prev));
+  });
 
   useEffect(() => {
     const video = videoRef.current;
@@ -269,9 +281,14 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
     );
   }
 
-  const mediaUrl = reel.media || reel.image;
-  const fullUrl = mediaUrl?.startsWith('http') ? mediaUrl : `${config.API_BASE_URL.replace('/api', '')}${mediaUrl}`;
-  const isVideo = isVideoUrl(reel.media);
+  const ready = isMediaReady(reel);
+  const isVideo = isVideoPost(reel);
+  // The rendition that suits the connection; `media`/`image` when the post
+  // has no smaller ones. See utils/connection.js.
+  const videoSrc = ready && isVideo ? absoluteUrl(pickVideoSource(reel)) : '';
+  const imageSrc = ready && !isVideo ? absoluteUrl(pickImageSource(reel)) : '';
+  const imageWebp = ready && !isVideo ? absoluteUrl(pickImageWebp(reel)) : '';
+  const poster = reel.thumbnail ? absoluteUrl(reel.thumbnail) : undefined;
 
   return (
     <div style={{
@@ -320,10 +337,13 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
         flex: 1, display: 'flex', alignItems: 'center',
         justifyContent: 'center', position: 'relative',
       }}>
-        {isVideo ? (
+        {!ready ? (
+          <MediaProcessingState post={reel} />
+        ) : isVideo ? (
           <video
             ref={videoRef}
-            src={fullUrl}
+            src={videoSrc}
+            poster={poster}
             style={{
               width: '100%', height: '100%', objectFit: 'contain',
             }}
@@ -333,13 +353,16 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
             playsInline
           />
         ) : (
-          <img
-            src={fullUrl}
-            alt="Post"
-            style={{
-              width: '100%', height: '100%', objectFit: 'contain',
-            }}
-          />
+          <picture style={{ display: 'contents' }}>
+            {imageWebp && <source srcSet={imageWebp} type="image/webp" />}
+            <img
+              src={imageSrc}
+              alt="Post"
+              style={{
+                width: '100%', height: '100%', objectFit: 'contain',
+              }}
+            />
+          </picture>
         )}
 
         {/* Action Buttons */}

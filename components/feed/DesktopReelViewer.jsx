@@ -6,6 +6,7 @@ import {
 import api from '../../api';
 import { PostCaptionOverlay } from './PostCaptionOverlay';
 import { isVideoUrl, isVideoPost } from '../../utils/media';
+import { pickImageSource, pickVideoSource } from '../../utils/connection';
 import { likeCountOf, commentCountOf, shareCountOf, formatCount } from '../../utils/engagement';
 import { SharePostSheet } from './SharePostSheet';
 
@@ -22,7 +23,10 @@ import { SharePostSheet } from './SharePostSheet';
 const WHEEL_COOLDOWN_MS = 420;
 
 function mediaSrcOf(post, apiBase) {
-  const raw = post?.media || post?.image || '';
+  // The rendition that suits the connection (utils/connection.js), else the
+  // primary file.
+  const picked = isVideoPost(post) ? pickVideoSource(post) : pickImageSource(post);
+  const raw = picked || post?.media || post?.image || '';
   if (!raw) return '';
   return raw.startsWith('http') ? raw : `${apiBase}${raw}`;
 }

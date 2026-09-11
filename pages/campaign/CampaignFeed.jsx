@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import api from '../../api';
-import config from '../../config';
 import { ArrowLeft, Heart, MessageCircle, Award, TrendingUp, Clock, Star, Trophy } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { InsufficientCoinsModal } from '../../components/common/InsufficientCoinsModal';
+import { ProcessedImage, ProcessedVideo } from '../../components/feed/ProcessedMedia';
+import { isVideoPost } from '../../utils/media';
 
 // Add CSS animation for points notification
 if (typeof document !== 'undefined' && !document.getElementById('points-earned-animation')) {
@@ -31,12 +32,6 @@ if (typeof document !== 'undefined' && !document.getElementById('points-earned-a
   `;
   document.head.appendChild(style);
 }
-
-const mediaUrl = (url) => {
-  if (!url) return null;
-  if (url.startsWith('http')) return url;
-  return `${config.API_BASE_URL.replace('/api', '')}${url}`;
-};
 
 const RANK_STYLES = {
   1: { bg: 'rgba(143,196,65,0.2)', border: '#8fc441', text: '#8fc441', label: '🥇 #1' },
@@ -355,36 +350,24 @@ const PostCard = ({ post, rank, onVote, campaignType, isVotingOpen }) => {
       </div>
 
       {/* Media */}
-      {(post.reel?.thumbnail || post.reel?.image || post.reel?.media) && (
+      {/* A video plays -- its thumbnail first, then the rung that suits the
+          connection -- rather than standing in as a still: this used to show
+          the thumbnail for every processed video, so none could be played.
+          A photo shows its width variant (WebP where there is one), not the
+          portrait-cropped thumbnail. */}
+      {(post.reel?.media || post.reel?.image) && (
         <div style={{ background: '#000', maxHeight: 480, overflow: 'hidden' }}>
-          {post.reel?.thumbnail ? (
-            <img
-              src={mediaUrl(post.reel.thumbnail)}
-              alt=""
+          {isVideoPost(post.reel) ? (
+            <ProcessedVideo
+              post={post.reel}
+              style={{ width: '100%', display: 'block', maxHeight: 480, background: '#000' }}
+            />
+          ) : (
+            <ProcessedImage
+              post={post.reel}
               style={{ width: '100%', display: 'block', objectFit: 'contain', maxHeight: 480 }}
             />
-          ) : post.reel?.image ? (
-            <img
-              src={mediaUrl(post.reel.image)}
-              alt=""
-              style={{ width: '100%', display: 'block', objectFit: 'contain', maxHeight: 480 }}
-            />
-          ) : post.reel?.media ? (
-            <video
-              src={mediaUrl(post.reel.media)}
-              /* Generated 320x720 thumbnail, shown while the video buffers.
-                 undefined when it has not been processed yet, which <video>
-                 treats as 'no poster' rather than a broken image. */
-              poster={post.reel.thumbnail ? mediaUrl(post.reel.thumbnail) : undefined}
-              /* Fetch headers only until the viewer presses play. The spec
-                 default is 'auto', which downloads the whole file -- on a feed
-                 of campaign entries that is every video at once. */
-              preload="metadata"
-              controls
-              playsInline
-              style={{ width: '100%', display: 'block', maxHeight: 480 }}
-            />
-          ) : null}
+          )}
         </div>
       )}
 
