@@ -1,5 +1,5 @@
 // ─── Reel-grade Create Page ──────────────────────────────────────────────
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, useReducer } from 'react';
 import { 
   Home, Film, Plus, PlusSquare, MessageCircle, User, Search, Settings, X, 
   Image as ImageIcon, Video, Hash, Type, Upload, Music, Volume2, VolumeX, 
@@ -13,21 +13,19 @@ import config from '../../config';
 import { useTheme } from '../../contexts/ThemeContext';
 import realtimeService from '../../services/RealtimeService';
 import { InsufficientCoinsModal } from '../../components/common/InsufficientCoinsModal';
-
-const FILTERS = [
-  { id:'none',      name:'Original', css:'none' },
-  { id:'grayscale', name:'B&W',      css:'grayscale(100%)' },
-  { id:'sepia',     name:'Vintage',  css:'sepia(70%)' },
-  { id:'warm',      name:'Warm',     css:'saturate(1.5) hue-rotate(-15deg)' },
-  { id:'cool',      name:'Cool',     css:'saturate(1.3) hue-rotate(20deg)' },
-  { id:'vibrant',   name:'Vibrant',  css:'saturate(2) contrast(1.1)' },
-  { id:'fade',      name:'Fade',     css:'brightness(1.15) contrast(0.82) saturate(0.7)' },
-  { id:'drama',     name:'Drama',    css:'contrast(1.5) brightness(0.85)' },
-  { id:'neon',      name:'Neon',     css:'saturate(2.2) hue-rotate(280deg) brightness(1.15)' },
-  { id:'golden',    name:'Golden',   css:'sepia(55%) saturate(1.4) hue-rotate(-10deg)' },
-];
-
-const SPEEDS = ['0.3x', '0.5x', '1x', '2x', '3x'];
+import { VIDEO_FILTERS, getFilter, isNeutralFilter, resolveFilterId } from '../../components/camera/filters/registry';
+import { availableFilters, createFilterRenderer } from '../../components/camera/filters/createRenderer';
+import { filterReducer, initialFilterState } from '../../components/camera/filters/selection';
+import { FilterThumbnailer } from '../../components/camera/filters/thumbnails';
+import { startFrameLoop } from '../../components/camera/frameLoop';
+import { rasterizeOverlays } from '../../components/camera/overlayRaster';
+import { cameraPermissionState, openCamera, openVideoTrack, setTorch, torchAvailable } from '../../components/camera/cameraSession';
+import { CAMERA_ERROR, MIC_NOTICE, RECORDING_ERROR, cameraErrorCopy, classifyCameraError } from '../../components/camera/cameraErrors';
+import { extensionFor, pickMimeType, recorderOptions, recordingSupport } from '../../components/camera/recorder';
+import { ActiveFilterChip, FilterTray } from '../../components/camera/FilterTray';
+import { RecordingReview } from '../../components/camera/RecordingReview';
+import { CameraErrorPanel } from '../../components/camera/CameraErrorPanel';
+import { friendlyUploadError } from '../../utils/uploadErrors';
 
 // Text colour that stays readable on the theme's accent. The accent is chosen
 // in the admin panel, so it can be a light green or a near-black; dark text on
@@ -97,14 +95,34 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
   // Camera
   const [facingMode, setFacingMode] = useState('user');
   const [flashOn, setFlashOn] = useState(false);
+  const [canTorch, setCanTorch] = useState(false);
+  const [switchingCamera, setSwitchingCamera] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [userPaused, setUserPaused] = useState(false);
   const [recTime, setRecTime] = useState(0);
   const [cameraLoading, setCameraLoading] = useState(false);
+  const [cameraError, setCameraError] = useState(null); // copy from cameraErrorCopy()
+  const [micState, setMicState] = useState('on');       // 'on' | 'denied' | 'unavailable'
+  const [micNoticeDismissed, setMicNoticeDismissed] = useState(false);
   const [recProgress, setRecProgress] = useState(0);
-  const [selectedFilter, setSelectedFilter] = useState('none');
-  const [selectedSpeed, setSelectedSpeed] = useState('1x');
+  // Filters: the registry lists them, the reducer owns which one is chosen
+  // and which ones this device's renderer can actually draw.
+  const [filterState, dispatchFilter] = useReducer(filterReducer, initialFilterState);
+  const selectedFilter = filterState.filterId;
   const [showFilters, setShowFilters] = useState(false);
-  const [showSpeeds, setShowSpeeds] = useState(false);
+  const [filterThumbs, setFilterThumbs] = useState({});
+  const [filterToast, setFilterToast] = useState('');
+  const [rendererKind, setRendererKind] = useState(null);
+  const [recordCaps, setRecordCaps] = useState({ canRecord: true, canRecordFiltered: true });
+  // Width / height of the rendered frame, and the preview box that fits it.
+  // Text stickers are positioned in % of that box, so they land on the same
+  // pixels in the preview and in the recording.
+  const [frameAspect, setFrameAspect] = useState(null);
+  const [stageBox, setStageBox] = useState(null);
+  // The filter baked into the current media (null for gallery uploads).
+  const [recordedFilterId, setRecordedFilterId] = useState(null);
+  // The take on the review screen: { url }.
+  const [review, setReview] = useState(null);
 
   // Text overlays
   const [textOverlays, setTextOverlays] = useState([]);
@@ -173,6 +191,9 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
   const [postCost, setPostCost] = useState(0);
   const [showErrorModal, setShowErrorModal] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  // Empty keeps the modal's historical "Upload Error" heading; camera and
+  // recording problems set their own so they are not mislabelled as uploads.
+  const [errorTitle, setErrorTitle] = useState('');
 
   // Extended recording
   const [hasExtendedRecording, setHasExtendedRecording] = useState(false);
@@ -215,7 +236,15 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
   // Refs
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
-  const animFrameRef = useRef(null);
+  const rendererRef = useRef(null);        // filter renderer bound to canvasRef (WebGL, or 2D fallback)
+  const stopFrameLoopRef = useRef(null);   // stops the per-camera-frame render
+  const overlayCanvasRef = useRef(null);   // text stickers, rasterised once per change
+  const thumbnailerRef = useRef(null);
+  const facingModeRef = useRef('user');    // read by the async camera code, which must not see a stale render's value
+  const switchingRef = useRef(false);
+  const hasExtendedRef = useRef(false);
+  const discardTakeRef = useRef(false);    // set when the camera is closed mid-recording: drop the take
+  const stageRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const timerRef = useRef(null);
   const chunksRef = useRef([]);
@@ -241,72 +270,87 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
   const [previewMuted, setPreviewMuted] = useState(true);  // start muted so browsers allow autoplay; user can tap to unmute
   const [isPreviewThumbnail, setIsPreviewThumbnail] = useState(false);  // track if preview is a generated thumbnail
 
-  // ── Keep liveRef synced ──────────────────────────────────────────────────
-  useEffect(() => { liveRef.current.filter = selectedFilter; }, [selectedFilter]);
-  useEffect(() => { liveRef.current.overlays = textOverlays; }, [textOverlays]);
-
   // ── Load drafts on mount ─────────────────────────────────────────────────
   useEffect(() => {
     loadDrafts();
   }, []);
 
-  // ── Canvas draw loop ─────────────────────────────────────────────────────
-  const startDrawLoop = useCallback(() => {
-    const draw = () => {
-      const vid = videoRef.current;
-      const cvs = canvasRef.current;
-      if (!vid || !cvs) return;
-      if (vid.readyState < 2 || !vid.videoWidth || !vid.videoHeight) {
-        animFrameRef.current = requestAnimationFrame(draw);
-        return;
-      }
-      const ctx = cvs.getContext('2d');
-      cvs.width = vid.videoWidth || 360;
-      cvs.height = vid.videoHeight || 640;
-      const f = liveRef.current.filter;
-      ctx.filter = f === 'none' ? 'none' : (FILTERS.find(x => x.id === f)?.css || 'none');
-      try {
-        ctx.drawImage(vid, 0, 0, cvs.width, cvs.height);
-      } catch (_) {
-        animFrameRef.current = requestAnimationFrame(draw);
-        return;
-      }
-      // ── Bake text overlays into the canvas frame ──
-      ctx.filter = 'none';
-      ctx.shadowColor = 'transparent';
-      ctx.shadowBlur = 0;
-      ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = 0;
-      (liveRef.current.overlays || []).forEach(ov => {
-        const px = ov.x / 100 * cvs.width;
-        const py = ov.y / 100 * cvs.height;
-        const fs = ov.fontSize * (cvs.width / 360);
-        ctx.save();
-        ctx.font = `800 ${fs}px system-ui, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        const tw = ctx.measureText(ov.text).width;
-        const pad = fs * 0.35;
-        ctx.fillStyle = 'rgba(0,0,0,0.28)';
-        ctx.beginPath();
-        if (ctx.roundRect) ctx.roundRect(px - tw/2 - pad, py - fs/2 - pad*0.5, tw + pad*2, fs + pad, fs*0.3);
-        else ctx.rect(px - tw/2 - pad, py - fs/2 - pad*0.5, tw + pad*2, fs + pad);
-        ctx.fill();
-        ctx.shadowColor = 'rgba(0,0,0,0.6)';
-        ctx.shadowBlur = 8;
-        ctx.shadowOffsetY = 2;
-        ctx.fillStyle = ov.color;
-        ctx.fillText(ov.text, px, py);
-        ctx.restore();
-      });
-      animFrameRef.current = requestAnimationFrame(draw);
-    };
-    draw();
+  // ── Filter rendering ─────────────────────────────────────────────────────
+  // The canvas is both the preview and what MediaRecorder captures, so the
+  // filter on screen is the filter in the file. Per camera frame the renderer
+  // uploads the frame and runs one GPU pass; text stickers are a texture that
+  // only changes when the stickers do.
+
+  // Re-rasterise the stickers at the frame's size and hand them over.
+  const syncOverlay = useCallback(() => {
+    const renderer = rendererRef.current;
+    const cvs = canvasRef.current;
+    if (!renderer || !cvs) return;
+    const overlay = rasterizeOverlays(liveRef.current.overlays, cvs.width, cvs.height, overlayCanvasRef.current);
+    if (overlay) overlayCanvasRef.current = overlay;
+    renderer.setOverlay(overlay);
   }, []);
 
+  useEffect(() => {
+    liveRef.current.filter = selectedFilter;
+    if (rendererRef.current) rendererRef.current.setFilter(getFilter(selectedFilter));
+  }, [selectedFilter]);
+
+  useEffect(() => {
+    liveRef.current.overlays = textOverlays;
+    syncOverlay();
+  }, [textOverlays, syncOverlay]);
+
+  // Kept in a ref so the renderer's context-loss hook always reaches the
+  // current stopRecording rather than the one from the render that made it.
+  const onContextLostRef = useRef(() => {});
+
+  const ensureRenderer = useCallback(() => {
+    const cvs = canvasRef.current;
+    if (!cvs) return null;
+    if (rendererRef.current && rendererRef.current.canvas === cvs) return rendererRef.current;
+    if (rendererRef.current) rendererRef.current.destroy();
+    const renderer = createFilterRenderer(cvs, {
+      hooks: {
+        onResize: (w, h) => {
+          setFrameAspect(w / h);
+          syncOverlay();
+        },
+        onContextLost: () => onContextLostRef.current(),
+      },
+    });
+    renderer.setFilter(getFilter(liveRef.current.filter));
+    rendererRef.current = renderer;
+    setRendererKind(renderer.kind);
+    setRecordCaps(recordingSupport(cvs));
+    dispatchFilter({ type: 'available', ids: availableFilters(renderer, VIDEO_FILTERS).map((f) => f.id) });
+    logToBackend(`filter renderer=${renderer.kind}`, 'info', 'camera');
+    syncOverlay();
+    return renderer;
+  }, [syncOverlay]);
+
   const stopDrawLoop = useCallback(() => {
-    if (animFrameRef.current) { cancelAnimationFrame(animFrameRef.current); animFrameRef.current = null; }
+    if (stopFrameLoopRef.current) {
+      stopFrameLoopRef.current();
+      stopFrameLoopRef.current = null;
+    }
   }, []);
+
+  const startDrawLoop = useCallback(() => {
+    stopDrawLoop();
+    const renderer = ensureRenderer();
+    const vid = videoRef.current;
+    if (!renderer || !vid) return;
+    stopFrameLoopRef.current = startFrameLoop(vid, () => renderer.render(vid));
+  }, [ensureRenderer, stopDrawLoop]);
+
+  const destroyRenderer = useCallback(() => {
+    stopDrawLoop();
+    if (rendererRef.current) {
+      rendererRef.current.destroy();
+      rendererRef.current = null;
+    }
+  }, [stopDrawLoop]);
 
   // ── Cleanup helper (defined early so useEffects below can reference it) ──
   const _cleanupAudio = (caller = 'unknown') => {
@@ -334,190 +378,208 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
     }
   };
 
+  // ── Notices ─────────────────────────────────────────────────────────────
+  const noticeTimerRef = useRef(null);
+  // A short, non-blocking message in the toast (flash unavailable, switch
+  // failed): things worth saying that should not stop the person recording.
+  const showNotice = useCallback((message) => {
+    setSuccessMsg(message);
+    clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = setTimeout(() => setSuccessMsg(''), 2600);
+  }, []);
+
+  // A blocking message in the error modal, under a heading that fits.
+  const showProblem = useCallback((message, title = 'Recording problem') => {
+    setErrorTitle(title);
+    setErrorMessage(message);
+    setShowErrorModal(true);
+  }, []);
+
+  // Assigned below, once stopRecording exists; the camera callbacks call
+  // through this so they never hold a stale copy.
+  const stopRecordingRef = useRef(() => {});
+
   // ── Camera start/stop ───────────────────────────────────────────────────
+  // Point the hidden <video> at `stream` and wait until it knows its size.
+  const attachStream = useCallback(async (stream) => {
+    const videoEl = videoRef.current;
+    if (!videoEl) return;
+    videoEl.srcObject = stream;
+    await new Promise((resolve) => {
+      if (videoEl.readyState >= 1 && videoEl.videoWidth && videoEl.videoHeight) {
+        resolve();
+        return;
+      }
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        videoEl.onloadedmetadata = null;
+        videoEl.oncanplay = null;
+        resolve();
+      };
+      videoEl.onloadedmetadata = finish;
+      videoEl.oncanplay = finish;
+      setTimeout(finish, 1200);
+    });
+    try {
+      await videoEl.play();
+    } catch (playError) {
+      logToBackend(`camera preview play() failed: ${playError && playError.name}`, 'warn', 'camera');
+    }
+  }, []);
+
+  // Torch support belongs to the track, so it changes with every camera.
+  // Some Android builds only report it once frames are flowing: ask twice.
+  const refreshTorch = useCallback((stream) => {
+    const track = stream && stream.getVideoTracks()[0];
+    setFlashOn(false);
+    setCanTorch(torchAvailable(track));
+    setTimeout(() => {
+      if (streamRef.current === stream) setCanTorch(torchAvailable(track));
+    }, 800);
+  }, []);
+
   const startCamera = useCallback(async () => {
     const gen = ++cameraGenRef.current;  // capture generation token
+    setCameraLoading(true);
+    setCameraError(null);
+    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+    logToBackend(`Starting camera, facingMode=${facingModeRef.current}`, 'info', 'camera');
     try {
-      setCameraLoading(true);
-      if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
-
-      console.log('[CAMERA] Starting camera with facingMode:', facingMode);
-
-      // Check if mediaDevices is available
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        console.error('[CAMERA] mediaDevices not available');
-        setErrorMessage('Your browser does not support camera access. Please use Chrome, Firefox, or Edge.');
-        setShowErrorModal(true);
+      // openCamera asks once for camera + microphone and only narrows the
+      // request when that fails -- a refused camera is never asked again.
+      const { stream, audio } = await openCamera({
+        facingMode: facingModeRef.current,
+        log: (message) => logToBackend(`camera ${message}`, 'warn', 'camera'),
+      });
+      // stopCamera ran while the browser was asking: this stream is unwanted.
+      if (gen !== cameraGenRef.current) {
+        stream.getTracks().forEach(t => t.stop());
         return;
       }
-
-      let mediaStream = null;
-      let lastError = null;
-
-      // Try to get camera stream directly - browser will handle permission and device detection
-      const constraintAttempts = [
-        // Attempt 1: With current facingMode preference and audio
-        { video: { facingMode }, audio: true },
-        // Attempt 2: With current facingMode preference without audio
-        { video: { facingMode }, audio: false },
-        // Attempt 3: Fallback to any camera without facingMode
-        { video: true, audio: false },
-        // Attempt 4: Last resort - user facing camera
-        { video: { facingMode: 'user' }, audio: false },
-      ];
-
-      // Helper to send logs to backend for server-side debugging
-      const logToBackend = (message, level = 'info') => {
-        try {
-          fetch(`${config.API_BASE_URL}/client-log/`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ source: 'camera', level, message, userAgent: navigator.userAgent }),
-          }).catch(() => {});
-        } catch (_) {}
-      };
-
-      logToBackend(`Starting camera, facingMode=${facingMode}`);
-
-      for (let i = 0; i < constraintAttempts.length; i++) {
-        const constraints = constraintAttempts[i];
-        try {
-          console.log(`[CAMERA] Attempt ${i + 1}/${constraintAttempts.length} with constraints:`, constraints);
-          logToBackend(`Attempt ${i + 1}/${constraintAttempts.length} constraints=${JSON.stringify(constraints)}`);
-          mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-          console.log(`[CAMERA] Success on attempt ${i + 1}`);
-          logToBackend(`Camera SUCCESS on attempt ${i + 1}`);
-          break;
-        } catch (error) {
-          lastError = error;
-          console.warn(`[CAMERA] Attempt ${i + 1} failed:`, error.name, error.message);
-          logToBackend(`Attempt ${i + 1} FAILED: ${error.name} - ${error.message}`, 'error');
-          // Wait a bit before retrying to allow OS to release camera
-          if (i < constraintAttempts.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 300));
-          }
-        }
-      }
-
-      if (!mediaStream) {
-        // Only show error if all attempts genuinely failed
-        if (lastError && lastError.name !== 'NotFoundError') {
-          throw lastError;
-        }
-        // For NotFoundError, don't show error - camera might actually work
-        return;
-      }
-
-      // If stopCamera was called while we were waiting, discard the stream immediately
-      if (gen !== cameraGenRef.current) { 
-        console.log('[CAMERA] Camera generation changed, discarding stream');
-        mediaStream.getTracks().forEach(t => t.stop()); 
-        return; 
-      }
-      
-      streamRef.current = mediaStream;
-      console.log('[CAMERA] Stream set to streamRef.current');
-      
-      if (videoRef.current) {
-        const videoEl = videoRef.current;
-        videoEl.srcObject = mediaStream;
-        console.log('[CAMERA] Stream attached to video element');
-        
-        await new Promise((resolve) => {
-          if (videoEl.readyState >= 1 && videoEl.videoWidth && videoEl.videoHeight) {
-            console.log('[CAMERA] Video already loaded, readyState:', videoEl.readyState);
-            resolve();
-            return;
-          }
-
-          let settled = false;
-          const finish = () => {
-            if (settled) return;
-            settled = true;
-            console.log('[CAMERA] Video metadata loaded, readyState:', videoEl.readyState, 'dimensions:', videoEl.videoWidth, 'x', videoEl.videoHeight);
-            videoEl.onloadedmetadata = null;
-            videoEl.oncanplay = null;
-            resolve();
-          };
-
-          videoEl.onloadedmetadata = finish;
-          videoEl.oncanplay = finish;
-          setTimeout(finish, 1200);
-        });
-
-        try {
-          await videoEl.play();
-          console.log('[CAMERA] Video playing successfully');
-        } catch (playError) {
-          console.warn('[CAMERA] Video preview play failed, continuing with draw loop:', playError);
-        }
-      }
-      console.log('[CAMERA] Starting draw loop');
+      streamRef.current = stream;
+      setMicState(audio);
+      if (audio !== 'on') logToBackend(`camera started without microphone: ${audio}`, 'warn', 'camera');
+      await attachStream(stream);
+      if (gen !== cameraGenRef.current) return;
+      refreshTorch(stream);
       startDrawLoop();
     } catch (e) {
-      console.error('[CAMERA] =========================================');
-      console.error('[CAMERA] CAMERA ACCESS DENIED - FINAL ERROR');
-      console.error('[CAMERA] Error name:', e.name);
-      console.error('[CAMERA] Error message:', e.message);
-      console.error('[CAMERA] Full error:', e);
-      console.error('[CAMERA] Error stack:', e.stack);
-      console.error('[CAMERA] =========================================');
-
-      // Show user-friendly error message based on error type
-      let errorMessage = 'Camera access failed. ';
-      switch (e.name) {
-        case 'NotAllowedError':
-        case 'PermissionDeniedError':
-          errorMessage += 'Camera permission was denied. Please:\n\n1. Click the lock/info icon in your browser address bar\n2. Allow camera access\n3. Refresh the page and try again';
-          break;
-        case 'NotReadableError':
-          errorMessage += 'Could not start camera. Try these steps:\n\n1. Close other apps using the camera (Zoom, Teams, Skype, Camera app, OBS, etc.)\n2. Close other browser tabs that may use the camera\n3. Check Windows: Settings → Privacy → Camera → Allow apps to access camera (ON)\n4. Try a different browser (Chrome/Edge work best)\n5. Restart your browser\n\nIf the problem persists, your camera driver may need updating.';
-          break;
-        case 'OverconstrainedError':
-          errorMessage += 'Your camera does not support the requested resolution. The app will try with lower quality automatically.';
-          break;
-        case 'TypeError':
-          errorMessage += 'Camera not supported in this browser. Please use Chrome, Firefox, or Edge.';
-          break;
-        default:
-          errorMessage += `Please check your permissions and try again.\n\nError: ${e.message}`;
-      }
-      setErrorMessage(errorMessage);
-      setShowErrorModal(true);
+      if (gen !== cameraGenRef.current) return;
+      const kind = classifyCameraError(e);
+      const cause = (e && e.cause) || e;
+      // The exception is for us; the person gets cameraErrorCopy's wording.
+      logToBackend(`camera failed kind=${kind} name=${cause && cause.name} msg=${cause && cause.message}`, 'error', 'camera');
+      const permissionState = kind === CAMERA_ERROR.PERMISSION_DENIED ? await cameraPermissionState() : undefined;
+      if (gen !== cameraGenRef.current) return;
+      setCameraError(cameraErrorCopy(kind, { permissionState }));
     } finally {
-      setCameraLoading(false);
+      if (gen === cameraGenRef.current) setCameraLoading(false);
     }
-  }, [facingMode, startDrawLoop]);
+  }, [attachStream, refreshTorch, startDrawLoop]);
 
   const stopCamera = useCallback(() => {
     cameraGenRef.current++;              // invalidate any in-flight startCamera
-    stopDrawLoop();
+    destroyRenderer();
     if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
     if (videoRef.current) { videoRef.current.srcObject = null; }
     clearInterval(timerRef.current);
-  }, [stopDrawLoop]);
+    setCameraLoading(false);
+    setFlashOn(false);
+  }, [destroyRenderer]);
+
+  // Front <-> back by swapping only the video track. The microphone track
+  // stays, and the recorder records the canvas rather than the camera, so a
+  // recording in progress carries on across the switch -- the preview holds
+  // its last frame for the moment the other camera takes to open.
+  const switchCamera = useCallback(async () => {
+    if (switchingRef.current) return;
+    const current = streamRef.current;
+    const next = facingModeRef.current === 'user' ? 'environment' : 'user';
+    if (!current) {
+      facingModeRef.current = next;
+      setFacingMode(next);
+      startCamera();
+      return;
+    }
+    switchingRef.current = true;
+    setSwitchingCamera(true);
+    const gen = cameraGenRef.current;
+    const audioTracks = current.getAudioTracks();
+    // Many phones cannot open a second camera while the first is running.
+    current.getVideoTracks().forEach(t => t.stop());
+    try {
+      let track;
+      let switched = true;
+      try {
+        track = await openVideoTrack({ facingMode: next });
+      } catch (e) {
+        logToBackend(`camera switch to ${next} failed: ${e && e.kind}`, 'warn', 'camera');
+        switched = false;
+        // Put the previous camera back rather than leave a frozen frame.
+        track = await openVideoTrack({ facingMode: facingModeRef.current });
+      }
+      if (gen !== cameraGenRef.current) {
+        track.stop();
+        return;
+      }
+      const stream = new MediaStream([track, ...audioTracks]);
+      streamRef.current = stream;
+      await attachStream(stream);
+      if (switched) {
+        facingModeRef.current = next;
+        setFacingMode(next);
+      } else {
+        showNotice(RECORDING_ERROR.SWITCH_FAILED);
+      }
+      refreshTorch(stream);
+    } catch (e) {
+      // Neither camera came back.
+      if (gen !== cameraGenRef.current) return;
+      logToBackend(`camera lost during switch: ${e && e.kind}`, 'error', 'camera');
+      if (isRecordingRef.current) stopRecordingRef.current({ force: true });
+      setCameraError(cameraErrorCopy(classifyCameraError(e)));
+    } finally {
+      switchingRef.current = false;
+      setSwitchingCamera(false);
+    }
+  }, [attachStream, refreshTorch, showNotice, startCamera]);
 
   const flipCamera = useCallback((event) => {
     event?.preventDefault?.();
     const now = Date.now();
     if (now - lastFlipAtRef.current < 350) return;
     lastFlipAtRef.current = now;
-    setFacingMode(prev => (prev === 'user' ? 'environment' : 'user'));
-  }, []);
+    switchCamera();
+  }, [switchCamera]);
 
-  // Stop camera when captureMode or facingMode changes
-  useEffect(() => {
-    if (captureMode === 'camera') { 
-      console.log('[CAMERA] Starting camera due to mode change');
-      startCamera(); 
+  const toggleTorch = useCallback(async () => {
+    const track = streamRef.current && streamRef.current.getVideoTracks()[0];
+    if (!track || !canTorch) return;
+    const next = !flashOn;
+    try {
+      await setTorch(track, next);
+      setFlashOn(next);
+    } catch (e) {
+      logToBackend(`torch failed: ${e && e.name}`, 'warn', 'camera');
+      setCanTorch(false);
+      setFlashOn(false);
+      showNotice(RECORDING_ERROR.FLASH_FAILED);
     }
-    else { 
-      console.log('[CAMERA] Stopping camera due to mode change');
-      stopCamera(); 
+  }, [canTorch, flashOn, showNotice]);
+
+  // Start the camera on entering camera mode, stop it on leaving. Switching
+  // front/back is no longer a restart -- see switchCamera.
+  useEffect(() => {
+    if (captureMode === 'camera') {
+      startCamera();
+    } else {
+      stopCamera();
     }
     // No cleanup function - it causes the camera to stop immediately after starting
     // Camera will be stopped by the other useEffect on unmount or stage change
-  }, [captureMode, facingMode]); // eslint-disable-line
+  }, [captureMode]); // eslint-disable-line
 
   // Hard-stop camera+audio the moment we leave the capture stage
   useEffect(() => {
@@ -534,8 +596,92 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
       logToBackend(`unmount useEffect fired isRecording=${isRecordingRef.current}`, 'warn');
       stopCamera();
       _cleanupAudio('unmount');
+      clearTimeout(noticeTimerRef.current);
+      if (thumbnailerRef.current) {
+        thumbnailerRef.current.destroy();
+        thumbnailerRef.current = null;
+      }
     };
   }, []); // eslint-disable-line
+
+  // ── Preview box ─────────────────────────────────────────────────────────
+  // The largest box of the frame's aspect that fits the camera area, so the
+  // canvas is shown without distortion and stickers, positioned in % of this
+  // box, sit on the same pixels the recording will have.
+  useEffect(() => {
+    const el = previewContainerRef.current;
+    if (!el || !frameAspect || captureMode !== 'camera' || stage !== 'capture') {
+      setStageBox(null);
+      return undefined;
+    }
+    const fit = () => {
+      const cw = el.clientWidth;
+      const ch = el.clientHeight;
+      if (!cw || !ch) return;
+      const w = Math.min(cw, ch * frameAspect);
+      setStageBox({ width: Math.round(w), height: Math.round(w / frameAspect) });
+    };
+    fit();
+    if (typeof ResizeObserver === 'function') {
+      const ro = new ResizeObserver(fit);
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, [frameAspect, captureMode, stage]);
+
+  // ── Filter tray ─────────────────────────────────────────────────────────
+  const trayFilters = useMemo(
+    () => (filterState.available ? VIDEO_FILTERS.filter((f) => filterState.available.includes(f.id)) : VIDEO_FILTERS),
+    [filterState.available]
+  );
+
+  // Live thumbnails while the tray is open: a small render per filter every
+  // 1.5s, nothing at all while it is closed.
+  useEffect(() => {
+    if (!showFilters || captureMode !== 'camera' || stage !== 'capture') return undefined;
+    let cancelled = false;
+    const refresh = () => {
+      const vid = videoRef.current;
+      if (cancelled || !vid || vid.readyState < 2) return;
+      try {
+        if (!thumbnailerRef.current) thumbnailerRef.current = new FilterThumbnailer();
+        setFilterThumbs(thumbnailerRef.current.render(vid, trayFilters));
+      } catch (e) {
+        // Thumbnails are a nicety: without them the tray shows swatches.
+        logToBackend(`filter thumbnails failed: ${e && e.message}`, 'warn', 'camera');
+      }
+    };
+    const first = setTimeout(refresh, 250);
+    const every = setInterval(refresh, 1500);
+    return () => {
+      cancelled = true;
+      clearTimeout(first);
+      clearInterval(every);
+    };
+  }, [showFilters, captureMode, stage, trayFilters]);
+
+  const toastTimerRef = useRef(null);
+  const chooseFilter = useCallback((id) => {
+    dispatchFilter({ type: 'select', id });
+    const name = getFilter(id).name;
+    setFilterToast(name);
+    clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setFilterToast(''), 900);
+  }, []);
+
+  // Filters are baked into the canvas the recorder captures; where the canvas
+  // cannot be captured, a filter would show in the preview and be missing
+  // from the video. Say so instead of letting that happen.
+  const trayNotice = (() => {
+    if (trayFilters.length <= 1) return "Filters aren't supported in this browser.";
+    if (camMode === 'video' && !recordCaps.canRecordFiltered) {
+      return "This browser can't record filters. They still apply to photos.";
+    }
+    if (rendererKind === 'canvas2d') return 'Some filters need a newer browser and are hidden.';
+    return '';
+  })();
 
   // ── Recording ───────────────────────────────────────────────────────────
   const startRecording = async () => {
@@ -550,13 +696,41 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
     if (!streamRef.current) {
       console.log('[RECORDING] No stream available');
       logToBackend('No stream available', 'error');
-      setErrorMessage('Camera not ready. Please wait a moment and try again.');
-      setShowErrorModal(true);
+      showProblem('Camera not ready. Please wait a moment and try again.');
       return;
     }
+    const support = recordingSupport(canvasRef.current);
+    if (!support.canRecord) {
+      logToBackend('MediaRecorder unavailable', 'error');
+      showProblem(RECORDING_ERROR.UNSUPPORTED);
+      return;
+    }
+    // What the canvas adds on top of the raw camera. With nothing to add the
+    // raw camera is an identical recording, so it is an acceptable fallback;
+    // with a filter or text it is not -- that would be the preview showing
+    // something the video does not have.
+    const needsCanvas = !isNeutralFilter(getFilter(liveRef.current.filter)) || textOverlays.length > 0;
+
+    // ── Step 1: canvas video track ───────────────────────────────────────
+    let videoTrack = null;
+    try {
+      const cvs = canvasRef.current;
+      if (support.canRecordFiltered) {
+        videoTrack = cvs.captureStream(30).getVideoTracks()[0] || null;
+      }
+    } catch (e) {
+      logToBackend(`canvas captureStream failed: ${e && e.name}`, 'warn');
+    }
+    if (!videoTrack && needsCanvas) {
+      showProblem(RECORDING_ERROR.FILTERS_UNSUPPORTED);
+      return;
+    }
+
     console.log('[RECORDING] Starting recording, setting lock');
     isRecordingRef.current = true;   // set lock NOW — before awaits
     recordingStartRef.current = Date.now();
+    discardTakeRef.current = false;
+    setUserPaused(false);
 
     // Kill any stale timer / audio from a previous session
     clearInterval(timerRef.current);
@@ -565,15 +739,6 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
     setRecTime(0);
     setRecProgress(0);
     console.log('[RECORDING] Cleanup complete, setting recording state');
-
-    // ── Step 1: canvas video track ───────────────────────────────────────
-    let videoTrack = null;
-    try {
-      const cvs = canvasRef.current;
-      if (cvs && cvs.captureStream) {
-        videoTrack = cvs.captureStream(30).getVideoTracks()[0] || null;
-      }
-    } catch (_) {}
 
     // ── Step 2: audio track ──────────────────────────────────────────────
     // Strategy: mix mic (origVol%) + bg audio (addedVol%) into recorder.
@@ -665,43 +830,55 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
     }
 
     // ── Step 3: assemble MediaStream ─────────────────────────────────────
-    const tracks = [
-      ...(videoTrack ? [videoTrack] : []),
-      ...audioTracks,
-    ];
-    const recordStream = tracks.length > 0 ? new MediaStream(tracks) : streamRef.current;
+    // The filtered canvas when there is one; otherwise the raw camera, which
+    // is only reachable when nothing needed baking (see needsCanvas above).
+    const cameraVideo = videoTrack ? [videoTrack] : streamRef.current.getVideoTracks();
+    const recordStream = new MediaStream([...cameraVideo, ...audioTracks]);
 
-    // ── Step 4: pick best mimeType ───────────────────────────────────────
-    // Prioritize mp4 format as it has better duration metadata handling than webm
-    const MIME_CANDIDATES = [
-      'video/mp4',
-      'video/webm;codecs=vp9,opus',
-      'video/webm;codecs=vp8,opus',
-      'video/webm',
+    // ── Step 4: container and bitrate ────────────────────────────────────
+    const cvs = canvasRef.current;
+    const mimeType = pickMimeType();
+    const options = recorderOptions({
+      mimeType,
+      width: (cvs && cvs.width) || 480,
+      height: (cvs && cvs.height) || 640,
+    });
+    const attempts = [
+      () => new MediaRecorder(recordStream, options),
+      // Some engines reject the bitrate hints: the container alone.
+      () => new MediaRecorder(recordStream, mimeType ? { mimeType } : {}),
     ];
-    const mimeType = MIME_CANDIDATES.find(m => MediaRecorder.isTypeSupported(m)) || '';
-    let mr;
-    try {
-      mr = new MediaRecorder(recordStream, mimeType ? { mimeType } : {});
-    } catch (_) {
-      try { mr = new MediaRecorder(streamRef.current, mimeType ? { mimeType } : {}); }
-      catch (e2) {
-        _cleanupAudio('mr-construct-failed');
-        isRecordingRef.current = false;
-        setErrorMessage('Recording not supported on this browser: ' + e2.message);
-        setShowErrorModal(true);
-        return;
+    if (!needsCanvas && videoTrack) {
+      // Nothing to bake, so the raw camera records the same picture.
+      attempts.push(() => new MediaRecorder(
+        new MediaStream([...streamRef.current.getVideoTracks(), ...audioTracks]),
+        mimeType ? { mimeType } : {}
+      ));
+    }
+    let mr = null;
+    for (const attempt of attempts) {
+      try {
+        mr = attempt();
+        break;
+      } catch (e) {
+        logToBackend(`MediaRecorder construct failed: ${e && e.name} - ${e && e.message}`, 'warn');
       }
+    }
+    if (!mr) {
+      _cleanupAudio('mr-construct-failed');
+      isRecordingRef.current = false;
+      showProblem(RECORDING_ERROR.UNSUPPORTED);
+      return;
     }
 
     const actualMime = mr.mimeType || mimeType || 'video/webm';
-    const ext = actualMime.includes('mp4') ? 'mp4' : 'webm';
+    const ext = extensionFor(actualMime);
 
     // ── Step 5: wire events ──────────────────────────────────────────────
     mr.ondataavailable = e => { if (e.data && e.data.size > 0) chunksRef.current.push(e.data); };
     mr.onpause = () => {
       console.warn('[RECORDER] MediaRecorder PAUSED');
-      logToBackend('MediaRecorder PAUSED unexpectedly', 'warn');
+      logToBackend('MediaRecorder PAUSED', 'warn');
     };
     mr.onresume = () => {
       console.log('[RECORDER] MediaRecorder RESUMED');
@@ -709,32 +886,41 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
     };
     mr.onstart = () => {
       console.log('[RECORDER] MediaRecorder STARTED');
-      logToBackend(`MediaRecorder STARTED, mimeType=${actualMime}`);
+      logToBackend(`MediaRecorder STARTED, mimeType=${actualMime} vbps=${options.videoBitsPerSecond} renderer=${rendererRef.current && rendererRef.current.kind}`);
     };
 
     mr.onstop = () => {
       console.log('[RECORDER] onstop triggered, chunks:', chunksRef.current.length);
       logToBackend(`MediaRecorder onstop chunks=${chunksRef.current.length}`, 'warn');
       const chunks = chunksRef.current;
-      if (!chunks.length) {
-        console.log('[RECORDER] No chunks in recording');
-        setErrorMessage('Recording produced no data. Please try again.');
-        setShowErrorModal(true);
+      const endWithout = (message) => {
         isRecordingRef.current = false;
         setIsRecording(false);
+        setUserPaused(false);
+        if (message) showProblem(message);
+      };
+      // The camera was closed mid-recording: the person asked for this take to go.
+      if (discardTakeRef.current) {
+        discardTakeRef.current = false;
+        chunksRef.current = [];
+        endWithout(null);
+        return;
+      }
+      if (!chunks.length) {
+        console.log('[RECORDER] No chunks in recording');
+        endWithout(RECORDING_ERROR.EMPTY);
         return;
       }
       const blob = new Blob(chunks, { type: actualMime });
       if (blob.size === 0) {
         console.log('[RECORDER] Blob is empty');
-        setErrorMessage('Recorded file is empty. Please try again.');
-        setShowErrorModal(true);
-        isRecordingRef.current = false;
-        setIsRecording(false);
+        endWithout(RECORDING_ERROR.EMPTY);
         return;
       }
       console.log('[RECORDER] Recording successful, blob size:', blob.size);
-      
+      // The filter in the pixels -- the one showing when recording ended.
+      const bakedFilter = liveRef.current.filter;
+
       // Fix duration metadata for webm files by using a video element to force duration calculation
       const processBlob = async () => {
         if (ext === 'webm') {
@@ -742,11 +928,14 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
             const video = document.createElement('video');
             video.preload = 'metadata';
             video.src = URL.createObjectURL(blob);
-            
+
             await new Promise((resolve, reject) => {
               video.onloadedmetadata = () => {
-                // Seek to end to force duration calculation
-                video.currentTime = video.duration || 999999;
+                // Seek to end to force duration calculation. A WebM from
+                // MediaRecorder reports Infinity, and assigning Infinity to
+                // currentTime throws -- which left this waiting out the 2s
+                // timeout below on every WebM take. 1e101 is finite.
+                video.currentTime = isFinite(video.duration) && video.duration > 0 ? video.duration : 1e101;
               };
               video.onseeked = () => {
                 // Duration should now be calculated
@@ -767,7 +956,7 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
             console.warn('[RECORDER] Duration fix failed:', e);
           }
         }
-        
+
         const file = new File([blob], `rec_${Date.now()}.${ext}`, { type: actualMime });
         const url = URL.createObjectURL(blob);
         stopCamera();
@@ -775,12 +964,18 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
         setPreview(url);
         setIsPreviewThumbnail(false);
         setIsVideoFile(true);
+        setRecordedFilterId(bakedFilter);
+        // Review before anything else: the take plays back with Retake,
+        // Change filter and Next. Next leads to the existing details page.
+        setReview({ url });
+        setShowFilters(false);
         setCaptureMode('upload');
-        setStage('details');
+        setStage('review');
         isRecordingRef.current = false;
         setIsRecording(false);
+        setUserPaused(false);
       };
-      
+
       processBlob();
     };
 
@@ -790,8 +985,9 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
       _cleanupAudio('mr-onerror');
       isRecordingRef.current = false;
       setIsRecording(false);
-      setErrorMessage('Recording error: ' + (e.error?.message || 'unknown'));
-      setShowErrorModal(true);
+      setUserPaused(false);
+      if (rendererRef.current) rendererRef.current.setFixedSize(null);
+      showProblem(RECORDING_ERROR.FAILED);
     };
 
     // ── Step 6: go ───────────────────────────────────────────────────────
@@ -799,6 +995,10 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
     mr.start(250);
     setIsRecording(true);
     console.log('[RECORDING] MediaRecorder started, mimeType:', actualMime);
+    // Hold the frame size for the length of the take: the other camera may
+    // deliver a different size, and not every encoder (MP4/H.264 in
+    // particular) accepts a resolution change mid-stream.
+    if (rendererRef.current && cvs) rendererRef.current.setFixedSize(cvs.width, cvs.height);
 
     // Camera-preview watchdog: some browsers pause the <video> element when its
     // audio track is consumed by Web Audio. The canvas draws from this video,
@@ -819,6 +1019,16 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
       mediaRecorderRef.current._videoPauseHandler = onUnexpectedPause;
     }
 
+    startRecTimer();
+  };
+
+  useEffect(() => { hasExtendedRef.current = hasExtendedRecording; }, [hasExtendedRecording]);
+
+  // One tick per recorded second: the clock, the progress ring, the coin
+  // check at the free limit and the hard stop at MAX_REC. Outside
+  // startRecording so resuming from a pause can restart it.
+  const startRecTimer = () => {
+    clearInterval(timerRef.current);
     timerRef.current = setInterval(() => {
       // Watchdog: if camera video element somehow paused, kick it back to play.
       const vid = videoRef.current;
@@ -831,7 +1041,7 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
         setRecProgress((next / MAX_REC) * 100);
 
         // Check if crossing the free limit (60 seconds)
-        if (next === FREE_LIMIT + 1 && !hasExtendedRecording) {
+        if (next === FREE_LIMIT + 1 && !hasExtendedRef.current) {
           // Check coin balance before allowing extended recording
           api.request('/coins/balance/')
             .then(data => {
@@ -871,27 +1081,80 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
     }, 1000);
   };
 
-  const stopRecording = () => {
+  // `force` skips the ghost-click guard, for stops nobody tapped: the camera
+  // closing, the preview's GPU context being lost.
+  const stopRecording = ({ force = false } = {}) => {
     if (!isRecordingRef.current) return;
     // Ghost-click guard: ignore stop calls within 1s of start
-    if (Date.now() - recordingStartRef.current < 1000) return;
+    if (!force && Date.now() - recordingStartRef.current < 1000) return;
 
-    logToBackend(`stopRecording called elapsedMs=${Date.now() - recordingStartRef.current} mrState=${mediaRecorderRef.current?.state}`, 'warn');
+    logToBackend(`stopRecording called elapsedMs=${Date.now() - recordingStartRef.current} mrState=${mediaRecorderRef.current?.state} force=${force}`, 'warn');
     clearInterval(timerRef.current);
     _cleanupAudio('stopRecording'); // stop monitor + AudioContext immediately (no music after stop)
 
     // Reset extended recording state
     setHasExtendedRecording(false);
     setIsRecordingPaused(false);
+    setUserPaused(false);
 
     const mr = mediaRecorderRef.current;
-    if (mr && mr.state === 'recording') {
+    // 'paused' as well: a stop during a pause -- the person's, or the coin
+    // limit's Cancel -- must still finish the file. It used to fall through
+    // to the else branch and leave the recorder paused with the take in it.
+    if (mr && (mr.state === 'recording' || mr.state === 'paused')) {
       try { mr.requestData(); } catch (_) {}
       mr.stop(); // triggers onstop asynchronously
     } else {
       isRecordingRef.current = false;
       setIsRecording(false);
     }
+    if (rendererRef.current) rendererRef.current.setFixedSize(null);
+  };
+  stopRecordingRef.current = stopRecording;
+
+  // The preview's GPU context can be lost (driver reset, memory pressure). The
+  // renderer asks the browser to restore it; a recording cannot wait, so it
+  // ends with what it has.
+  onContextLostRef.current = () => {
+    logToBackend(`webgl context lost isRecording=${isRecordingRef.current}`, 'warn', 'camera');
+    if (isRecordingRef.current) {
+      stopRecording({ force: true });
+      showNotice(RECORDING_ERROR.INTERRUPTED);
+    }
+  };
+
+  const canPause = typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.prototype.pause === 'function';
+
+  // The person's pause. The coin limit's pause is separate (isRecordingPaused
+  // + resumeRecording) and this stays out of its way.
+  const togglePause = () => {
+    const mr = mediaRecorderRef.current;
+    if (!mr || !isRecordingRef.current || isRecordingPaused) return;
+    if (mr.state === 'recording') {
+      try { mr.pause(); } catch (e) { logToBackend(`pause failed: ${e && e.name}`, 'warn'); return; }
+      clearInterval(timerRef.current);
+      // Music stops with the picture, or it would run ahead of the video.
+      if (audioCtxRef.current && audioCtxRef.current.state === 'running') audioCtxRef.current.suspend().catch(() => {});
+      if (monitorAudioRef.current) monitorAudioRef.current.pause();
+      setUserPaused(true);
+    } else if (mr.state === 'paused') {
+      try { mr.resume(); } catch (e) { logToBackend(`resume failed: ${e && e.name}`, 'warn'); return; }
+      if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume().catch(() => {});
+      if (monitorAudioRef.current) monitorAudioRef.current.play().catch(() => {});
+      startRecTimer();
+      setUserPaused(false);
+    }
+  };
+
+  // Close the camera. Mid-recording that is a cancel, and the take is dropped.
+  const closeCamera = () => {
+    if (isRecordingRef.current) {
+      discardTakeRef.current = true;
+      stopRecording({ force: true });
+    }
+    setShowFilters(false);
+    stopCamera();
+    setCaptureMode('upload');
   };
 
   const resumeRecording = () => {
@@ -914,17 +1177,45 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
     }
   };
 
+  // ── Review ──────────────────────────────────────────────────────────────
+  const discardTake = () => {
+    if (review && review.url) URL.revokeObjectURL(review.url);
+    setReview(null);
+    setSelectedFile(null);
+    setPreview(null);
+    setRecordedFilterId(null);
+  };
+
+  const retake = ({ openFilters = false } = {}) => {
+    discardTake();
+    setStage('capture');
+    setCamMode('video');
+    setCaptureMode('camera');
+    setShowFilters(openFilters);
+  };
+
   // ── Photo capture ───────────────────────────────────────────────────────
   const takePhoto = () => {
     const cvs = canvasRef.current;
     if (!cvs) return;
+    // Draw a fresh frame and read it in the same task: a WebGL canvas keeps
+    // no pixels once they have been composited to the screen.
+    const renderer = rendererRef.current;
+    if (renderer && videoRef.current) renderer.render(videoRef.current);
+    const bakedFilter = liveRef.current.filter;
     cvs.toBlob(blob => {
+      if (!blob) {
+        showProblem("Couldn't take the photo. Please try again.", 'Camera');
+        return;
+      }
       const file = new File([blob], `photo_${Date.now()}.jpg`, { type: 'image/jpeg' });
       const url = URL.createObjectURL(blob);
       setSelectedFile(file);
       setPreview(url);
       setIsPreviewThumbnail(false);
       setIsVideoFile(false);
+      setRecordedFilterId(bakedFilter);
+      setShowFilters(false);
       stopCamera();
       setCaptureMode('upload');
       setStage('details');
@@ -935,6 +1226,8 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
   const handleFileSelect = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    // A gallery file has no filter baked in, whatever the camera was set to.
+    setRecordedFilterId(null);
 
     // Check file size (50MB limit)
     if (file.size > 50 * 1024 * 1024) {
@@ -954,8 +1247,31 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
       const videoUrl = URL.createObjectURL(file);
       video.src = videoUrl;
 
+      // WebM files written by MediaRecorder (older Android Chrome, other web
+      // apps) report Infinity until the whole file has been scanned, and
+      // Infinity > PAID_LIMIT rejected every one of them as "too long".
+      // Seeking far past the end makes the browser work the length out.
       video.onloadedmetadata = () => {
-        const duration = video.duration;
+        if (isFinite(video.duration) && video.duration > 0) {
+          checkDuration(video.duration);
+          return;
+        }
+        let done = false;
+        const settle = () => {
+          if (done) return;
+          done = true;
+          video.removeEventListener('durationchange', onChange);
+          // Still unknown after the scan: let it through, as a short clip
+          // would be, rather than refuse a file we cannot measure.
+          checkDuration(isFinite(video.duration) ? video.duration : 0);
+        };
+        const onChange = () => { if (isFinite(video.duration)) settle(); };
+        video.addEventListener('durationchange', onChange);
+        setTimeout(settle, 3000);
+        try { video.currentTime = 1e101; } catch (_) { settle(); }
+      };
+
+      const checkDuration = (duration) => {
         URL.revokeObjectURL(videoUrl);
 
         if (duration > PAID_LIMIT) {
@@ -1107,7 +1423,9 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
     if (!dragging) return;
     if (e.cancelable && e.preventDefault) e.preventDefault();
     const pt = e.touches?.[0] || e;
-    const el = previewContainerRef.current;
+    // Stickers are positioned in % of the preview box (the frame), not of the
+    // whole camera area, so drags are measured against the same box.
+    const el = stageRef.current || previewContainerRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
     const dx = ((pt.clientX - dragging.sx) / r.width) * 100;
@@ -1191,7 +1509,9 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
       formData.append('caption', caption);
       formData.append('hashtags', hashtags);
       formData.append('overlay_text', JSON.stringify(textOverlays));
-      formData.append('filter', selectedFilter);
+      // The filter already baked into the media -- a label for the draft,
+      // not an instruction: nothing re-applies it.
+      formData.append('filter', recordedFilterId || 'none');
       if (customAudioFile) {
         formData.append('audio_file', customAudioFile);
         formData.append('audio_volume_level', addedVol);
@@ -1247,7 +1567,9 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
     logToBackend(`loadDraft id=${draft.id} hasMedia=${!!draft.media} hasImage=${!!draft.image} mediaUrl=${draft.media || ''}`, 'info', 'drafts');
     setCaption(draft.caption || '');
     setHashtags(draft.hashtags || '');
-    setSelectedFilter(draft.filter || 'none');
+    // Older drafts carry the previous camera's filter ids; resolveFilterId
+    // maps them to the current names.
+    setRecordedFilterId(resolveFilterId(draft.filter));
     setTextOverlays(draft.overlay_text ? JSON.parse(draft.overlay_text) : []);
 
     const isVideo = !!draft.media;
@@ -1508,7 +1830,7 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
         }
 
         // Only show modal for other errors (not insufficient coins)
-        setErrorMessage(`Upload failed: ${err?.error || err?.message || 'Server error'}`);
+        setErrorMessage(friendlyUploadError(err));
         setShowErrorModal(true);
         return null; // Return null to prevent success logic
       });
@@ -1544,7 +1866,7 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
     } catch (e) {
       console.error('Upload failed', e);
       const detail = e?.traceback || e?.error || e?.message || String(e);
-      setErrorMessage(`Upload failed: ${e?.error || e?.message || 'Server error'}`);
+      setErrorMessage(friendlyUploadError(e));
       setShowErrorModal(true);
       console.error('[UPLOAD TRACEBACK]', detail);
     } finally {
@@ -1553,7 +1875,6 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
   };
 
   const fmtTime = (s) => `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
-  const activeFilter = FILTERS.find(f => f.id === selectedFilter);
 
   const bottomNavItems = [
     { id: 'home',     label: 'Home',     Icon: Home,       action: onNavHome },
@@ -1563,8 +1884,79 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
     { id: 'profile',  label: 'Profile',  Icon: User,       action: onNavProfile },
   ];
 
+  // ── Camera controls ──────────────────────────────────────────────────────
+  // Buttons over the camera act on touchend: in the SuperApp WebView the
+  // click that follows a touch on the preview arrives late or not at all.
+  // preventDefault on touchend cancels that click, so each tap acts once.
+  const tap = (fn) => ({
+    onClick: (e) => fn(e),
+    onTouchEnd: (e) => { if (e.cancelable) e.preventDefault(); fn(e); },
+  });
+
+  const pressShutter = (source) => {
+    // Touch events still reach a disabled button in some WebViews.
+    if (cameraLoading && !isRecordingRef.current) return;
+    // Block start while audio is still decoding
+    if (isDecodingAudio && !isRecordingRef.current) {
+      logToBackend(`record-btn ${source} BLOCKED: audio still decoding`, 'warn');
+      showProblem('Music is still loading. Please wait a moment.', 'Sound');
+      return;
+    }
+    // Debounce: ignore if another toggle just fired (touch+click double-fire)
+    const now = Date.now();
+    if (now - lastToggleRef.current < 500) {
+      logToBackend(`record-btn ${source} IGNORED (debounce ${now - lastToggleRef.current}ms)`, 'warn');
+      return;
+    }
+    lastToggleRef.current = now;
+    logToBackend(`record-btn ${source} fired isRecording=${isRecordingRef.current}`, 'info');
+    if (camMode === 'video') {
+      isRecordingRef.current ? stopRecording() : startRecording().catch(console.error);
+    } else {
+      takePhoto();
+    }
+  };
+
+  const openSoundSheet = () => {
+    if (isRecordingRef.current) {
+      console.log('[SOUND ICON] Recording in progress, blocking sound selection');
+      showProblem('Please pick music before starting to record. Stop the current recording, choose your sound, then record again.', 'Sound');
+      return;
+    }
+    setShowSoundSheet(true);
+  };
+
+  const REC_RED = '#EF4444';
+  const srOnly = { position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0, padding: 0, margin: -1 };
+  const glassCircle = (size) => ({
+    width: size, height: size, borderRadius: '50%',
+    background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
+    border: '1px solid rgba(255,255,255,0.18)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+  });
+
   // ── Render ───────────────────────────────────────────────────────────────
   const heroText = readableOn(T.pri);
+  const filterOn = selectedFilter !== 'none';
+  const shutterLabel = camMode === 'video' ? (isRecording ? 'Stop recording' : 'Start recording') : 'Take photo';
+  const cameraTools = [
+    {
+      id: 'filters', label: 'Filters', aria: showFilters ? 'Hide filters' : 'Show filters', pressed: showFilters,
+      active: showFilters, dot: filterOn && !showFilters,
+      icon: <Sparkles size={21} color={showFilters ? heroText : '#fff'} />,
+      onPress: () => setShowFilters((v) => !v),
+    },
+    {
+      id: 'text', label: 'Text', aria: 'Add text',
+      icon: <Type size={21} color="#fff" />,
+      onPress: () => setShowTextInput(true),
+    },
+    {
+      id: 'sound', label: 'Sound', aria: backgroundSound ? `Sound: ${backgroundSound.name}` : 'Add sound',
+      icon: <Music size={21} color={backgroundSound ? T.pri : '#fff'} />,
+      onPress: openSoundSheet,
+    },
+  ];
 
   return (
     <div style={{
@@ -1579,7 +1971,11 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
         @keyframes ep-success { 0%{transform:scale(0.7);opacity:0} 60%{transform:scale(1.1)} 100%{transform:scale(1);opacity:1} }
         .ep-btn { border:none; cursor:pointer; transition:all 0.15s; touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
         .ep-btn:active { transform:scale(0.94); }
+        .ep-btn:focus-visible { outline: 2px solid ${T.pri}; outline-offset: 2px; }
+        .ep-btn:disabled { cursor: default; }
         .ep-filter-scroll::-webkit-scrollbar { display:none; }
+        @keyframes ep-toast { 0% { opacity: 0; transform: translate(-50%,-50%) scale(.92); } 15% { opacity: 1; transform: translate(-50%,-50%) scale(1); } 75% { opacity: 1; } 100% { opacity: 0; } }
+        @keyframes ep-spin-slow { to { transform: rotate(360deg); } }
         .ep-hash { color:${T.pri}; font-weight:700; }
         .ep-rise { animation: ep-fade-in .45s cubic-bezier(.2,.8,.2,1) both; }
         .ep-card { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
@@ -1589,7 +1985,7 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
         @keyframes ep-rec { 0%,100% { transform: scale(1); } 50% { transform: scale(0.84); } }
         .ep-rec-dot { animation: ep-rec 1.8s ease-in-out infinite; }
         @media (prefers-reduced-motion: reduce) {
-          .ep-rise, .ep-rec-dot { animation: none !important; }
+          .ep-rise, .ep-rec-dot, .ep-toast { animation: none !important; }
           .ep-card { transition: none; }
         }
       `}</style>
@@ -1709,350 +2105,318 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
 
           {captureMode === 'camera' ? (
             /* ── CAMERA VIEW (fullscreen 9:16) ── */
-            <div ref={previewContainerRef} style={{ position: 'absolute', inset: 0, touchAction: dragging ? 'none' : 'auto' }}
+            <div ref={previewContainerRef} style={{ position: 'absolute', inset: 0, background: '#000', touchAction: dragging ? 'none' : 'auto' }}
               onMouseMove={moveOverlayDrag} onMouseUp={endOverlayDrag} onMouseLeave={endOverlayDrag}>
-              {/* Camera loading indicator */}
-              {cameraLoading && (
-                <div style={{
-                  position: 'absolute', inset: 0, background: T.bg,
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                  zIndex: 1000,
-                }}>
-                  <div style={{
-                    width: 48, height: 48, borderRadius: '50%', background: T.pri,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    animation: 'spin 1s linear infinite',
-                  }}>
-                    <RefreshCw size={24} color="#8fc441" />
-                  </div>
-                  <div style={{ marginTop: 16, fontSize: 14, color: '#8fc441', fontWeight: 600 }}>
-                    Starting camera...
-                  </div>
-                  <div style={{ marginTop: 8, fontSize: 12, color: '#8fc441' }}>
-                    Please allow camera permissions if prompted
-                  </div>
-                  <style>{`
-                    @keyframes spin {
-                      from { transform: rotate(0deg); }
-                      to { transform: rotate(360deg); }
-                    }
-                  `}</style>
-                </div>
-              )}
+
               {/* Hidden video source */}
-              <video 
-                ref={videoRef} 
-                playsInline 
-                muted 
+              <video
+                ref={videoRef}
+                playsInline
+                muted
                 autoPlay
                 playsinline
                 webkit-playsinline
-                style={{ position: 'absolute', opacity: 0, width: 1, height: 1 }} 
+                style={{ position: 'absolute', opacity: 0, width: 1, height: 1 }}
               />
-              {/* Filtered canvas - contain to show full camera view without zoom */}
-              <canvas ref={canvasRef}
-                style={{ 
-                  width: '100%', height: '100%', objectFit: 'contain', background: '#000', display: 'block',
-                  pointerEvents: 'none', // Don't capture touch events - let them pass to controls
-                }} />
 
-              {/* Text overlays ON camera preview — draggable */}
-              {textOverlays.map(ov => (
-                <div key={ov.id}
-                  style={{ position: 'absolute', left: `${ov.x}%`, top: `${ov.y}%`, transform: 'translate(-50%,-50%)', zIndex: 20, touchAction: 'none' }}
-                  onMouseDown={e => startOverlayDrag(e, ov.id)}
-                  onTouchStart={e => startOverlayDrag(e, ov.id)}
-                >
-                  <div style={{ position: 'relative', ...overlayCSS(ov) }}>
-                    {ov.text}
-                    <div style={{ position: 'absolute', top: -10, right: -10, width: 20, height: 20, borderRadius: '50%', background: T.red, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 11, zIndex: 21 }}
-                      onMouseDown={e => e.stopPropagation()}
-                      onTouchStart={e => e.stopPropagation()}
-                      onClick={() => removeOverlay(ov.id)}>×</div>
+              {/* Preview. The box has the frame's aspect, so stickers placed in %
+                  of it land on the same pixels in the recording. */}
+              <div ref={stageRef} style={{
+                position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)',
+                width: stageBox ? stageBox.width : '100%', height: stageBox ? stageBox.height : '100%',
+              }}>
+                <canvas ref={canvasRef}
+                  role="img"
+                  aria-label={filterOn ? `Camera preview, ${getFilter(selectedFilter).name} filter` : 'Camera preview'}
+                  style={{
+                    width: '100%', height: '100%', objectFit: 'contain', background: '#000', display: 'block',
+                    pointerEvents: 'none', // Don't capture touch events - let them pass to controls
+                  }} />
+
+                {/* Text overlays ON camera preview — draggable */}
+                {textOverlays.map(ov => (
+                  <div key={ov.id}
+                    style={{ position: 'absolute', left: `${ov.x}%`, top: `${ov.y}%`, transform: 'translate(-50%,-50%)', zIndex: 20, touchAction: 'none' }}
+                    onMouseDown={e => startOverlayDrag(e, ov.id)}
+                    onTouchStart={e => startOverlayDrag(e, ov.id)}
+                  >
+                    <div style={{ position: 'relative', ...overlayCSS(ov) }}>
+                      {ov.text}
+                      <button type="button" aria-label={`Remove text: ${ov.text}`}
+                        style={{ position: 'absolute', top: -12, right: -12, width: 24, height: 24, borderRadius: '50%', background: REC_RED, color: '#fff', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', zIndex: 21, padding: 0 }}
+                        onMouseDown={e => e.stopPropagation()}
+                        onTouchStart={e => e.stopPropagation()}
+                        onClick={() => removeOverlay(ov.id)}>
+                        <X size={13} color="#fff" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Camera loading indicator — under the top bar, so Close still works
+                  while the browser is asking for permission. */}
+              {cameraLoading && !cameraError && (
+                <div role="status" aria-live="polite" style={{
+                  position: 'absolute', inset: 0, background: '#0B0B0B', zIndex: 29,
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, textAlign: 'center',
+                }}>
+                  <RefreshCw size={30} color={T.pri} style={{ animation: 'ep-spin-slow 1s linear infinite' }} />
+                  <div style={{ marginTop: 16, fontSize: 15, color: '#fff', fontWeight: 700 }}>Starting camera…</div>
+                  <div style={{ marginTop: 6, fontSize: 12.5, color: 'rgba(255,255,255,0.65)' }}>
+                    Allow camera and microphone access if asked
                   </div>
                 </div>
-              ))}
+              )}
+
+              {cameraError && (
+                <CameraErrorPanel
+                  {...cameraError}
+                  accent={T.pri}
+                  onRetry={() => startCamera()}
+                  onUpload={() => fileInputRef.current?.click()}
+                  onClose={closeCamera}
+                />
+              )}
+
+              {/* Recording progress along the top edge */}
+              {isRecording && (
+                <div aria-hidden="true" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: 'rgba(255,255,255,0.2)', zIndex: 31 }}>
+                  <div style={{ height: '100%', width: `${recProgress}%`, background: hasExtendedRecording ? '#F59E0B' : REC_RED, transition: 'width 0.5s linear' }} />
+                </div>
+              )}
 
               {/* Top bar */}
               <div style={{
                 position: 'absolute', top: 0, left: 0, right: 0, zIndex: 30,
-                padding: 'max(12px, env(safe-area-inset-top)) 16px 12px',
+                padding: 'max(12px, env(safe-area-inset-top)) 12px 12px',
                 background: 'linear-gradient(to bottom, rgba(0,0,0,0.6) 0%, transparent 100%)',
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
               }}>
-                <button className="ep-btn" 
-                  onClick={() => { stopCamera(); setCaptureMode('upload'); }}
-                  onTouchEnd={(e) => { e.preventDefault(); stopCamera(); setCaptureMode('upload'); }}
-                  style={{ background: 'rgba(0,0,0,0.4)', borderRadius: '50%', width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <X size={20} color="#8fc441" />
+                <button type="button" className="ep-btn"
+                  aria-label={isRecording ? 'Cancel recording and close camera' : 'Close camera'}
+                  {...tap(closeCamera)}
+                  style={glassCircle(44)}>
+                  <X size={20} color="#fff" />
                 </button>
 
                 {/* Mode tabs — force light text on dark overlay so the Photo/
-                    Video labels are readable regardless of theme. */}
-                <div style={{ display: 'flex', gap: 6, background: 'rgba(0,0,0,0.4)', borderRadius: 24, padding: '4px 6px' }}>
-                  {['photo','video'].map(m => (
-                    <button key={m} className="ep-btn" 
-                      onClick={() => setCamMode(m)}
-                      onTouchEnd={(e) => { e.preventDefault(); setCamMode(m); }}
+                    Video labels are readable regardless of theme. Locked while
+                    recording: the shutter's meaning must not change mid-take. */}
+                <div role="group" aria-label="Camera mode" style={{ display: 'flex', gap: 4, background: 'rgba(0,0,0,0.45)', borderRadius: 24, padding: 4 }}>
+                  {['photo', 'video'].map(m => (
+                    <button key={m} type="button" className="ep-btn"
+                      aria-pressed={camMode === m}
+                      disabled={isRecording}
+                      {...tap(() => { if (!isRecordingRef.current) setCamMode(m); })}
                       style={{
-                        padding: '6px 14px', borderRadius: 20,
+                        minHeight: 36, padding: '0 16px', borderRadius: 20,
                         background: camMode === m ? T.pri : 'transparent',
-                        color: camMode === m ? '#1a1a1a' : '#8fc441',
+                        color: camMode === m ? heroText : '#fff',
                         fontSize: 13, fontWeight: 700,
-                        textShadow: camMode === m ? 'none' : '0 1px 2px rgba(0,0,0,0.8)',
+                        opacity: isRecording && camMode !== m ? 0.45 : 1,
                       }}>
-                      {m.charAt(0).toUpperCase() + m.slice(1)}
+                      {m === 'photo' ? 'Photo' : 'Video'}
                     </button>
                   ))}
                 </div>
 
-                {/* Flash */}
-                <button className="ep-btn" 
-                  onClick={() => setFlashOn(f => !f)}
-                  onTouchEnd={(e) => { e.preventDefault(); setFlashOn(f => !f); }}
-                  style={{ background: 'rgba(0,0,0,0.4)', borderRadius: '50%', width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  {flashOn ? <Zap size={18} color="#8fc441" fill="#8fc441" /> : <ZapOff size={18} color="#8fc441" />}
+                {/* Flash — a real torch where the camera has one (rear cameras on
+                    Android); shown disabled, and says why, where it does not. */}
+                <button type="button" className="ep-btn"
+                  disabled={!canTorch}
+                  aria-label={canTorch ? (flashOn ? 'Turn flash off' : 'Turn flash on') : 'Flash not available on this camera'}
+                  aria-pressed={canTorch ? flashOn : undefined}
+                  title={canTorch ? undefined : 'Flash not available on this camera'}
+                  {...tap(toggleTorch)}
+                  style={{ ...glassCircle(44), opacity: canTorch ? 1 : 0.45 }}>
+                  {flashOn ? <Zap size={18} color={T.pri} fill={T.pri} /> : <ZapOff size={18} color="#fff" />}
                 </button>
               </div>
 
-              {/* Recording timer */}
-              {isRecording && (
-                <div style={{
-                  position: 'absolute', top: 70, left: 0, right: 0, textAlign: 'center', zIndex: 25,
-                }}>
-                  <div style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 8,
-                    background: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: '6px 16px',
-                  }}>
-                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: hasExtendedRecording ? '#F59E0B' : T.red, animation: 'ep-pulse 1s infinite' }} />
-                    <span style={{ fontWeight: 700, fontSize: 16, fontVariantNumeric: 'tabular-nums', color: hasExtendedRecording ? '#F59E0B' : '#fff' }}>
+              {/* Status: timer, active filter, microphone */}
+              <div style={{
+                position: 'absolute', top: 'calc(max(12px, env(safe-area-inset-top)) + 58px)', left: 12, right: 12, zIndex: 25,
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, pointerEvents: 'none',
+              }}>
+                {isRecording && (
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'rgba(0,0,0,0.55)', borderRadius: 20, padding: '6px 14px' }}>
+                    <div style={{
+                      width: 8, height: 8, borderRadius: '50%',
+                      background: hasExtendedRecording ? '#F59E0B' : REC_RED,
+                      animation: userPaused || isRecordingPaused ? 'none' : 'ep-pulse 1s infinite',
+                    }} />
+                    <span style={{ fontWeight: 700, fontSize: 15, fontVariantNumeric: 'tabular-nums', color: hasExtendedRecording ? '#F59E0B' : '#fff' }}>
                       {fmtTime(recTime)} / {fmtTime(MAX_REC)}
                     </span>
+                    {(userPaused || isRecordingPaused) && (
+                      <span style={{ fontSize: 11.5, fontWeight: 800, color: '#FCD34D', letterSpacing: '.06em', textTransform: 'uppercase' }}>Paused</span>
+                    )}
                     {hasExtendedRecording && <Coins size={14} color="#F59E0B" />}
                   </div>
-                  {/* Progress bar at top */}
-                  <div style={{ position: 'absolute', top: -8, left: 0, right: 0, height: 3, background: 'rgba(255,255,255,0.2)' }}>
-                    <div style={{ height: '100%', width: `${recProgress}%`, background: hasExtendedRecording ? '#F59E0B' : T.red, transition: 'width 0.5s linear' }} />
-                  </div>
-                </div>
-              )}
+                )}
 
-              {/* Right side toolbar — icons + labels on the dark camera
-                  preview.  Force white + drop shadow so they're readable
-                  regardless of theme (user's dark-on-dark bug). */}
-              <div style={{
-                position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)',
-                display: 'flex', flexDirection: 'column', gap: 20, alignItems: 'center',
-                zIndex: 30,
-              }}>
-                {[
-                  { icon: <RefreshCw size={22} color="#8fc441" />, label: 'Flip', action: flipCamera },
-                  { icon: <Type size={22} color="#8fc441" />, label: 'Text', action: () => setShowTextInput(true) },
-                  { icon: <Music size={22} color={backgroundSound ? '#8fc441' : '#8fc441'} />, label: 'Sound', action: () => {
-                    console.log('[SOUND ICON] Clicked, isRecording:', isRecordingRef.current);
-                    if (isRecordingRef.current) {
-                      console.log('[SOUND ICON] Recording in progress, blocking sound selection');
-                      setErrorMessage('Please pick music before starting to record. Stop the current recording, choose your sound, then record again.');
-                      setShowErrorModal(true);
-                      return;
-                    }
-                    console.log('[SOUND ICON] Opening sound sheet');
-                    setShowSoundSheet(true);
-                  }},
-                  { icon: <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="#8fc441" strokeWidth={2}><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/></svg>, label: 'Filter', action: () => setShowFilters(f => !f) },
-                  { icon: <span style={{ fontSize: 13, fontWeight: 800, color: '#8fc441' }}>{selectedSpeed}</span>, label: 'Speed', action: () => setShowSpeeds(s => !s) },
-                ].map((item, i) => (
-                  <button key={i} className="ep-btn" onClick={item.action} onTouchEnd={(e) => { e.preventDefault(); item.action(); }}
-                    style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, background: 'none', padding: 8, margin: -8 }}>
-                    <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(255,255,255,0.15)' }}>
-                      {item.icon}
-                    </div>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: '#8fc441', textShadow: '0 1px 3px rgba(0,0,0,0.9)' }}>{item.label}</span>
-                  </button>
-                ))}
+                {filterOn && !showFilters && (
+                  <div style={{ pointerEvents: 'auto' }}>
+                    <ActiveFilterChip
+                      name={getFilter(selectedFilter).name}
+                      onOpen={() => setShowFilters(true)}
+                      onClear={() => chooseFilter('none')}
+                    />
+                  </div>
+                )}
+
+                {micState !== 'on' && !micNoticeDismissed && camMode === 'video' && !cameraError && (
+                  <div role="status" style={{
+                    pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 8, maxWidth: 420,
+                    background: 'rgba(0,0,0,0.62)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 14,
+                    padding: '6px 6px 6px 12px', color: '#fff', fontSize: 12.5, lineHeight: 1.35,
+                  }}>
+                    <MicOff size={16} color="#FCA5A5" style={{ flexShrink: 0 }} />
+                    <span style={{ flex: 1 }}>{MIC_NOTICE[micState]}</span>
+                    {micState === 'denied' && !isRecording && (
+                      <button type="button" className="ep-btn" onClick={() => startCamera()}
+                        style={{ minHeight: 32, padding: '0 10px', borderRadius: 10, background: 'rgba(255,255,255,0.15)', color: '#fff', fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
+                        Try again
+                      </button>
+                    )}
+                    <button type="button" className="ep-btn" aria-label="Dismiss microphone notice" onClick={() => setMicNoticeDismissed(true)}
+                      style={{ width: 32, height: 32, borderRadius: 10, background: 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <X size={14} color="#fff" />
+                    </button>
+                  </div>
+                )}
               </div>
 
-              {/* Speed selector — force light text on dark popover */}
-              {showSpeeds && (
-                <div style={{
-                  position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)',
-                  display: 'flex', flexDirection: 'column', gap: 8,
-                  background: 'rgba(0,0,0,0.7)', borderRadius: 16, padding: '10px 8px',
-                  backdropFilter: 'blur(12px)', zIndex: 35,
-                  border: '1px solid rgba(255,255,255,0.15)',
+              {/* Filter name, big and brief, as a filter is picked */}
+              {filterToast && (
+                <div className="ep-toast" aria-hidden="true" style={{
+                  position: 'absolute', left: '50%', top: '40%', transform: 'translate(-50%,-50%)', zIndex: 26,
+                  pointerEvents: 'none', fontSize: 30, fontWeight: 800, color: '#fff', whiteSpace: 'nowrap',
+                  textShadow: '0 2px 14px rgba(0,0,0,0.65)', animation: 'ep-toast .9s ease both',
                 }}>
-                  {SPEEDS.map(sp => (
-                    <button key={sp} className="ep-btn" onClick={() => { setSelectedSpeed(sp); setShowSpeeds(false); }}
-                      style={{
-                        padding: '6px 14px', borderRadius: 12,
-                        background: selectedSpeed === sp ? T.pri : 'rgba(255,255,255,0.12)',
-                        color: '#8fc441', fontSize: 13, fontWeight: 700,
-                      }}>{sp}</button>
-                  ))}
+                  {filterToast}
                 </div>
               )}
+              <div aria-live="polite" style={srOnly}>{filterToast ? `${filterToast} filter` : ''}</div>
 
-              {/* Filter strip — labels above dark preview must be white. */}
-              {showFilters && (
-                <div style={{
-                  position: 'absolute', bottom: 130, left: 0, right: 0, zIndex: 35,
-                  overflowX: 'auto', display: 'flex', gap: 12, padding: '8px 16px',
-                  scrollbarWidth: 'none',
+              {/* Right side tools. Hidden while the filter tray is open: on short
+                  phones the two would overlap. */}
+              {!showFilters && (
+                <div role="toolbar" aria-label="Camera tools" aria-orientation="vertical" style={{
+                  position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                  display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center', zIndex: 30,
                 }}>
-                  {FILTERS.map(f => (
-                    <button key={f.id} className="ep-btn" onClick={() => setSelectedFilter(f.id)}
-                      style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, background: 'none', flexShrink: 0 }}>
-                      <div style={{
-                        width: 58, height: 58, borderRadius: 12,
-                        background: `conic-gradient(${T.pri}, #3B82F6, #10B981, ${T.pri})`,
-                        filter: f.css,
-                        border: selectedFilter === f.id ? `3px solid ${T.pri}` : '3px solid rgba(255,255,255,0.4)',
-                        boxShadow: selectedFilter === f.id ? `0 0 0 2px ${T.pri}` : 'none',
-                        transition: 'all 0.2s',
-                      }} />
-                      <span style={{
-                        fontSize: 11,
-                        color: '#8fc441',
-                        fontWeight: selectedFilter === f.id ? 800 : 600,
-                        textShadow: '0 1px 3px rgba(0,0,0,0.9)',
-                      }}>{f.name}</span>
+                  {cameraTools.map(tool => (
+                    <button key={tool.id} type="button" className="ep-btn"
+                      aria-label={tool.aria}
+                      aria-pressed={tool.pressed}
+                      {...tap(tool.onPress)}
+                      style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, background: 'none', padding: 4, minWidth: 56 }}>
+                      <span style={{ ...glassCircle(44), position: 'relative', background: tool.active ? T.pri : 'rgba(0,0,0,0.5)' }}>
+                        {tool.icon}
+                        {tool.dot && (
+                          <span aria-hidden="true" style={{ position: 'absolute', top: 2, right: 2, width: 9, height: 9, borderRadius: '50%', background: T.pri, border: '1.5px solid #000' }} />
+                        )}
+                      </span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.9)' }}>{tool.label}</span>
                     </button>
                   ))}
                 </div>
               )}
 
-              {/* Bottom controls */}
+              {/* Bottom controls: filter tray (when open) above the shutter row, in
+                  one column, so the tray can never cover the record button. */}
               <div style={{
                 position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 30,
                 background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 100%)',
-                padding: '0 24px 48px',
-                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24,
+                padding: '36px 12px max(22px, env(safe-area-inset-bottom))',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
               }}>
-                  {/* Upload from gallery shortcut */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                  <button className="ep-btn" 
-                    onClick={() => fileInputRef.current?.click()}
-                    onTouchEnd={(e) => { e.preventDefault(); fileInputRef.current?.click(); }}
-                    style={{ background: 'rgba(0,0,0,0.45)', borderRadius: 12, padding: 6, backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.15)' }}>
-                    <div style={{ width: 52, height: 52, borderRadius: 10, background: 'rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <Upload size={22} color="#8fc441" />
-                    </div>
-                  </button>
+                {showFilters && (
+                  <FilterTray
+                    filters={trayFilters}
+                    selectedId={selectedFilter}
+                    thumbnails={filterThumbs}
+                    onSelect={chooseFilter}
+                    onClose={() => setShowFilters(false)}
+                    notice={trayNotice}
+                    accent={T.pri}
+                  />
+                )}
+
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', maxWidth: 420, padding: '0 8px', boxSizing: 'border-box' }}>
+                  {/* Left: pause while recording, gallery otherwise. The gallery
+                      is off mid-take: opening the file picker suspends the camera
+                      and the recorder on most phones. */}
+                  {isRecording ? (
+                    canPause && !isRecordingPaused ? (
+                      <button type="button" className="ep-btn"
+                        aria-label={userPaused ? 'Resume recording' : 'Pause recording'}
+                        {...tap(togglePause)}
+                        style={glassCircle(56)}>
+                        {userPaused ? <Play size={22} color="#fff" fill="#fff" /> : <Pause size={22} color="#fff" fill="#fff" />}
+                      </button>
+                    ) : <div style={{ width: 56 }} />
+                  ) : (
+                    <button type="button" className="ep-btn" aria-label="Upload from gallery"
+                      {...tap(() => fileInputRef.current?.click())}
+                      style={glassCircle(56)}>
+                      <Upload size={22} color="#fff" />
+                    </button>
+                  )}
 
                   {/* Record / Shutter button */}
                   <div style={{ position: 'relative', width: 80, height: 80 }}>
                     {camMode === 'video' && isRecording && (
-                      <ProgressRing radius={40} stroke={4} progress={recProgress} color={T.red} />
+                      <ProgressRing radius={40} stroke={4} progress={recProgress} color={REC_RED} />
                     )}
-                    <button className="ep-btn"
-                      disabled={isDecodingAudio && !isRecordingRef.current}
-                      onClick={(e) => {
-                        // Block start while audio is still decoding
-                        if (isDecodingAudio && !isRecordingRef.current) {
-                          logToBackend('record-btn click BLOCKED: audio still decoding', 'warn');
-                          setErrorMessage('Music is still loading. Please wait a moment.');
-                          setShowErrorModal(true);
-                          return;
-                        }
-                        // Debounce: ignore if another toggle just fired (touch+click double-fire)
-                        const now = Date.now();
-                        if (now - lastToggleRef.current < 500) {
-                          logToBackend(`record-btn onClick IGNORED (debounce ${now - lastToggleRef.current}ms)`, 'warn');
-                          return;
-                        }
-                        lastToggleRef.current = now;
-                        logToBackend(`record-btn onClick fired isRecording=${isRecordingRef.current}`, 'info');
-                        if (camMode === 'video') {
-                          isRecordingRef.current ? stopRecording() : startRecording().catch(console.error);
-                        } else {
-                          takePhoto();
-                        }
-                      }}
-                      onTouchEnd={(e) => {
-                        e.preventDefault();
-                        if (isDecodingAudio && !isRecordingRef.current) {
-                          logToBackend('record-btn touchEnd BLOCKED: audio still decoding', 'warn');
-                          setErrorMessage('Music is still loading. Please wait a moment.');
-                          setShowErrorModal(true);
-                          return;
-                        }
-                        const now = Date.now();
-                        if (now - lastToggleRef.current < 500) {
-                          logToBackend(`record-btn onTouchEnd IGNORED (debounce ${now - lastToggleRef.current}ms)`, 'warn');
-                          return;
-                        }
-                        lastToggleRef.current = now;
-                        logToBackend(`record-btn onTouchEnd fired isRecording=${isRecordingRef.current}`, 'info');
-                        if (camMode === 'video') {
-                          isRecordingRef.current ? stopRecording() : startRecording().catch(console.error);
-                        } else {
-                          takePhoto();
-                        }
-                      }}
+                    <button type="button" className="ep-btn"
+                      aria-label={cameraLoading && !isRecording ? 'Camera starting' : shutterLabel}
+                      disabled={(isDecodingAudio && !isRecordingRef.current) || !!cameraError || (cameraLoading && !isRecording)}
+                      onClick={() => pressShutter('onClick')}
+                      onTouchEnd={(e) => { e.preventDefault(); pressShutter('onTouchEnd'); }}
                       style={{
                         width: 80, height: 80, borderRadius: '50%',
-                        background: camMode === 'video' ? (isRecording ? '#EF4444' : '#FFFFFF') : '#FFFFFF',
-                        border: `4px solid rgba(255,255,255,0.5)`,
+                        background: camMode === 'video' ? (isRecording ? REC_RED : '#FFFFFF') : '#FFFFFF',
+                        border: '4px solid rgba(255,255,255,0.5)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        boxShadow: isRecording ? `0 0 0 6px #EF444455` : 'rgba(0,0,0,0.4)',
+                        boxShadow: isRecording ? `0 0 0 6px ${REC_RED}55` : '0 4px 16px rgba(0,0,0,0.4)',
                         transition: 'all 0.2s',
-                        opacity: (isDecodingAudio && !isRecording) ? 0.4 : 1,
-                        cursor: (isDecodingAudio && !isRecording) ? 'wait' : 'pointer',
+                        opacity: ((isDecodingAudio || cameraLoading) && !isRecording) ? 0.4 : 1,
+                        cursor: ((isDecodingAudio || cameraLoading) && !isRecording) ? 'wait' : 'pointer',
                       }}>
                       {camMode === 'video'
                         ? (isRecording
-                          ? <Square size={26} color={T.txt} fill={T.txt} />
+                          ? <Square size={26} color="#fff" fill="#fff" />
                           : (isDecodingAudio
-                            ? <RefreshCw size={26} color="#666" style={{ animation: 'spin 1s linear infinite' }} />
-                            : <div style={{ width: 20, height: 20, borderRadius: '50%', background: '#EF4444' }} />))
-                        : <div style={{ width: 56, height: 56, borderRadius: '50%', background: T.cardBg || '#fff', border: `3px solid ${T.border}` }} />
+                            ? <RefreshCw size={26} color="#666" style={{ animation: 'ep-spin-slow 1s linear infinite' }} />
+                            : <div style={{ width: 22, height: 22, borderRadius: '50%', background: REC_RED }} />))
+                        : <div style={{ width: 58, height: 58, borderRadius: '50%', background: '#fff', border: '3px solid rgba(0,0,0,0.12)' }} />
                       }
                     </button>
                     {isDecodingAudio && !isRecording && (
                       <div style={{
-                        position: 'absolute',
-                        bottom: -28,
-                        left: '50%',
-                        transform: 'translateX(-50%)',
-                        whiteSpace: 'nowrap',
-                        background: 'rgba(0,0,0,0.85)',
-                        color: '#8fc441',
-                        fontSize: 11,
-                        fontWeight: 700,
-                        padding: '4px 10px',
-                        borderRadius: 12,
-                        border: '1px solid rgba(143,196,65,0.4)',
+                        position: 'absolute', bottom: -28, left: '50%', transform: 'translateX(-50%)',
+                        whiteSpace: 'nowrap', background: 'rgba(0,0,0,0.85)', color: '#fff',
+                        fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 12,
+                        border: '1px solid rgba(255,255,255,0.25)',
                       }}>
                         Loading music…
                       </div>
                     )}
-                    {/* Video icon indicator - only show in video mode */}
-                    {camMode === 'video' && (
-                      <div style={{
-                        position: 'absolute',
-                        top: -8,
-                        right: -8,
-                        width: 28,
-                        height: 28,
-                        borderRadius: '50%',
-                        background: 'rgba(0,0,0,0.75)',
-                        backdropFilter: 'blur(8px)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        border: '2px solid rgba(255,255,255,0.35)',
-                      }}>
-                        <Video size={14} color="#8fc441" strokeWidth={2.5} />
-                      </div>
-                    )}
                   </div>
 
-                  {/* Flip camera shortcut */}
-                  <button aria-label="Refresh" className="ep-btn" 
+                  {/* Switch camera — also mid-recording: only the video track is
+                      swapped, so the take carries on. */}
+                  <button type="button" className="ep-btn"
+                    aria-label={switchingCamera ? 'Switching camera' : 'Switch camera'}
+                    aria-busy={switchingCamera}
+                    disabled={switchingCamera || !!cameraError}
                     onClick={flipCamera}
                     onTouchEnd={flipCamera}
-                    style={{ background: 'rgba(0,0,0,0.45)', borderRadius: '50%', width: 52, height: 52, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.15)' }}>
-                    <RefreshCw size={22} color="#8fc441" />
+                    style={glassCircle(56)}>
+                    <RefreshCw size={22} color="#fff" style={switchingCamera ? { animation: 'ep-spin-slow .8s linear infinite' } : undefined} />
                   </button>
                 </div>
 
@@ -2060,15 +2424,17 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
                 {backgroundSound && (
                   <div style={{
                     display: 'flex', alignItems: 'center', gap: 10,
-                    background: `${T.dark}8C`, borderRadius: 24, padding: '8px 14px',
-                    backdropFilter: 'blur(10px)',
+                    background: 'rgba(0,0,0,0.55)', borderRadius: 24, padding: '6px 6px 6px 14px',
+                    backdropFilter: 'blur(10px)', color: '#fff', maxWidth: '100%',
                   }}>
                     <div style={{ width: 6, height: 6, borderRadius: '50%', background: T.pri, animation: isRecording ? 'ep-pulse 1s infinite' : 'none' }} />
                     <Music size={14} color={T.pri} />
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>{backgroundSound.name}</span>
-                    <button className="ep-btn" onClick={() => { setBackgroundSound(null); setCustomAudioFile(null); setDecodedAudioBuffer(null); }}
-                      style={{ background: `${T.pri}20`, borderRadius: '50%', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <X size={11} color={T.txt} />
+                    <span style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{backgroundSound.name}</span>
+                    <button type="button" className="ep-btn" aria-label="Remove sound"
+                      disabled={isRecording}
+                      onClick={() => { setBackgroundSound(null); setCustomAudioFile(null); setDecodedAudioBuffer(null); }}
+                      style={{ background: 'rgba(255,255,255,0.15)', borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <X size={13} color="#fff" />
                     </button>
                   </div>
                 )}
@@ -2203,9 +2569,9 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
                   <div role="list" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, padding: '14px 8px', borderRadius: 20, background: T.cardBg, border: `1px solid ${T.border}` }}>
                     {[
                       { Icon: Music, label: 'Music' },
-                      { Icon: Sparkles, label: `${FILTERS.length - 1} filters` },
+                      { Icon: Sparkles, label: `${VIDEO_FILTERS.length - 1} filters` },
                       { Icon: Type, label: 'Text' },
-                      { Icon: Zap, label: `${SPEEDS[0]}–${SPEEDS[SPEEDS.length - 1]}` },
+                      { Icon: RefreshCw, label: 'Front & back' },
                     ].map(({ Icon, label }) => (
                       <div key={label} role="listitem" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7 }}>
                         <div style={{ width: 38, height: 38, borderRadius: '50%', background: `${T.pri}17`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -2226,6 +2592,23 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
         </div>
       )}
 
+      {/* ── REVIEW STAGE ───────────────────────────────────────────────────── */}
+      {/* The recorded file plays back as it will be posted. Next continues to
+          the details page below, where the existing subscription and coin
+          checks run on Post exactly as for any other video. */}
+      {stage === 'review' && review && (
+        <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+          <RecordingReview
+            url={review.url}
+            filterName={recordedFilterId && recordedFilterId !== 'none' ? getFilter(recordedFilterId).name : ''}
+            accent={T.pri}
+            onRetake={() => retake()}
+            onChangeFilter={() => retake({ openFilters: true })}
+            onNext={() => setStage('details')}
+          />
+        </div>
+      )}
+
       {/* ── DETAILS STAGE ──────────────────────────────────────────────────── */}
       {stage === 'details' && (
         <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
@@ -2236,7 +2619,13 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
             borderBottom: `1px solid ${T.border}`,
             position: 'sticky', top: 0, background: T.bg, zIndex: 10,
           }}>
-            <button className="ep-btn" onClick={() => { setStage('capture'); setPreview(null); setSelectedFile(null); }}
+            {/* Back from a fresh recording returns to its review, so the take
+                is not thrown away by a back tap; otherwise to the chooser. */}
+            <button className="ep-btn" aria-label="Back"
+              onClick={() => {
+                if (review && selectedFile) { setStage('review'); return; }
+                setStage('capture'); setPreview(null); setSelectedFile(null);
+              }}
               style={{ background: 'rgba(255,255,255,0.12)', borderRadius: '50%', width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <ArrowLeft size={20} color={T.txt} />
             </button>
@@ -2307,16 +2696,15 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
                     background: 'rgba(0,0,0,0.28)', borderRadius: 4, padding: '1px 4px',
                   }}>{ov.text}</div>
                 ))}
-                {/* Filter label */}
-                {selectedFilter !== 'none' && (
+                {/* Filter label — the filter baked into this media. No tint over
+                    the thumbnail: the pixels already carry the filter. */}
+                {recordedFilterId && recordedFilterId !== 'none' && (
                   <div style={{
-                    position: 'absolute', inset: 0,
-                    background: 'rgba(218,155,42,0.12)',
-                    display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-                    padding: 6,
+                    position: 'absolute', left: 0, right: 0, bottom: 0,
+                    display: 'flex', justifyContent: 'center', padding: 6, pointerEvents: 'none',
                   }}>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: '#8fc441', background: 'rgba(0,0,0,0.5)', padding: '2px 6px', borderRadius: 8 }}>
-                      {activeFilter?.name}
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'rgba(0,0,0,0.55)', padding: '2px 7px', borderRadius: 8 }}>
+                      {getFilter(recordedFilterId).name}
                     </span>
                   </div>
                 )}
@@ -2918,15 +3306,17 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
           }}>
             <AlertCircle size={48} color={T.white} strokeWidth={3} />
           </div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: T.white }}>Upload Error</div>
-          <div style={{ fontSize: 15, color: T.sub, textAlign: 'center', maxWidth: 300, padding: '0 20px' }}>
-            {errorMessage}
+          <div role="alert" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20 }}>
+            <div style={{ fontSize: 22, fontWeight: 800, color: '#fff', textAlign: 'center', padding: '0 20px' }}>{errorTitle || 'Upload Error'}</div>
+            <div style={{ fontSize: 15, color: 'rgba(255,255,255,0.75)', textAlign: 'center', maxWidth: 320, padding: '0 20px', lineHeight: 1.5 }}>
+              {errorMessage}
+            </div>
           </div>
           <button
-            onClick={() => setShowErrorModal(false)}
+            onClick={() => { setShowErrorModal(false); setErrorTitle(''); }}
             style={{
-              padding: '12px 24px', borderRadius: 24, fontSize: 14, fontWeight: 700,
-              background: T.pri, color: T.white, border: 'none', cursor: 'pointer',
+              padding: '12px 28px', borderRadius: 24, fontSize: 14, fontWeight: 700,
+              background: T.pri, color: heroText, border: 'none', cursor: 'pointer',
             }}
           >
             OK

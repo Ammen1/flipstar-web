@@ -18,6 +18,12 @@ COPY . .
 
 RUN chmod -R +x node_modules/.bin/
 
+# Unit tests (node --test, no extra dependencies). A failure stops the image
+# from being built, so CI never pushes a bundle whose camera filters or
+# recorder logic are broken. The browser tests (npm run test:browser) need
+# Chrome and stay a local/manual step.
+RUN npm test
+
 # Vite inlines these into the bundle at BUILD time (see config.js), so they
 # are baked into the image and cannot be changed by a Kubernetes ConfigMap.
 # Pointing a deployment at a different backend means rebuilding.
