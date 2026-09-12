@@ -3,6 +3,7 @@ import { Trophy, Plus, Edit, Trash2, Users, Award, BarChart3, X, TrendingUp, Sta
 import api from '../../../api';
 import { ConfirmModal } from '../../components/modal/ConfirmModal';
 import { EditCampaignModal } from './EditCampaignModal';
+import { ReelPreview } from '../../components/ReelPreview';
 
 export function CampaignManagementPage({ theme, onManageCampaign }) {
   const [campaigns, setCampaigns] = useState([]);
@@ -1949,15 +1950,17 @@ function CampaignEntriesModal({ theme, campaign, onClose }) {
                   {entry.rank || index + 1}
                 </div>
                 
-                {entry.reel.image && (
-                  <div style={{
-                    width: 60,
-                    height: 60,
-                    borderRadius: 8,
-                    background: `url(${entry.reel.image}) center/cover`,
-                    flexShrink: 0,
-                  }} />
-                )}
+                <div style={{
+                  width: 60,
+                  height: 60,
+                  borderRadius: 8,
+                  background: theme.bg,
+                  position: 'relative',
+                  overflow: 'hidden',
+                  flexShrink: 0,
+                }}>
+                  <ReelPreview reel={entry.reel} iconSize={22} color={theme.sub} />
+                </div>
                 
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 600, color: theme.txt, marginBottom: 4 }}>

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import {
-  ArrowLeft, CheckCircle, XCircle, Image as ImageIcon,
+  ArrowLeft, CheckCircle, XCircle,
   Heart, MessageCircle, Bookmark, Eye, Share2, Clock, Hash,
   RefreshCw, User, Users, FileText, AlertTriangle, Star, Coins,
   Calendar, Mail, Shield, TrendingUp, Flag
@@ -9,6 +9,7 @@ import api from '../../../api';
 import config from '../../../config';
 import { usePermission } from '../../hooks/usePermission';
 import { AlertModal } from './AlertModal';
+import { ReelPreview } from '../ReelPreview';
 
 const PRIORITY_COLOR = { low: '#10B981', medium: '#F59E0B', high: '#EF4444', critical: '#7C3AED' };
 const STATUS_COLOR   = { pending: '#F59E0B', reviewing: '#3B82F6', resolved: '#10B981', dismissed: '#6B7280' };
@@ -84,7 +85,8 @@ export function ContentDetailModal({ isOpen, onClose, reelId, theme, onModerated
     </div>
   );
 
-  const isVideo  = !!reel?.media;
+  // media_type is known even while a post is processing and has no URL yet.
+  const isVideo  = reel?.media_type ? reel.media_type === 'video' : !!reel?.media;
   const isHidden = reel?.is_hidden;
 
   return (
@@ -125,14 +127,13 @@ export function ContentDetailModal({ isOpen, onClose, reelId, theme, onModerated
             {/* Media Preview */}
             <div style={{ ...card({ padding: 0 }), overflow: 'hidden' }}>
               <div style={{ width: '100%', aspectRatio: '9/16', background: '#000', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {isVideo ? (
-                  <video src={reel.media} controls muted playsInline style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                {isVideo && reel.media ? (
+                  <video src={reel.media} poster={reel.thumbnail || undefined} preload="metadata" controls muted playsInline style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                 ) : reel.image ? (
                   <img src={reel.image} alt="Content" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                 ) : (
-                  <div style={{ color: T.sub, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-                    <ImageIcon size={48} /><span style={{ fontSize: 13 }}>No media</span>
-                  </div>
+                  // Still processing, failed, or genuinely no media.
+                  <ReelPreview reel={reel} fit="contain" iconSize={48} />
                 )}
                 <div style={{
                   position: 'absolute', top: 12, left: 12,

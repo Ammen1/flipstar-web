@@ -3,6 +3,7 @@ import { Search, Trash2, TrendingUp, Eye, CheckCircle, XCircle, Flag, Filter } f
 import api from '../../../api';
 import { AlertModal } from '../../components/modal/AlertModal';
 import { ContentDetailModal } from '../../components/modal/ContentDetailModal';
+import { ReelPreview } from '../../components/ReelPreview';
 import { usePermission } from '../../hooks/usePermission';
 
 const TABS = [
@@ -270,19 +271,7 @@ export function ContentModeration({ theme }) {
                   fontSize: 60,
                   position: 'relative',
                 }}>
-                  {reel.image ? (
-                    <img
-                      src={reel.image}
-                      alt="Reel"
-                      style={{
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'cover',
-                      }}
-                    />
-                  ) : (
-                    '🎬'
-                  )}
+                  <ReelPreview reel={reel} />
                   {/* Hidden Status Badge */}
                   {reel.is_hidden && (
                     <div style={{

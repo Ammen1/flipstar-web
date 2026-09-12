@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Eye, CheckCircle, XCircle, Star, Image as ImageIcon, User, Award, Filter } from 'lucide-react';
+import { Eye, CheckCircle, XCircle, Star, User, Award, Filter } from 'lucide-react';
 import api from '../../../api';
+import { ReelPreview } from '../../components/ReelPreview';
 
 export function JudgingPortalPage({ theme }) {
   const [posts, setPosts] = useState([]);
@@ -181,14 +182,8 @@ export function JudgingPortalPage({ theme }) {
               }}
             >
               {/* Image Preview */}
-              <div style={{
-                height: 160,
-                background: post.image ? `url(${post.image}) center/cover` : theme.bg,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}>
-                {!post.image && <ImageIcon size={40} color={theme.sub} />}
+              <div style={{ height: 160, background: theme.bg, position: 'relative', overflow: 'hidden' }}>
+                <ReelPreview reel={post} color={theme.sub} />
               </div>
 
               <div style={{ padding: 16 }}>
@@ -281,14 +276,13 @@ export function JudgingPortalPage({ theme }) {
             {/* Post Preview */}
             <div style={{
               height: 200,
-              background: selectedPost.image ? `url(${selectedPost.image}) center/cover` : theme.bg,
+              background: theme.bg,
               borderRadius: 12,
               marginBottom: 24,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
+              position: 'relative',
+              overflow: 'hidden',
             }}>
-              {!selectedPost.image && <ImageIcon size={48} color={theme.sub} />}
+              <ReelPreview reel={selectedPost} iconSize={48} color={theme.sub} />
             </div>
 
             <p style={{ fontSize: 14, color: theme.sub, marginBottom: 24 }}>

@@ -245,6 +245,25 @@ function mediaApi(media, route, url, origin) {
       next: null,
     }];
   }
+  if (route === '/admin/reels/') {
+    // As api/views/admin.py answers since it uses reel_media_payload: a
+    // video's picture is its thumbnail (`image` stays null -- the old upload
+    // view put a frame there, the pipeline does not), and a post that is
+    // still processing or failed has no URL at all.
+    const unfinished = (id, status, extra) => ({
+      id, user: own, caption: status.toLowerCase(), media: null, image: null, thumbnail: null,
+      media_type: 'video', processing_status: status, processing_progress: 40, processing_error: null,
+      votes: 0, comment_count: 0, save_count: 0, is_hidden: false, created_at: new Date().toISOString(), ...extra,
+    });
+    const reels = [
+      processedVideo(origin, 821, 'a video'),
+      processedPhoto(origin, 823, 'a photo'),
+      { ...processedVideo(origin, 822, 'a video without a thumbnail'), thumbnail: null },
+      unfinished(824, 'PROCESSING'),
+      unfinished(825, 'FAILED', { processing_error: 'video_too_long' }),
+    ];
+    return [200, { reels, total: reels.length, page: 1, page_size: 20, total_pages: 1 }];
+  }
   if (route === '/campaigns/') return [200, []];
   if (route === '/campaigns/7/') {
     return [200, { id: 7, title: 'Spring Challenge', description: 'Show us spring.', campaign_type: 'daily', status: 'active' }];

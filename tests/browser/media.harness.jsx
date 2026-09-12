@@ -29,7 +29,13 @@ import CampaignFeed from '../../pages/campaign/CampaignFeed';
 import { UploadProgressIndicator } from '../../components/common/UploadProgressIndicator';
 import { uploadTracker } from '../../services/uploadTracker';
 import { STORE_KEY, createUploadTracker } from '../../utils/uploadTracker';
+import { ContentModeration } from '../../admin/pages/content/ContentModeration';
 import api from '../../api';
+
+const ADMIN_THEME = {
+  bg: '#0b1020', card: '#111827', txt: '#f9fafb', sub: '#9ca3af', border: '#1f2937',
+  pri: '#3b82f6', red: '#ef4444', green: '#10b981',
+};
 
 // ── plumbing ────────────────────────────────────────────────────────────────
 
@@ -166,7 +172,7 @@ async function run() {
     clips.push(clip);
   }
   assert(clips.every((c) => c.size > 1000), `recorded clips are ${clips.map((c) => c.size)} bytes`);
-  await registerRungs([801, 802, 803, 900, 811, 812], clips);
+  await registerRungs([801, 802, 803, 900, 811, 812, 822], clips);
 
   await test('the page a new post lands on shows it is being prepared, then plays it', async () => {
     connection = NETWORK.normal;
@@ -261,6 +267,37 @@ async function run() {
     assert(pathOf(img.currentSrc).endsWith('/720w.webp'), `the browser chose ${img.currentSrc}`);
     const reqs = await mediaRequests();
     assert(!reqs.some((p) => p.endsWith('/720w.jpg') || p.endsWith('/full.jpg')), 'the JPEG was downloaded as well');
+  });
+
+  // ── the admin panel ──────────────────────────────────────────────────────
+  // Content Moderation showed only `image`, so after the pipeline every
+  // video card was an empty clapper: a video's picture is its `thumbnail`.
+
+  await test('admin Content Moderation: videos show their thumbnail, unfinished posts their state', async () => {
+    await mediaRequests(true);
+    mount(<ContentModeration theme={ADMIN_THEME} />);
+    const cards = await waitFor(() => {
+      const found = Array.from(rootEl().querySelectorAll('[data-reel-preview]'));
+      return found.length === 5 && found;
+    }, 'the five admin cards');
+    const [video, photo, bare, processing, failed] = cards;
+    const imgOf = (card) => card.querySelector('img');
+
+    assert(pathOf(imgOf(video)?.src) === '/media/processed/thumbnails/821/v1/thumb.png', `video card shows ${imgOf(video)?.src}`);
+    assert(video.querySelector('[aria-label="Video"]'), 'the video card is not marked as a video');
+    assert(pathOf(imgOf(photo)?.src) === '/media/processed/thumbnails/823/v1/thumb.png', `photo card shows ${imgOf(photo)?.src}`);
+    const frame = bare.querySelector('video');
+    assert(frame && pathOf(frame.src) === '/media/processed/videos/822/v1/720p.webm', 'a video without a thumbnail shows nothing');
+    assert(frame.getAttribute('preload') === 'metadata' && frame.paused, 'the fallback frame plays or downloads in full');
+    assert(/Processing 40%/.test(processing.innerText), `processing card says "${processing.innerText}"`);
+    assert(/Processing failed/.test(failed.innerText) && /longer than allowed/.test(failed.innerText), `failed card says "${failed.innerText}"`);
+    assert(!/video_too_long/.test(failed.innerText), 'the failure code was shown');
+    assert(!cards.some((c) => c.innerText.includes('🎬')), 'a card is still an empty clapper');
+
+    await waitFor(() => [video, photo].every((c) => imgOf(c).complete && imgOf(c).naturalWidth > 0), 'the pictures to load');
+    const reqs = await mediaRequests();
+    assert(!reqs.some((p) => p.includes('/source/')), 'an original was requested');
+    return `${cards.length} cards: 2 pictures, 1 first frame, processing, failed`;
   });
 
   // ── the corner upload indicator ──────────────────────────────────────────
