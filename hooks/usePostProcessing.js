@@ -1,16 +1,17 @@
 import { useEffect, useRef } from 'react';
-import api from '../api';
 import { mediaStatus } from '../utils/media';
-import { watchProcessing } from '../utils/processingPoll';
+import { uploadTracker } from '../services/uploadTracker';
 
 /**
- * Keep `posts` that are still PROCESSING up to date: each is re-fetched on a
- * backoff (utils/processingPoll.js) and handed to `onUpdate` once it is READY
- * or FAILED. Posts that are not processing cost nothing.
+ * Keep `posts` that are still PROCESSING up to date: `onUpdate` gets each one
+ * once it is READY (the full post) or FAILED ({id, processing_status,
+ * processing_error}). Posts that are not processing cost nothing.
  *
- * Only an author ever holds PROCESSING posts -- feeds carry READY ones only --
- * so this runs on their own profile and on the page they land on after
- * posting, never on a feed.
+ * It does not poll by itself. The posts join the app's one upload tracker
+ * (services/uploadTracker.js), which asks about every processing post in a
+ * single request per tick -- so the post page, the profile grid, campaign
+ * entries and the corner indicator following the same upload make one
+ * request between them, not one each.
  */
 export function usePostProcessing(posts, onUpdate) {
   const onUpdateRef = useRef(onUpdate);
@@ -24,13 +25,6 @@ export function usePostProcessing(posts, onUpdate) {
 
   useEffect(() => {
     if (!pendingKey) return undefined;
-    return watchProcessing(pendingKey.split(','), {
-      fetchPost: (id) => api.request(`/reels/${id}/`, { skipCache: true }),
-      onUpdate: (post) => {
-        // Lists fetched while it was processing no longer describe it.
-        api.invalidateCache?.('/reels');
-        onUpdateRef.current?.(post);
-      },
-    });
+    return uploadTracker.watch(pendingKey.split(','), (post) => onUpdateRef.current?.(post));
   }, [pendingKey]);
 }

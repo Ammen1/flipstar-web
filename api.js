@@ -200,6 +200,16 @@ function invalidateCache(pattern) {
   }
 }
 
+// Per-account state kept outside this module (the upload tracker's list of
+// posts being processed) listens for this and forgets itself.
+function announceSignedOut() {
+  try {
+    window.dispatchEvent(new Event("flipstar:signed-out"));
+  } catch {
+    /* not in a browser */
+  }
+}
+
 const api = {
   enableE2E: async () => {
     _e2eEnabled = true;
@@ -220,6 +230,7 @@ const api = {
       localStorage.setItem("authToken", token);
     } else {
       localStorage.removeItem("authToken");
+      announceSignedOut();
     }
     _cache.clear(); // Clear cache on auth change
   },
@@ -249,12 +260,14 @@ const api = {
     localStorage.removeItem("adminToken");
     localStorage.removeItem("user");
     _cache.clear();
+    announceSignedOut();
   },
 
   clearToken: () => {
     authToken = null;
     localStorage.removeItem("authToken");
     _cache.clear();
+    announceSignedOut();
   },
 
   async request(endpoint, options = {}) {

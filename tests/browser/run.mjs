@@ -207,32 +207,42 @@ function processedPhoto(origin, id, caption) {
 }
 
 function newMediaState() {
-  return { files: new Map(), requests: [], ready: new Set() };
+  // processing: id -> { processing_status, processing_progress, processing_error, queued },
+  // what /posts/processing/ and /reels/<id>/ answer, set by the suite through
+  // /__media/control. 900 is the post an author just made; 901 one that failed.
+  const processing = new Map([
+    [900, { processing_status: 'PROCESSING', processing_progress: 30, processing_error: null, queued: false }],
+    [901, { processing_status: 'FAILED', processing_progress: 20, processing_error: 'video_too_long', queued: false }],
+  ]);
+  return { files: new Map(), requests: [], processing, apiLog: [] };
 }
 
 function mediaApi(media, route, url, origin) {
   const own = { id: 1, username: 'e2e_author' };
+  if (route === '/posts/processing/') {
+    const ids = (url.searchParams.get('ids') || '').split(',').filter(Boolean);
+    media.apiLog.push({ route, ids });
+    const rows = ids
+      .map(Number)
+      .filter((id) => media.processing.has(id))
+      .map((id) => ({ id, media_type: 'video', created_at: new Date().toISOString(), ...media.processing.get(id) }));
+    return [200, { posts: rows }];
+  }
+  const single = /^\/reels\/(\d+)\/$/.exec(route);
+  if (single && media.processing.has(Number(single[1]))) {
+    const id = Number(single[1]);
+    media.apiLog.push({ route, ids: [String(id)] });
+    const state = media.processing.get(id);
+    if (state.processing_status === 'READY') return [200, { ...processedVideo(origin, id, 'fresh upload'), user: own }];
+    return [200, {
+      id, user: own, caption: 'my new clip', media: null, image: null, thumbnail: null,
+      media_type: 'video', votes: 0, comment_count: 0, created_at: new Date().toISOString(), ...state,
+    }];
+  }
   if (route === '/reels/') {
     return [200, {
       results: [801, 802, 803].map((id, i) => processedVideo(origin, id, `clip ${i + 1}`)),
       next: null,
-    }];
-  }
-  if (route === '/reels/900/') {
-    // The post the author just made: PROCESSING until the suite says the
-    // worker is done (/__media/control?ready=900).
-    if (media.ready.has(900)) return [200, { ...processedVideo(origin, 900, 'my new clip'), user: own }];
-    return [200, {
-      id: 900, user: own, caption: 'my new clip', media: null, image: null, thumbnail: null,
-      media_variants: null, media_type: 'video', processing_status: 'PROCESSING', processing_error: null,
-      votes: 0, comment_count: 0, created_at: new Date().toISOString(),
-    }];
-  }
-  if (route === '/reels/901/') {
-    return [200, {
-      id: 901, user: own, caption: 'too long', media: null, image: null, thumbnail: null,
-      media_type: 'video', processing_status: 'FAILED', processing_error: 'video_too_long',
-      votes: 0, comment_count: 0, created_at: new Date().toISOString(),
     }];
   }
   if (route === '/campaigns/') return [200, []];
@@ -354,8 +364,27 @@ async function main() {
       return json(200, list);
     }
     if (url.pathname === '/__media/control') {
-      if (url.searchParams.has('ready')) state.media.ready.add(Number(url.searchParams.get('ready')));
+      if (url.searchParams.has('ready')) {
+        state.media.processing.set(Number(url.searchParams.get('ready')), {
+          processing_status: 'READY', processing_progress: 100, processing_error: null, queued: false,
+        });
+      }
+      // ?set=910:PROCESSING:25[:error]&queued=1 -- what the worker has reached.
+      if (url.searchParams.has('set')) {
+        const [id, status, progress, error] = url.searchParams.get('set').split(':');
+        state.media.processing.set(Number(id), {
+          processing_status: status,
+          processing_progress: Number(progress) || 0,
+          processing_error: error || null,
+          queued: url.searchParams.get('queued') === '1',
+        });
+      }
       return json(200, {});
+    }
+    if (url.pathname === '/__media/api-log') {
+      const list = state.media.apiLog.slice();
+      if (url.searchParams.get('clear') === '1') state.media.apiLog.length = 0;
+      return json(200, list);
     }
     if (url.pathname === '/__log') {
       console.log(`  ${body.toString('utf8')}`);
@@ -409,6 +438,16 @@ async function main() {
     if (suite === 'media') {
       const answer = mediaApi(state.media, route, url, origin);
       if (answer) return json(answer[0], answer[1]);
+    }
+    if (route === '/posts/processing/') {
+      // Posts made in this run are processing, as far as this stub knows.
+      const ids = (url.searchParams.get('ids') || '').split(',').filter(Boolean).map(Number);
+      const made = new Set([...state.posts.values()].map((p) => p.id));
+      return json(200, {
+        posts: ids.filter((id) => made.has(id)).map((id) => ({
+          id, processing_status: 'PROCESSING', processing_progress: 0, queued: true, media_type: 'video',
+        })),
+      });
     }
     if (route === '/explorer/trending/') {
       const [code, payload] = exploreTrending(state.explore, url, origin);

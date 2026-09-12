@@ -8,6 +8,7 @@ import { MediaProcessingState } from '../../components/common/MediaProcessingSta
 import { isMediaReady, isVideoPost } from '../../utils/media';
 import { newUploadId } from '../../utils/uploadId';
 import { usePostProcessing } from '../../hooks/usePostProcessing';
+import { uploadTracker } from '../../services/uploadTracker';
 
 const mediaUrl = (url) => {
   if (!url) return null;
@@ -1147,6 +1148,8 @@ function SubmitEntryModal({ theme: T, campaign, campaignId, onClose, onSuccess }
       
       console.log('Entry submitted successfully!');
       uploadIdRef.current = null;
+      // Its processing shows in the corner like any other upload.
+      uploadTracker.track(newReel);
       onSuccess();
     } catch (error) {
       console.error('Error submitting entry:', error);

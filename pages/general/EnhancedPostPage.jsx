@@ -4,7 +4,7 @@ import {
   Home, Film, Plus, PlusSquare, MessageCircle, User, Search, Settings, X, 
   Image as ImageIcon, Video, Hash, Type, Upload, Music, Volume2, VolumeX, 
   Play, Pause, RotateCw, RefreshCw, Camera, Mic, MicOff, Sparkles, Palette, 
-  ChevronDown, ChevronLeft, ChevronRight, Check, AlertCircle, Trash2,
+  ChevronDown, ChevronLeft, ChevronRight, AlertCircle, Trash2,
   Zap, ZapOff, Square, FileText, Eye, Bookmark, Share2, ArrowLeft, Heart, Coins,
   Sliders, Crown
 } from 'lucide-react';
@@ -27,7 +27,8 @@ import { RecordingReview } from '../../components/camera/RecordingReview';
 import { CameraErrorPanel } from '../../components/camera/CameraErrorPanel';
 import { friendlyUploadError } from '../../utils/uploadErrors';
 import { forgetUploadId, newUploadId, uploadIdFor } from '../../utils/uploadId';
-import { mediaStatus } from '../../utils/media';
+import { uploadThumbnail } from '../../utils/uploadThumb';
+import { uploadTracker } from '../../services/uploadTracker';
 
 // Text colour that stays readable on the theme's accent. The accent is chosen
 // in the admin panel, so it can be a light green or a near-black; dark text on
@@ -188,10 +189,6 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
   }, []);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [showSuccess, setShowSuccess] = useState(false);
-  // True when the API accepted the post but is still encoding it: it reaches
-  // feeds when that finishes, so "it's live" would not be true yet.
-  const [postIsProcessing, setPostIsProcessing] = useState(false);
   const [showInsufficientCoins, setShowInsufficientCoins] = useState(false);
   const [postCost, setPostCost] = useState(0);
   const [showErrorModal, setShowErrorModal] = useState(false);
@@ -1773,9 +1770,12 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
     }
     
     setUploadProgress(0);
+    // The corner indicator's thumbnail, made from the local preview while
+    // the upload runs (utils/uploadThumb.js); null if it cannot be.
+    const thumbPromise = uploadThumbnail(preview, isVideoFile);
     try {
       const fd = new FormData();
-      
+
       // If we have a selectedFile (new recording/upload), use it
       // Otherwise, if preview is a URL (from draft), fetch it and upload
       if (selectedFile) {
@@ -1872,17 +1872,22 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
 
         uploadIdRef.current = null;
         if (selectedFile) forgetUploadId(selectedFile);
-        setPostIsProcessing(mediaStatus(newReel) === 'PROCESSING');
         setUploadProgress(100);
-        setShowSuccess(true);
-        setTimeout(() => {
-          setShowSuccess(false);
-          if (onPostSuccess) {
-            onPostSuccess(newReel.id);
-          } else {
-            onBack?.();
-          }
-        }, 2000);
+
+        // TikTok-style: the upload is accepted, so the person goes straight
+        // back to the feed. Processing carries on on the server; the corner
+        // indicator (services/uploadTracker.js) shows its real progress, puts
+        // the post in the feed when it is READY, and says so if it fails.
+        const thumb = await Promise.race([
+          thumbPromise,
+          new Promise((resolve) => setTimeout(() => resolve(null), 400)),
+        ]);
+        uploadTracker.track(newReel, { thumb });
+        if (onPostSuccess) {
+          onPostSuccess(newReel.id);
+        } else {
+          onBack?.();
+        }
       }
     } catch (e) {
       console.error('Upload failed', e);
@@ -1989,7 +1994,6 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
         @keyframes ep-pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
         @keyframes ep-fade-in { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
         @keyframes ep-spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
-        @keyframes ep-success { 0%{transform:scale(0.7);opacity:0} 60%{transform:scale(1.1)} 100%{transform:scale(1);opacity:1} }
         .ep-btn { border:none; cursor:pointer; transition:all 0.15s; touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
         .ep-btn:active { transform:scale(0.94); }
         .ep-btn:focus-visible { outline: 2px solid ${T.pri}; outline-offset: 2px; }
@@ -3091,37 +3095,8 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
         </div>
       )}
 
-      {/* ── SUCCESS OVERLAY ──────────────────────────────────────────────────── */}
-      {showSuccess && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 9999,
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-          gap: 20, animation: 'ep-fade-in 0.3s ease',
-        }}>
-          <div style={{
-            width: 96, height: 96, borderRadius: '50%',
-            background: 'linear-gradient(135deg, #10B981, #059669)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            animation: 'ep-success 0.4s cubic-bezier(0.175,0.885,0.32,1.275)',
-          }}>
-            <Check size={48} color={T.white} strokeWidth={3} />
-          </div>
-          {postIsProcessing ? (
-            <>
-              <div style={{ fontSize: 22, fontWeight: 800, color: T.white }}>Posted! 🎉</div>
-              <div style={{ fontSize: 15, color: T.sub, textAlign: 'center', maxWidth: 300, lineHeight: 1.45 }}>
-                Your post is being prepared. We're optimizing your {isVideoFile ? 'video' : 'photo'} for
-                faster playback; it will appear in the feed in a moment.
-              </div>
-            </>
-          ) : (
-            <>
-              <div style={{ fontSize: 22, fontWeight: 800, color: T.white }}>{isVideoFile ? 'Video is Live! 🎉' : 'Photo is Live! 🎉'}</div>
-              <div style={{ fontSize: 15, color: T.sub }}>Your post has been uploaded</div>
-            </>
-          )}
-        </div>
-      )}
+      {/* No success overlay: once the upload is accepted the page goes back
+          to the feed and the corner indicator takes over (see handlePost). */}
 
       {/* ── INSUFFICIENT COINS MODAL ──────────────────────────────────────────── */}
       {/* Not enough coins to post. The old inline panel's only real action

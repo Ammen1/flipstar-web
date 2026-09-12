@@ -26,6 +26,10 @@ import { LanguageProvider } from '../../contexts/LanguageContext';
 import { VideoDetailPage } from '../../pages/feed/VideoDetailPage';
 import { ReelLayout } from '../../components/feed/ReelLayout';
 import CampaignFeed from '../../pages/campaign/CampaignFeed';
+import { UploadProgressIndicator } from '../../components/common/UploadProgressIndicator';
+import { uploadTracker } from '../../services/uploadTracker';
+import { STORE_KEY, createUploadTracker } from '../../utils/uploadTracker';
+import api from '../../api';
 
 // ── plumbing ────────────────────────────────────────────────────────────────
 
@@ -153,7 +157,14 @@ function mount(element) {
 // ── the tests ──────────────────────────────────────────────────────────────
 
 async function run() {
-  const clips = await Promise.all([recordClip('#1d4ed8'), recordClip('#b91c1c'), recordClip('#15803d')]);
+  // One at a time, with a second try: three recorders at once occasionally
+  // came back empty in headless Chrome.
+  const clips = [];
+  for (const color of ['#1d4ed8', '#b91c1c', '#15803d']) {
+    let clip = await recordClip(color);
+    if (clip.size < 1000) clip = await recordClip(color);
+    clips.push(clip);
+  }
   assert(clips.every((c) => c.size > 1000), `recorded clips are ${clips.map((c) => c.size)} bytes`);
   await registerRungs([801, 802, 803, 900, 811, 812], clips);
 
@@ -250,6 +261,116 @@ async function run() {
     assert(pathOf(img.currentSrc).endsWith('/720w.webp'), `the browser chose ${img.currentSrc}`);
     const reqs = await mediaRequests();
     assert(!reqs.some((p) => p.endsWith('/720w.jpg') || p.endsWith('/full.jpg')), 'the JPEG was downloaded as well');
+  });
+
+  // ── the corner upload indicator ──────────────────────────────────────────
+  const setServer = (id, status, progress, { queued = false, error = '' } = {}) =>
+    fetch(`/__media/control?set=${id}:${status}:${progress}${error ? `:${error}` : ''}${queued ? '&queued=1' : ''}`);
+  const apiLog = (clear = false) => fetch(`/__media/api-log${clear ? '?clear=1' : ''}`).then((r) => r.json());
+  const corner = (id) => document.querySelector(`[data-upload-id="${id}"]`);
+  const shownPercent = (id) => corner(id)?.querySelector('[data-upload-percent]')?.textContent;
+
+  await test('the corner shows the server\'s real percentage, hands the post to the feed, then goes', async () => {
+    const handed = [];
+    const onReady = (e) => handed.push(e.detail);
+    window.addEventListener('flipstar:post-ready', onReady);
+    await setServer(910, 'PROCESSING', 0, { queued: true });
+    mount(<UploadProgressIndicator />);
+    uploadTracker.track({ id: 910, processing_status: 'PROCESSING', media_type: 'video' });
+
+    await waitFor(() => /Waiting to process/.test(corner(910)?.innerText || ''), 'the queued state');
+    const seen = new Set();
+    const sampler = setInterval(() => { const t = shownPercent(910); if (t) seen.add(t); }, 40);
+    await setServer(910, 'PROCESSING', 25);
+    await waitFor(() => shownPercent(910) === '25%', '25%');
+    await setServer(910, 'PROCESSING', 60);
+    await waitFor(() => shownPercent(910) === '60%', '60%');
+    clearInterval(sampler);
+    const invented = [...seen].filter((t) => !['0%', '25%', '60%'].includes(t));
+    assert(!invented.length, `the indicator showed numbers the server never sent: ${invented}`);
+    assert(corner(910).getAttribute('aria-valuenow') === '60', 'the progressbar value is not the server\'s');
+
+    await setServer(910, 'READY', 100);
+    await waitFor(() => /Posted/.test(corner(910)?.innerText || ''), '"Posted"');
+    await waitFor(() => handed.some((p) => p.id === 910), 'the feed to be handed the post');
+    assert(handed.find((p) => p.id === 910).media.endsWith('/v1/720p.webm'), 'the post arrived without its media');
+    await waitFor(() => !corner(910), 'the indicator to go', 6000);
+    window.removeEventListener('flipstar:post-ready', onReady);
+    return `seen ${[...seen].join(' → ')} → Posted`;
+  });
+
+  await test('a failure says why, safely, and stays until dismissed', async () => {
+    await setServer(911, 'FAILED', 30, { error: 'video_too_long' });
+    uploadTracker.track({ id: 911, processing_status: 'PROCESSING', media_type: 'video' });
+    const item = await waitFor(() => corner(911)?.getAttribute('data-upload-status') === 'FAILED' && corner(911), 'the failed state');
+    assert(/Couldn't post your video/.test(item.innerText), item.innerText);
+    assert(/longer than allowed/.test(item.innerText), 'no reason given');
+    assert(!/video_too_long|traceback|exception|ffmpeg/i.test(item.innerText), 'technical detail shown');
+    await sleep(3000);
+    assert(corner(911), 'the failure went away by itself');
+    item.querySelector('button[aria-label="Dismiss"]').click();
+    await waitFor(() => !corner(911), 'the dismissal');
+  });
+
+  await test('two uploads share one request per poll; nothing polls a post on its own', async () => {
+    await setServer(912, 'PROCESSING', 10);
+    await setServer(913, 'PROCESSING', 40);
+    await apiLog(true);
+    uploadTracker.track({ id: 912, processing_status: 'PROCESSING', media_type: 'video' });
+    uploadTracker.track({ id: 913, processing_status: 'PROCESSING', media_type: 'image' });
+    await waitFor(() => shownPercent(912) === '10%' && shownPercent(913) === '40%', 'both uploads in the corner');
+    await sleep(4500);
+    const log = await apiLog();
+    const polls = log.filter((r) => r.route === '/posts/processing/');
+    assert(polls.length >= 2 && polls.length <= 5, `${polls.length} status requests in about 5 s`);
+    assert(polls.slice(1).every((r) => r.ids.includes('912') && r.ids.includes('913')), JSON.stringify(polls));
+    assert(!log.some((r) => r.route.startsWith('/reels/')), 'a post was polled on its own');
+    return `${polls.length} requests, each for both`;
+  });
+
+  await test('after a reload the corner comes back from storage and carries on', async () => {
+    // What a reload leaves behind: the old page's poller is gone, what it
+    // stored is not, and a new tracker starts from that.
+    const stored = localStorage.getItem(STORE_KEY);
+    uploadTracker.clear();
+    localStorage.setItem(STORE_KEY, stored);
+    const reloaded = createUploadTracker({
+      fetchStatuses: async (ids) => (await api.request(`/posts/processing/?ids=${ids.join(',')}`, { skipCache: true })).posts || [],
+      fetchPost: (id) => api.request(`/reels/${id}/`, { skipCache: true }),
+      storage: localStorage,
+    });
+    mount(<UploadProgressIndicator tracker={reloaded} />);
+    await waitFor(() => shownPercent(912) === '10%' && shownPercent(913) === '40%', 'the uploads back, as last seen');
+    await setServer(913, 'PROCESSING', 70);
+    reloaded.resume();
+    await waitFor(() => shownPercent(913) === '70%', 'progress to carry on after the reload');
+    await setServer(912, 'READY', 100);
+    await setServer(913, 'READY', 100);
+    await waitFor(() => !corner(912) && !corner(913), 'both to finish', 10000);
+    reloaded.clear();
+  });
+
+  await test('the post page follows its post through the same tracker', async () => {
+    // Already covered visually by the first test on this page; here: the
+    // post page and the indicator following one upload make one request.
+    await setServer(914, 'PROCESSING', 50);
+    await apiLog(true);
+    mount(
+      <>
+        <UploadProgressIndicator />
+        <VideoDetailPage reelId={914} user={me} onBack={() => {}} subscriptionStatus={{ has_subscription: true }} />
+      </>
+    );
+    uploadTracker.track({ id: 914, processing_status: 'PROCESSING', media_type: 'video' });
+    await waitFor(() => /Preparing your post/.test(pageText()) && shownPercent(914) === '50%', 'both showing the upload');
+    await sleep(2500);
+    const polls = (await apiLog()).filter((r) => r.route === '/posts/processing/');
+    assert(polls.every((r) => r.ids.filter((id) => id === '914').length === 1), 'the upload was asked about twice in one request');
+    const perTick = polls.length;
+    assert(perTick <= 3, `${perTick} status requests in 2.5 s for one upload`);
+    await setServer(914, 'READY', 100);
+    await waitFor(() => videos().length === 1 && !/Preparing your post/.test(pageText()), 'the page to show the video', 10000);
+    uploadTracker.clear();
   });
 
   await test('no uncaught errors from the page', async () => {

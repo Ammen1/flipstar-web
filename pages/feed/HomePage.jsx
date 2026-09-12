@@ -19,7 +19,7 @@ import { dedupeById } from '../../utils/collections';
 import { likeCountOf, commentCountOf, shareCountOf } from '../../utils/engagement';
 import { getCampaignId, isCampaignPost as postIsCampaign, getCampaignTitle } from '../../utils/campaign';
 import { ModernCommentSection } from '../../components/messaging/ModernCommentSection';
-import { isVideoUrl, isVideoPost } from '../../utils/media';
+import { isVideoUrl, isVideoPost, isMediaReady } from '../../utils/media';
 import { connectionTier, videoPreload, pickVideoSource, pickImageSource, pickImageWebp } from '../../utils/connection';
 
 const BACKEND = config.API_BASE_URL.replace('/api', '');
@@ -2890,6 +2890,21 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
       realtimeService.removeEventListener('NEW_POST', handleNewPost);
       realtimeService.removeEventListener('FEED_REFRESH', handleFeedRefresh);
     };
+  }, []);
+
+  // One of the user's uploads finished processing while they browse (the
+  // corner indicator, services/uploadTracker.js): it goes to the top of the
+  // feed at once, as the post it now is -- not on the next refresh. The
+  // cached feed predates it, so it is dropped.
+  useEffect(() => {
+    const onPostReady = (e) => {
+      const post = e.detail;
+      if (!post || post.id == null || !isMediaReady(post)) return;
+      setPosts((prev) => [post, ...prev.filter((p) => p.id !== post.id)]);
+      try { localStorage.removeItem(CACHE_KEY); } catch { /* storage blocked */ }
+    };
+    window.addEventListener('flipstar:post-ready', onPostReady);
+    return () => window.removeEventListener('flipstar:post-ready', onPostReady);
   }, []);
 
   // Track whether this tab has ever loaded, to avoid redundant re-fetches

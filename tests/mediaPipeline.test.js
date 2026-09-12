@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { failureText, isMediaReady, isVideoPost, mediaStatus, pauseOtherVideos } from '../utils/media.js';
 import { pickImageSource, pickImageWebp, pickVideoSource } from '../utils/connection.js';
 import { forgetUploadId, newUploadId, uploadIdFor } from '../utils/uploadId.js';
-import { POLL_GIVE_UP_MS, pollDelay, watchProcessing } from '../utils/processingPoll.js';
+import { createUploadTracker, pollInterval } from '../utils/uploadTracker.js';
 
 // What the API sends for posts in each state (api/serializers/core.py).
 const processingVideo = { id: 1, media: null, image: null, thumbnail: null, media_type: 'video', processing_status: 'PROCESSING' };
@@ -180,83 +180,240 @@ function fakeTime() {
   };
 }
 
-describe('watching a post until it is ready', () => {
-  it('backs off from a few seconds to a steady pace', () => {
-    assert.deepEqual([0, 1, 2, 3, 4, 9].map(pollDelay), [3000, 5000, 8000, 13000, 15000, 15000]);
+// ── the upload tracker ─────────────────────────────────────────────────────
+
+const flush = async () => {
+  for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+};
+
+/** A pretend /posts/processing/ and /reels/<id>/, with a request log. */
+function fakeServer(initial = {}) {
+  const rows = new Map(Object.entries(initial).map(([id, row]) => [id, { id: Number(id), ...row }]));
+  const requests = [];
+  return {
+    requests,
+    set(id, row) { rows.set(String(id), { id, ...(rows.get(String(id)) || {}), ...row }); },
+    remove(id) { rows.delete(String(id)); },
+    fetchStatuses: async (ids) => {
+      requests.push([...ids]);
+      return ids.map((id) => rows.get(String(id))).filter(Boolean);
+    },
+    fetchPost: async (id) => ({ id: Number(id), media: `https://obs/processed/videos/${id}/v1/720p.mp4`, processing_status: 'READY' }),
+  };
+}
+
+function memoryStore() {
+  const data = new Map();
+  return { getItem: (k) => data.get(k) ?? null, setItem: (k, v) => data.set(k, String(v)) };
+}
+
+function trackerWith(server, time, extra = {}) {
+  const ready = [];
+  const tracker = createUploadTracker({
+    fetchStatuses: server.fetchStatuses,
+    fetchPost: server.fetchPost,
+    now: time.now,
+    setTimer: time.setTimer,
+    clearTimer: time.clearTimer,
+    onReady: (post) => ready.push(post),
+    ...extra,
+  });
+  return { tracker, ready };
+}
+
+describe('upload tracker', () => {
+  it('polls brisk while an upload is new, then eases off', () => {
+    assert.deepEqual([0, 179e3, 181e3, 19 * 60e3, 21 * 60e3].map(pollInterval), [2000, 2000, 5000, 5000, 15000]);
   });
 
-  it('reports each post once when it stops processing, then stops', async () => {
+  it('asks about every upload in one request per tick, and shows the real percentage', async () => {
     const time = fakeTime();
-    const status = { 1: 'PROCESSING', 2: 'PROCESSING' };
-    const fetched = [];
-    const updated = [];
-    watchProcessing([1, 2], {
-      fetchPost: async (id) => {
-        fetched.push(id);
-        return { id, processing_status: status[id] };
-      },
-      onUpdate: (post) => updated.push(post),
-      ...time,
-    });
+    const server = fakeServer({ 1: { processing_status: 'PROCESSING', processing_progress: 0 } });
+    const { tracker } = trackerWith(server, time);
 
+    tracker.track({ id: 1, processing_status: 'PROCESSING', media_type: 'video' });
+    tracker.track({ id: 2, processing_status: 'PROCESSING', media_type: 'image' });
+    server.set(2, { processing_status: 'PROCESSING', processing_progress: 0 });
+    await flush();
+    server.set(1, { processing_progress: 25 });
+    server.set(2, { processing_progress: 60 });
     await time.next();
-    assert.deepEqual(updated, []);
-    status[1] = 'READY';
-    await time.next();
-    assert.deepEqual(updated.map((p) => p.id), [1]);
-    status[2] = 'FAILED';
-    await time.next();
-    assert.deepEqual(updated.map((p) => [p.id, p.processing_status]), [[1, 'READY'], [2, 'FAILED']]);
-    assert.equal(time.pending(), 0, 'kept polling after both finished');
-    assert.deepEqual(fetched, [1, 2, 1, 2, 2]);
+    await flush();
+
+    assert.deepEqual(server.requests.at(-1).sort(), ['1', '2'], 'not one request for both');
+    assert.ok(server.requests.every((ids) => ids.length >= 1), 'a request with nothing in it');
+    const shown = tracker.getSnapshot();
+    assert.deepEqual(shown.map((e) => [e.id, e.progress]), [[1, 25], [2, 60]]);
   });
 
-  it('drops a post deleted meanwhile, and retries other errors', async () => {
+  it('announces a READY post once, shows Posted briefly, then stops polling', async () => {
     const time = fakeTime();
-    let calls = 0;
-    watchProcessing([7], {
-      fetchPost: async () => {
-        calls += 1;
-        const err = new Error('x');
-        err.status = calls === 1 ? 503 : 404;
-        throw err;
-      },
-      onUpdate: () => assert.fail('nothing to report'),
-      ...time,
-    });
+    const server = fakeServer({ 5: { processing_status: 'PROCESSING', processing_progress: 80 } });
+    const { tracker, ready } = trackerWith(server, time);
+    tracker.track({ id: 5, processing_status: 'PROCESSING', media_type: 'video' });
+    await flush();
+
+    server.set(5, { processing_status: 'READY', processing_progress: 100 });
     await time.next();
-    assert.equal(time.pending(), 1, 'a 503 should be retried');
+    await flush();
+    assert.deepEqual(ready.map((p) => p.id), [5], 'the feed was not told');
+    assert.equal(ready[0].media, 'https://obs/processed/videos/5/v1/720p.mp4');
+    assert.equal(tracker.getSnapshot()[0].status, 'READY');
+    assert.equal(tracker._running(), false, 'kept polling after it was ready');
+
+    const before = server.requests.length;
+    await time.next(); // the "Posted" linger
+    assert.deepEqual(tracker.getSnapshot(), [], 'the indicator stayed');
+    assert.equal(server.requests.length, before);
+    assert.equal(ready.length, 1, 'announced twice');
+  });
+
+  it('keeps a failure, with its reason, until it is dismissed', async () => {
+    const time = fakeTime();
+    const server = fakeServer({ 7: { processing_status: 'FAILED', processing_error: 'video_too_long' } });
+    const { tracker, ready } = trackerWith(server, time);
+    tracker.track({ id: 7, processing_status: 'PROCESSING' });
+    await flush();
+
+    const [entry] = tracker.getSnapshot();
+    assert.equal(entry.status, 'FAILED');
+    assert.equal(entry.error, 'video_too_long');
+    assert.equal(ready.length, 0);
+    assert.equal(tracker._running(), false);
+    tracker.dismiss(7);
+    assert.deepEqual(tracker.getSnapshot(), []);
+  });
+
+  it('survives a reload: the list is in storage and polling resumes', async () => {
+    const time = fakeTime();
+    const storage = memoryStore();
+    const server = fakeServer({ 9: { processing_status: 'PROCESSING', processing_progress: 40 } });
+    const first = trackerWith(server, time, { storage }).tracker;
+    first.track({ id: 9, processing_status: 'PROCESSING', media_type: 'video' }, { thumb: 'data:image/jpeg;base64,AAA' });
+    await flush();
+    first.clear = () => {}; // the old page is simply gone
+
+    const { tracker: reloaded } = trackerWith(server, fakeTime(), { storage });
+    assert.deepEqual(reloaded.getSnapshot().map((e) => [e.id, e.progress, e.thumb]), [[9, 40, 'data:image/jpeg;base64,AAA']]);
+    const asked = server.requests.length;
+    reloaded.resume();
+    await flush();
+    assert.equal(server.requests.length, asked + 1, 'the reloaded page did not poll');
+  });
+
+  it('drops an upload the server no longer has, and retries through errors', async () => {
+    const time = fakeTime();
+    const server = fakeServer({ 3: { processing_status: 'PROCESSING' } });
+    let failNext = true;
+    const flaky = { ...server, fetchStatuses: async (ids) => {
+      if (failNext) { failNext = false; throw new Error('offline'); }
+      return server.fetchStatuses(ids);
+    } };
+    const { tracker } = trackerWith(flaky, time);
+    tracker.track({ id: 3, processing_status: 'PROCESSING' });
+    await flush();
+    assert.equal(tracker.getSnapshot().length, 1, 'an error dropped the upload');
+
+    server.remove(3);
     await time.next();
-    assert.equal(time.pending(), 0, 'a 404 should end the watch');
+    await flush();
+    assert.deepEqual(tracker.getSnapshot(), [], 'a deleted post was kept');
   });
 
-  it('gives up after a while', async () => {
+  it('pages watching the same post share the one poll and hear the result', async () => {
     const time = fakeTime();
-    watchProcessing([9], { fetchPost: async (id) => ({ id, processing_status: 'PROCESSING' }), onUpdate: () => {}, ...time });
-    let ticks = 0;
-    while (await time.next()) ticks += 1;
-    assert.ok(time.now() >= POLL_GIVE_UP_MS);
-    assert.ok(ticks < 80, `${ticks} requests for one post`);
+    const server = fakeServer({ 11: { processing_status: 'PROCESSING' } });
+    const { tracker } = trackerWith(server, time);
+    const heardA = [];
+    const heardB = [];
+    tracker.watch([11], (p) => heardA.push(p));
+    tracker.watch([11], (p) => heardB.push(p));
+    await flush();
+    assert.deepEqual(tracker.getSnapshot(), [], 'a watched post appeared in the corner');
+    assert.ok(server.requests.every((ids) => ids.filter((id) => id === '11').length === 1));
+
+    server.set(11, { processing_status: 'READY' });
+    await time.next();
+    await flush();
+    assert.equal(heardA[0].id, 11);
+    assert.equal(heardB[0].id, 11);
   });
 
-  it('reports nothing after it is stopped', async () => {
+  it('only one tab polls; the others follow its writes', async () => {
     const time = fakeTime();
-    let release;
-    const stop = watchProcessing([3], {
-      fetchPost: () => new Promise((resolve) => { release = resolve; }),
-      onUpdate: () => assert.fail('reported after stop'),
-      ...time,
-    });
-    const tick = time.next();
-    stop();
-    release({ id: 3, processing_status: 'READY' });
-    await tick;
-    assert.equal(time.pending(), 0);
+    const server = fakeServer({ 21: { processing_status: 'PROCESSING' }, 22: { processing_status: 'PROCESSING' } });
+    const shared = new Map();
+    const tabs = [];
+    const tab = () => {
+      const me = { listeners: [] };
+      tabs.push(me);
+      return {
+        storage: {
+          getItem: (k) => shared.get(k) ?? null,
+          setItem: (k, v) => {
+            shared.set(k, String(v));
+            tabs.filter((t) => t !== me).forEach((t) => t.listeners.forEach((fn) => fn(k)));
+          },
+        },
+        listenStorage: (fn) => me.listeners.push(fn),
+      };
+    };
+    let queue = Promise.resolve();
+    const locks = { request: (name, cb) => { const run = queue.then(() => cb()); queue = run.catch(() => {}); return run; } };
+    const calls = { a: 0, b: 0 };
+    const counted = (name) => ({ ...server, fetchStatuses: (ids) => { calls[name] += 1; return server.fetchStatuses(ids); } });
+
+    const a = trackerWith(counted('a'), time, { ...tab(), locks }).tracker;
+    const b = trackerWith(counted('b'), time, { ...tab(), locks }).tracker;
+    a.track({ id: 21, processing_status: 'PROCESSING' });
+    b.track({ id: 22, processing_status: 'PROCESSING' });
+    await flush();
+    await time.next();
+    await flush();
+
+    // Whichever tab took the lock first polls -- one, not both.
+    assert.ok((calls.a === 0) !== (calls.b === 0), `both tabs polled (${calls.a} and ${calls.b})`);
+    assert.deepEqual(server.requests.at(-1).sort(), ['21', '22'], 'the polling tab missed the other tab\'s upload');
+    const follower = calls.a ? b : a;
+    server.set(21, { processing_status: 'READY' });
+    server.set(22, { processing_status: 'READY' });
+    await time.next();
+    await flush();
+    assert.ok(follower.getSnapshot().every((e) => e.status === 'READY'), 'the other tab never heard');
   });
 
-  it('does nothing when no post is processing', () => {
+  it('adopts uploads the server says are processing, but not stale ones', () => {
     const time = fakeTime();
-    watchProcessing([], { fetchPost: async () => assert.fail('fetched'), onUpdate: () => {}, ...time });
-    assert.equal(time.pending(), 0);
+    const { tracker } = trackerWith(fakeServer(), time);
+    const hoursAgo = (h) => new Date(time.now() - h * 3600e3).toISOString();
+    tracker.adopt([
+      { id: 31, processing_status: 'PROCESSING', processing_progress: 10, created_at: hoursAgo(0.1) },
+      { id: 32, processing_status: 'PROCESSING', created_at: hoursAgo(5) },
+      { id: 33, processing_status: 'READY', created_at: hoursAgo(0.1) },
+    ]);
+    assert.deepEqual(tracker.getSnapshot().map((e) => e.id), [31]);
+  });
+
+  it('a post that was READY at once is announced without any polling', async () => {
+    const time = fakeTime();
+    const server = fakeServer();
+    const { tracker, ready } = trackerWith(server, time);
+    tracker.track({ id: 41, processing_status: 'READY', media: 'https://obs/x.mp4' });
+    await flush();
+    assert.deepEqual(ready.map((p) => p.id), [41]);
+    assert.equal(server.requests.length, 0);
+    await time.next();
+    assert.deepEqual(tracker.getSnapshot(), []);
+  });
+
+  it('forgets everything on sign-out', async () => {
+    const time = fakeTime();
+    const server = fakeServer({ 51: { processing_status: 'PROCESSING' } });
+    const { tracker } = trackerWith(server, time, { storage: memoryStore() });
+    tracker.track({ id: 51, processing_status: 'PROCESSING' });
+    await flush();
+    tracker.clear();
+    assert.deepEqual(tracker.getSnapshot(), []);
+    assert.equal(tracker._running(), false);
   });
 });

@@ -18,6 +18,7 @@ import { WebGLFilterRenderer } from '../../components/camera/filters/webglRender
 import { Canvas2DFilterRenderer } from '../../components/camera/filters/canvasRenderer';
 import { meanAbsDiff, renderReference } from '../../components/camera/filters/colorMath';
 import { fromRGBA8, makeTestImage, toRGBA8 } from '../helpers/testImage';
+import { uploadTracker } from '../../services/uploadTracker';
 
 // ── plumbing ────────────────────────────────────────────────────────────────
 
@@ -379,12 +380,16 @@ const UPLOAD_ID = /^[A-Za-z0-9_.:-]{8,64}$/;
 
 async function postAndWait() {
   const before = (await uploads()).length;
+  window.__postedId = undefined;
   click(await waitFor(() => all('button').find((b) => b.textContent.trim() === 'Post'), 'Post button'), 'Post');
-  // The API answers PROCESSING: the post exists, its media is being encoded,
-  // and the page must not claim it is already live.
-  await waitFor(() => /Posted!/.test(pageText()), 'the success screen', 20000);
-  assert(/being prepared/.test(pageText()), 'success screen does not say the post is being prepared');
-  assert(!/is Live/.test(pageText()), 'claims the post is live while it is processing');
+  // The API answers PROCESSING. The page hands straight back to the feed --
+  // no success screen to sit through -- and the upload is now the corner
+  // indicator's to follow.
+  const id = await waitFor(() => window.__postedId, 'the page to hand over to the feed', 20000);
+  assert(!/is Live|Posted!/.test(pageText()), 'a success screen held the page');
+  const tracked = uploadTracker.getSnapshot().find((e) => String(e.id) === String(id));
+  assert(tracked && tracked.status === 'PROCESSING', `the upload is not in the corner indicator: ${JSON.stringify(uploadTracker.getSnapshot())}`);
+  uploadTracker.clear(); // the next test starts with an empty corner
   const list = await uploads();
   assert(list.length === before + 1, `expected one upload, got ${list.length - before}`);
   const upload = list[list.length - 1];

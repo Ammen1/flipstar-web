@@ -6,6 +6,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import api from '../../api';
 import webPush from '../../services/WebPushService';
 import telebirrH5 from '../../services/TelebirrH5Service';
+import { rediscoverUploads } from '../../services/uploadTracker';
+import { UploadProgressIndicator } from '../common/UploadProgressIndicator';
 
 export default function AppLayout() {
   const {
@@ -49,6 +51,13 @@ export default function AppLayout() {
     const interval = setInterval(fetchCount, 60000);
     return () => clearInterval(interval);
   }, [authUser]);
+
+  // Uploads still processing that this browser has no record of -- storage
+  // cleared, or posted from another device -- join the corner indicator.
+  // One request per sign-in; the tracker's own list covers a plain reload.
+  useEffect(() => {
+    if (authUser?.id) rediscoverUploads();
+  }, [authUser?.id]);
 
   // Subscription gate disabled — allow browsing all pages (interactions
   // like/comment/post are gated individually within each page).
@@ -200,6 +209,8 @@ export default function AppLayout() {
       >
         <Outlet />
       </AppShell>
+      {/* Uploads still being processed, on every page (TikTok-style). */}
+      {authUser && <UploadProgressIndicator onOpen={(id) => navigate(`/post/${id}`)} />}
       <LogoutDialog />
     </>
   );

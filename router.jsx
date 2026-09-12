@@ -167,7 +167,10 @@ function EnhancedPostPageWrapper() {
     <EnhancedPostPage
       user={h.authUser}
       onBack={() => h.navigate(-1)}
-      onPostSuccess={(reelId) => h.navigate(`/post/${reelId}`)}
+      // Straight to Home once the upload is accepted; the corner indicator
+      // follows the processing. `replace`, so Back does not reopen the
+      // composer for a post that is already made.
+      onPostSuccess={() => h.navigate('/', { replace: true })}
       onNavHome={() => h.navigate('/')}
       onNavReels={() => h.navigate('/reels')}
       onNavMessages={() => h.navigate('/messages')}
