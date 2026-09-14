@@ -17,6 +17,10 @@ export function MediaProcessingState({ post, compact = false }) {
 
   const failed = status === 'FAILED';
   const iconSize = compact ? 20 : 36;
+  // media_type is known while processing (there is no URL yet); a response
+  // from before it existed gets the old, general wording.
+  const what = post?.media_type === 'image' ? 'photo' : post?.media_type === 'video' ? 'video' : 'media';
+  const why = what === 'photo' ? 'faster loading' : 'faster playback';
 
   return (
     <div
@@ -59,7 +63,7 @@ export function MediaProcessingState({ post, compact = false }) {
         <div style={{ fontSize: 13, opacity: 0.8, maxWidth: 320, lineHeight: 1.5 }}>
           {failed
             ? failureText(post)
-            : "We're optimizing your media for faster playback. It will appear in the feed as soon as it's ready."}
+            : `We're optimizing your ${what} for ${why}. It will appear in the feed as soon as it's ready.`}
         </div>
       )}
     </div>

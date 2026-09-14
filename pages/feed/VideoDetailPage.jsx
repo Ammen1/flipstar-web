@@ -8,6 +8,7 @@ import { pickImageSource, pickImageWebp, pickVideoSource } from '../../utils/con
 import { SharePostSheet } from '../../components/feed/SharePostSheet';
 import { MediaProcessingState } from '../../components/common/MediaProcessingState';
 import { usePostProcessing } from '../../hooks/usePostProcessing';
+import { useFreshMedia, useSteadySrc } from '../../hooks/useFreshMedia';
 
 const absoluteUrl = (url) =>
   !url ? '' : url.startsWith('http') ? url : `${config.API_BASE_URL.replace('/api', '')}${url}`;
@@ -46,6 +47,15 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
   usePostProcessing(reel, (updated) => {
     setReel((prev) => (prev && prev.id === updated.id ? { ...prev, ...updated } : prev));
   });
+
+  // A URL that stops working while the page is open (a signature run out,
+  // a file since replaced) is swapped for a current one.
+  const { post: live, onMediaError, unavailable } = useFreshMedia(reel, 'post');
+  // ...and a clip that is playing keeps its file when the URLs are refreshed.
+  const steadyVideoSrc = useSteadySrc(
+    videoRef,
+    live && isMediaReady(live) && isVideoPost(live) ? absoluteUrl(pickVideoSource(live)) : ''
+  );
 
   useEffect(() => {
     const video = videoRef.current;
@@ -281,14 +291,14 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
     );
   }
 
-  const ready = isMediaReady(reel);
-  const isVideo = isVideoPost(reel);
+  const ready = isMediaReady(live);
+  const isVideo = isVideoPost(live);
   // The rendition that suits the connection; `media`/`image` when the post
   // has no smaller ones. See utils/connection.js.
-  const videoSrc = ready && isVideo ? absoluteUrl(pickVideoSource(reel)) : '';
-  const imageSrc = ready && !isVideo ? absoluteUrl(pickImageSource(reel)) : '';
-  const imageWebp = ready && !isVideo ? absoluteUrl(pickImageWebp(reel)) : '';
-  const poster = reel.thumbnail ? absoluteUrl(reel.thumbnail) : undefined;
+  const videoSrc = ready && isVideo ? steadyVideoSrc : '';
+  const imageSrc = ready && !isVideo ? absoluteUrl(pickImageSource(live)) : '';
+  const imageWebp = ready && !isVideo ? absoluteUrl(pickImageWebp(live)) : '';
+  const poster = live.thumbnail ? absoluteUrl(live.thumbnail) : undefined;
 
   return (
     <div style={{
@@ -338,7 +348,15 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
         justifyContent: 'center', position: 'relative',
       }}>
         {!ready ? (
-          <MediaProcessingState post={reel} />
+          <MediaProcessingState post={live} />
+        ) : unavailable ? (
+          <div
+            data-media-unavailable
+            role="status"
+            style={{ color: 'rgba(255,255,255,0.75)', textAlign: 'center', padding: 24, fontSize: 15, lineHeight: 1.5 }}
+          >
+            {isVideo ? 'This video can’t be played right now.' : 'This photo can’t be shown right now.'}
+          </div>
         ) : isVideo ? (
           <video
             ref={videoRef}
@@ -351,6 +369,7 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
             autoPlay
             loop
             playsInline
+            onError={onMediaError}
           />
         ) : (
           <picture style={{ display: 'contents' }}>
@@ -361,6 +380,7 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
               style={{
                 width: '100%', height: '100%', objectFit: 'contain',
               }}
+              onError={onMediaError}
             />
           </picture>
         )}

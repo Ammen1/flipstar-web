@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo, startTransition, memo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, startTransition, memo, useSyncExternalStore } from 'react';
 import {
   MessageCircle,
   Share2,
@@ -45,6 +45,16 @@ import { isVideoUrl, hasVideoExtension, isVideoPost, isMediaReady } from '../../
 import { pickVideoSource } from '../../utils/connection';
 import { DesktopReelViewer } from './DesktopReelViewer';
 import { dedupeById } from '../../utils/collections';
+import {
+  failedLoad,
+  mediaFieldsOf,
+  mediaRecovery,
+  replayIfWanted,
+  resumeAfterRecovery,
+  trackPlayIntent,
+} from '../../services/mediaRecovery';
+import { sameRendition } from '../../utils/mediaRecovery';
+import { cacheStillLoadable, expiresWithin } from '../../utils/signedUrl';
 import { getCampaignId, isCampaignPost } from '../../utils/campaign';
 const ShareIconFilled = ({ size = 26, color = '#fff', style = {} }) => (
   <Share2 size={size} color={color} style={style} />
@@ -62,6 +72,21 @@ const reelSource = (reel) => {
   }
   return url;
 };
+
+const absoluteMedia = (url) => (!url ? undefined : url.startsWith('http') ? url : `${config.API_BASE_URL.replace('/api', '')}${url}`);
+
+// What a card loads: the URL picked when the feed arrived -- or, once the
+// server has sent newer media for the post (services/mediaRecovery.js), the
+// same rendition from that, re-picked only if the rendition is gone.
+function cardMedia(video) {
+  const live = mediaRecovery.freshen(video.mediaPost || { id: video.id });
+  const refreshed = live && live !== video.mediaPost && (live.media || live.image);
+  if (!refreshed) return { src: video.imageUrl, poster: video.thumbnail };
+  return {
+    src: sameRendition(live, video.imageUrl) || reelSource(live) || video.imageUrl,
+    poster: live.thumbnail || null,
+  };
+}
 
 // Helper to shuffle array for randomized feed
 const shuffleArray = (array) => {
@@ -162,6 +187,10 @@ export const ReelLayout = memo(function ReelLayout({
       if (!raw) return null;
       const { ts, data } = JSON.parse(raw);
       if (Date.now() - ts > CACHE_TTL) { localStorage.removeItem(CACHE_KEY(tab)); return null; }
+      // A recent cache can still hold signed URLs that have run out (a feed
+      // grows by appended pages, each keeping its own request's signatures):
+      // showing it would put dead videos on screen before the refetch lands.
+      if (!cacheStillLoadable(data)) { localStorage.removeItem(CACHE_KEY(tab)); return null; }
       return data;
     } catch { return null; }
   };
@@ -171,6 +200,59 @@ export const ReelLayout = memo(function ReelLayout({
 
   const [videos, setVideos] = useState([]);
   const videosRef = useRef([]);
+
+  // Media the server has refreshed since the feed was fetched
+  // (services/mediaRecovery.js): re-render when any of it changes.
+  useSyncExternalStore(mediaRecovery.subscribe, mediaRecovery.getVersion, mediaRecovery.getVersion);
+  // Cards whose media could not be recovered: id -> reason. The placeholder
+  // shows for these alone; it used to be switched on through the DOM, so a
+  // card that failed once stayed "unavailable" even after fresh media came.
+  const [unavailableMedia, setUnavailableMedia] = useState({});
+  // The URL each card's <video> was last given, so a refresh never swaps the
+  // file under a clip someone is watching (it takes the new URL once the
+  // clip stops, fails, or its signature is about to run out).
+  const renderedSrc = useRef({});
+  // Cards whose src changed this render: once the new src is in the DOM,
+  // one that someone wanted playing plays again (the swap reset `paused`).
+  const replayCards = useRef(new Set());
+  useLayoutEffect(() => {
+    if (!replayCards.current.size) return;
+    replayCards.current.forEach((id) => replayIfWanted(videoRefs.current[id]));
+    replayCards.current.clear();
+  });
+
+  // Signed URLs run out (an hour on a private bucket). A little before they
+  // do, ask for new ones for every loaded card -- one request for the lot.
+  useEffect(() => {
+    const tick = () => mediaRecovery.refreshExpiring(
+      videosRef.current.map((v) => v.mediaPost || { id: v.id, imageUrl: v.imageUrl, thumbnail: v.thumbnail })
+    );
+    const timer = setInterval(tick, 60 * 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const handleCardMediaError = useCallback(async (video, event) => {
+    const { url, src, error, element, time, playing } = failedLoad(event);
+    const result = await mediaRecovery.recover(video.mediaPost || { id: video.id }, {
+      url,
+      error,
+      surface: 'reels',
+    });
+    if (result.ok) {
+      delete renderedSrc.current[video.id];
+      setUnavailableMedia((prev) => {
+        if (!(video.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[video.id];
+        return next;
+      });
+      // The card on screen plays again: the observer's play() may have come
+      // while the element was in error, and was refused then.
+      resumeAfterRecovery(element, time, playing || String(video.id) === String(activeVideoIdRef.current), src);
+    } else {
+      setUnavailableMedia((prev) => ({ ...prev, [video.id]: result.reason || 'unavailable' }));
+    }
+  }, []);
   const [loading, setLoading] = useState(true);
   const [mounted, setMounted] = useState(false);
   const [page, setPage] = useState(0);
@@ -237,6 +319,11 @@ export const ReelLayout = memo(function ReelLayout({
   // can otherwise leave two videos audible at once during fast scrolling).
   const [activeVideoId, setActiveVideoId] = useState(null);
   const longPressTimer = useRef(null);
+  const longPressFired = useRef(false);
+  // Until when a click belongs to the finger lifting after a long press. The
+  // browser can still send one, and it would land on the sheet that press
+  // just opened -- closing it on the spot, or pressing whatever is under it.
+  const longPressLiftUntil = useRef(0);
   const [longPressMenu, setLongPressMenu] = useState(null); // { videoId, x, y } for long-press context menu
   const [showCampaignSuggestions, setShowCampaignSuggestions] = useState(true);
 
@@ -283,6 +370,22 @@ export const ReelLayout = memo(function ReelLayout({
     return t.startsWith('http')
       ? t
       : `${config.API_BASE_URL.replace('/api', '')}${t}`;
+  };
+
+  // The src and poster a card's <video> gets this render (cardMedia), except
+  // that a clip being watched keeps the file it is playing until it stops,
+  // fails, or that URL is about to run out.
+  const cardVideo = (video) => {
+    const { src, poster } = cardMedia(video);
+    const el = videoRefs.current[video.id];
+    const held = renderedSrc.current[video.id];
+    const playing = Boolean(el && !el.paused && !el.ended && !el.error);
+    if (held && held !== src && playing && !expiresWithin(held, 30 * 1000)) {
+      return { src: absoluteMedia(held), poster: getVideoPoster({ thumbnail: poster }) };
+    }
+    if (held && held !== src) replayCards.current.add(video.id);
+    renderedSrc.current[video.id] = src;
+    return { src: absoluteMedia(src), poster: getVideoPoster({ thumbnail: poster }) };
   };
 
   // Mobile detection - runs once on mount and on resize
@@ -389,6 +492,9 @@ export const ReelLayout = memo(function ReelLayout({
           gift_count: reel.gift_count || 0,
           imageUrl: reelSource(reel),
           thumbnail: reel.thumbnail || null,
+          // The post's media as the API sent it, so a card whose URL stops
+          // working can be refreshed and re-picked (services/mediaRecovery.js).
+          mediaPost: mediaFieldsOf(reel),
           liked: reel.is_liked || false,
           saved: reel.is_saved || false,
           created_at: reel.created_at,
@@ -419,13 +525,21 @@ export const ReelLayout = memo(function ReelLayout({
         : null;
       const reorderedVideos = (() => {
         // Pages are not guaranteed disjoint and each batch is shuffled, so an
-        // append can re-add clips already on screen.
+        // append can re-add clips already on screen. The card keeps its place,
+        // but takes the new copy's media: the one on screen may carry
+        // signatures from an hour ago, and keeping it (the first copy wins
+        // in dedupeById) is how a looping feed ended up full of dead URLs.
+        const incoming = new Map(shuffledVideos.map((v) => [String(v.id), v]));
+        const known = videosRef.current.map((v) => {
+          const next = incoming.get(String(v.id));
+          return next ? { ...v, imageUrl: next.imageUrl, thumbnail: next.thumbnail, mediaPost: next.mediaPost } : v;
+        });
         const nextVideos = append
-          ? dedupeById([...videosRef.current, ...shuffledVideos])
+          ? dedupeById([...known, ...shuffledVideos])
           : dedupeById(shuffledVideos);
         if (!targetVideoId) return nextVideos;
 
-        const targetVideo = existingTargetVideo || nextVideos.find((video) => String(video.id) === targetVideoId);
+        const targetVideo = nextVideos.find((video) => String(video.id) === targetVideoId) || existingTargetVideo;
         if (!targetVideo) return nextVideos;
 
         const withoutTarget = nextVideos.filter((video) => String(video.id) !== targetVideoId);
@@ -950,9 +1064,47 @@ export const ReelLayout = memo(function ReelLayout({
     }, DOUBLE_TAP_WINDOW);
   };
 
+  // Where the finger came down on the picture, and where the feed was
+  // scrolled then: a touch that moved, or scrolled the feed, is a swipe.
+  const touchStartRef = useRef(null);
+  const TAP_SLOP = 10; // px
+
+  const handleVideoTouchStart = (e) => {
+    const t = e.touches?.[0];
+    const feed = feedContainerRef.current || document.querySelector('.video-feed-container');
+    touchStartRef.current = t ? { x: t.clientX, y: t.clientY, scroll: feed ? feed.scrollTop : 0 } : null;
+  };
+
+  const wasSwipe = (e) => {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!start) return false;
+    const t = e?.changedTouches?.[0];
+    const feed = feedContainerRef.current || document.querySelector('.video-feed-container');
+    const moved = t ? Math.hypot(t.clientX - start.x, t.clientY - start.y) > TAP_SLOP : false;
+    const scrolled = feed ? Math.abs(feed.scrollTop - start.scroll) > 2 : false;
+    return moved || scrolled;
+  };
+
   // Mobile: touchend-based detector. Works even when the browser swallows dblclick.
-  const handleVideoTouchEnd = (videoId) => {
+  const handleVideoTouchEnd = (videoId, e) => {
     lastTouchTimeRef.current = Date.now();
+    // The end of a swipe to another reel is not a tap: it used to schedule a
+    // play/pause for the reel being left, which then started again under
+    // the next one -- two reels playing at once.
+    if (wasSwipe(e)) {
+      clearPendingSingleTap(videoId);
+      lastTapRef.current[videoId] = 0;
+      return;
+    }
+    // The end of a long press that opened the menu sheet is not a tap.
+    if (longPressFired.current) {
+      longPressFired.current = false;
+      longPressLiftUntil.current = Date.now() + 600;
+      clearPendingSingleTap(videoId);
+      lastTapRef.current[videoId] = 0;
+      return;
+    }
     const now = Date.now();
     const last = lastTapRef.current[videoId] || 0;
     if (now - last < DOUBLE_TAP_WINDOW) {
@@ -1027,9 +1179,13 @@ export const ReelLayout = memo(function ReelLayout({
   // ReelLayout keeps its own display shape; the shared viewer speaks the raw
   // post shape, so translate rather than teaching the viewer two dialects.
   const viewerPosts = useMemo(() => videos.map((v) => ({
+    // The media fields first, so the desktop viewer can refresh and re-pick
+    // them (useFreshMedia); `media` stays the URL the card picked.
+    ...(v.mediaPost || {}),
     id: v.id,
     user: v.user,
     media: v.imageUrl,
+    thumbnail: v.thumbnail,
     caption: v.caption,
     votes: v.likes,
     comment_count: v.comments,
@@ -1476,7 +1632,11 @@ export const ReelLayout = memo(function ReelLayout({
   };
 
   const handleLongPressStart = (videoId, e) => {
+    longPressFired.current = false;
     longPressTimer.current = setTimeout(() => {
+      // The finger is still down: its touchend must not also count as a tap
+      // on the picture (which would pause the video under the sheet).
+      longPressFired.current = true;
       setShowMenu(null); // Close dropdown menu if open
       setLongPressMenu(videoId); // Show bottom sheet only
       // Haptic feedback on mobile if available
@@ -2076,10 +2236,13 @@ export const ReelLayout = memo(function ReelLayout({
                       }}
                     >
                       <button
-                        onClick={() => {
+                        data-control
+                        aria-label="Notifications"
+                        {...stopControlGestures}
+                        onClick={controlTap(() => {
                           if (!user) { onRequireAuth(); return; }
                           onShowNotifications?.();
-                        }}
+                        })}
                         style={{
                           background: 'none',
                           border: 'none',
@@ -2107,6 +2270,8 @@ export const ReelLayout = memo(function ReelLayout({
                       <div style={{ position: 'relative' }}>
                         <button
                           data-control
+                          data-reel-action="menu"
+                          aria-label="More options"
                           {...stopControlGestures}
                           onClick={controlTap(() => setShowMenu(showMenu === video.id ? null : video.id))}
                           style={{
@@ -2124,9 +2289,18 @@ export const ReelLayout = memo(function ReelLayout({
                         {/* Mobile 3-Dots Dropdown Menu - Top right like desktop */}
                         {showMenu === video.id && (
                           <>
-                            {/* Backdrop to close menu */}
+                            {/* Backdrop to close menu. `pointerEvents: 'auto'`
+                                on it and the menu: both sit inside the top bar,
+                                which is pointer-events:none so the picture
+                                shows through -- and that is inherited. Without
+                                it the menu's rows and this backdrop were
+                                click-through: tapping Share in the menu, or
+                                outside it to close it, paused the video. */}
                             <div
-                              onClick={() => setShowMenu(null)}
+                              data-control
+                              data-reel-menu-backdrop
+                              {...stopControlGestures}
+                              onClick={controlTap(() => setShowMenu(null))}
                               style={{
                                 position: 'fixed',
                                 top: 0,
@@ -2134,9 +2308,13 @@ export const ReelLayout = memo(function ReelLayout({
                                 right: 0,
                                 bottom: 0,
                                 zIndex: 998,
+                                pointerEvents: 'auto',
                               }}
                             />
                             <div
+                              data-reel-menu
+                              data-control
+                              {...stopControlGestures}
                               onClick={(e) => e.stopPropagation()}
                               style={{
                                 position: 'absolute',
@@ -2149,6 +2327,7 @@ export const ReelLayout = memo(function ReelLayout({
                                 minWidth: 160,
                                 zIndex: 999,
                                 overflow: 'hidden',
+                                pointerEvents: 'auto',
                               }}
                             >
                               {user?.id === video.user?.id && (
@@ -2240,6 +2419,16 @@ export const ReelLayout = memo(function ReelLayout({
                   {/* Long-Press Menu - Reel-style full menu (works on both mobile and desktop) */}
                   {longPressMenu === video.id && (
                     <div
+                      data-control
+                      data-reel-sheet="long-press"
+                      {...stopControlGestures}
+                      onClickCapture={(e) => {
+                        // The click of the finger that opened this sheet.
+                        if (Date.now() < longPressLiftUntil.current) {
+                          e.stopPropagation();
+                          e.preventDefault();
+                        }
+                      }}
                       onClick={() => setLongPressMenu(null)}
                       style={{
                         position: 'fixed',
@@ -2404,15 +2593,12 @@ export const ReelLayout = memo(function ReelLayout({
                         )}
                         <video
                           key={video.id}
-                          ref={(el) => (videoRefs.current[video.id] = el)}
-                          src={
-                            !video.imageUrl
-                              ? undefined
-                              : video.imageUrl.startsWith('http')
-                                ? video.imageUrl
-                                : `${config.API_BASE_URL.replace('/api', '')}${video.imageUrl}`
-                          }
-                          poster={getVideoPoster(video)}
+                          ref={(el) => {
+                            videoRefs.current[video.id] = el;
+                            trackPlayIntent(el);
+                          }}
+                          src={cardVideo(video).src}
+                          poster={cardVideo(video).poster}
                           preload={
                             videos.indexOf(video) === 0
                               ? 'metadata'
@@ -2442,13 +2628,11 @@ export const ReelLayout = memo(function ReelLayout({
                           onLoadedData={(e) => {
                             // keep whatever muted state was set by the playback logic
                           }}
-                          onError={(e) => {
-                            const code = e.target?.error?.code;
-                            if (code === 3 || code === 2) return;
-                            e.target.style.display = 'none';
-                            const placeholder = e.target.parentElement?.querySelector('.video-error-placeholder');
-                            if (placeholder) placeholder.style.display = 'flex';
-                          }}
+                          // A failed load is reported and retried with the
+                          // media the server returns (an expired signature,
+                          // a rendition since replaced or lost); only when
+                          // there is nothing left to try does the card say so.
+                          onError={(e) => handleCardMediaError(video, e)}
                           style={{
                             position: 'relative',
                             zIndex: 1,
@@ -2456,19 +2640,44 @@ export const ReelLayout = memo(function ReelLayout({
                             height: '100%',
                             objectFit: videoOrientations[video.id] === 'landscape' ? 'contain' : 'cover',
                             objectPosition: 'center',
-                            display: 'block',
+                            display: unavailableMedia[video.id] ? 'none' : 'block',
                             background: 'transparent',
+                            // Taps go to the surface below, never to the
+                            // <video> element itself (see data-reel-surface).
+                            pointerEvents: 'none',
                           }}
-                          onClick={() => handleVideoClick(video.id)}
-                          onDoubleClick={() => handleVideoDoubleClick(video.id)}
-                          onTouchEnd={() => handleVideoTouchEnd(video.id)}
                         >
                           Your browser does not support the video tag.
                         </video>
+                        {/* The picture's tap surface: play/pause on a tap,
+                            like on a double tap -- the only thing on the card
+                            that controls playback. The <video> takes no pointer
+                            events at all: some mobile browsers and in-app
+                            webviews act on a tap on a video element natively,
+                            or hand it touches meant for a control drawn over
+                            it. Every control sits above this (z-index 10+) and
+                            is never a descendant of it, so a tap on Share,
+                            Like or the rest cannot reach playback. */}
+                        <div
+                          data-reel-surface
+                          aria-hidden="true"
+                          onClick={() => handleVideoClick(video.id)}
+                          onDoubleClick={() => handleVideoDoubleClick(video.id)}
+                          onTouchStart={handleVideoTouchStart}
+                          onTouchEnd={(e) => handleVideoTouchEnd(video.id, e)}
+                          style={{
+                            position: 'absolute',
+                            inset: 0,
+                            zIndex: 2,
+                            background: 'transparent',
+                            WebkitTapHighlightColor: 'transparent',
+                          }}
+                        />
                         <div
                           className="video-error-placeholder"
+                          data-unavailable-reason={unavailableMedia[video.id] || undefined}
                           style={{
-                            display: 'none',
+                            display: unavailableMedia[video.id] ? 'flex' : 'none',
                             position: 'absolute',
                             top: 0,
                             left: 0,
@@ -2606,7 +2815,8 @@ export const ReelLayout = memo(function ReelLayout({
                             if (placeholder) placeholder.style.display = 'flex';
                           }}
                           onDoubleClick={() => handleVideoDoubleClick(video.id)}
-                          onTouchEnd={() => handleVideoTouchEnd(video.id)}
+                          onTouchStart={handleVideoTouchStart}
+                          onTouchEnd={(e) => handleVideoTouchEnd(video.id, e)}
                         />
                         <div
                           style={{
@@ -2646,6 +2856,8 @@ export const ReelLayout = memo(function ReelLayout({
                   {/* Three Dots Menu - Top Right (Desktop) */}
                   {!isMobile && (
                     <div
+                      data-control
+                      {...stopControlGestures}
                       style={{
                         position: 'absolute',
                         top: 10,
@@ -2654,6 +2866,8 @@ export const ReelLayout = memo(function ReelLayout({
                       }}
                     >
                       <button
+                        data-reel-action="menu"
+                        aria-label="More options"
                         onClick={() => setShowMenu(video.id)}
                         style={{
                           background: 'none',
@@ -2673,6 +2887,7 @@ export const ReelLayout = memo(function ReelLayout({
                       {/* Dropdown Menu */}
                       {showMenu === video.id && (
                         <div
+                          data-reel-menu
                           style={{
                             position: 'absolute',
                             top: 50,
@@ -2868,8 +3083,11 @@ export const ReelLayout = memo(function ReelLayout({
                     </div>
                   )}
 
-                  {/* Creator Info - Bottom Left */}
+                  {/* Creator Info - Bottom Left: profile, follow, campaign
+                      badge, caption "more" and hashtags -- a control group. */}
                   <div
+                    data-control
+                    {...stopControlGestures}
                     style={{
                       position: 'absolute',
                       bottom: 20,
@@ -3014,8 +3232,12 @@ export const ReelLayout = memo(function ReelLayout({
                     )}
                   </div>
 
-                  {/* Actions - Right Side */}
+                  {/* Actions - Right Side. A control group: its touches and
+                      pointer presses stop here, so they reach neither the
+                      card's long-press nor anything else listening above. */}
                   <div
+                    data-control
+                    {...stopControlGestures}
                     style={{
                       position: 'absolute',
                       right: isMobile ? 8 : 20,
@@ -3031,6 +3253,7 @@ export const ReelLayout = memo(function ReelLayout({
                   >
                     {/* Like Button */}
                     <div
+                      data-reel-action="like"
                       style={{
                         display: 'flex',
                         flexDirection: 'column',
@@ -3057,6 +3280,7 @@ export const ReelLayout = memo(function ReelLayout({
                       }}
                     >
                       <button aria-label="Toggle sound"
+                        data-reel-action="sound"
                         onClick={toggleAudio}
                         style={{
                           background: 'none',
@@ -3094,6 +3318,8 @@ export const ReelLayout = memo(function ReelLayout({
                       }}
                     >
                       <button
+                        data-reel-action="comment"
+                        aria-label="Comments"
                         onClick={() => {
                           if (!user) {
                             onRequireAuth();
@@ -3135,6 +3361,8 @@ export const ReelLayout = memo(function ReelLayout({
                       }}
                     >
                       <button
+                        data-reel-action="share"
+                        aria-label="Share"
                         onClick={() => handleShare(video.id)}
                         style={{
                           background: 'none',
@@ -3169,6 +3397,8 @@ export const ReelLayout = memo(function ReelLayout({
                         }}
                       >
                         <button
+                          data-reel-action="gift"
+                          aria-label="Send a gift"
                           onClick={() => {
                             if (!user) {
                               onRequireAuth();
@@ -3210,6 +3440,9 @@ export const ReelLayout = memo(function ReelLayout({
                       }}
                     >
                       <button
+                        data-reel-action="save"
+                        aria-label={video.saved ? 'Saved' : 'Save'}
+                        aria-pressed={Boolean(video.saved)}
                         onClick={() => handleSave(video.id)}
                         style={{
                           background: 'none',
@@ -3294,7 +3527,7 @@ export const ReelLayout = memo(function ReelLayout({
 
       {/* Comments Modal */}
       {showComments && (
-        <div key={showComments}>
+        <div key={showComments} data-reel-sheet="comments">
           <ModernCommentSection
             onRequireAuth={onRequireAuth}
             variant={isMobile ? 'sheet' : 'panel'}
@@ -3314,24 +3547,26 @@ export const ReelLayout = memo(function ReelLayout({
 
       {/* Gift Modal */}
       {showGiftModal && (
-        <GiftPage
-          username={showGiftModal}
-          reelId={giftReelId}
-          onClose={() => {
-            setShowGiftModal(null);
-            setGiftReelId(null);
-          }}
-          onShowWallet={() => {
-            setShowGiftModal(null);
-            setGiftReelId(null);
-            onShowWallet?.();
-          }}
-          onShowCoinPurchase={onShowCoinPurchase ? () => {
-            setShowGiftModal(null);
-            setGiftReelId(null);
-            onShowCoinPurchase();
-          } : undefined}
-        />
+        <div data-reel-sheet="gift">
+          <GiftPage
+            username={showGiftModal}
+            reelId={giftReelId}
+            onClose={() => {
+              setShowGiftModal(null);
+              setGiftReelId(null);
+            }}
+            onShowWallet={() => {
+              setShowGiftModal(null);
+              setGiftReelId(null);
+              onShowWallet?.();
+            }}
+            onShowCoinPurchase={onShowCoinPurchase ? () => {
+              setShowGiftModal(null);
+              setGiftReelId(null);
+              onShowCoinPurchase();
+            } : undefined}
+          />
+        </div>
       )}
 
       {/* Boost Modal */}
@@ -3497,6 +3732,7 @@ export const ReelLayout = memo(function ReelLayout({
       {/* Share Modal */}
       {showShareModal && (
         <div
+          data-reel-sheet="share"
           onClick={() => setShowShareModal(false)}
           style={{
             position: 'fixed', inset: 0, zIndex: 9999,

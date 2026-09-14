@@ -45,6 +45,8 @@ export function LikeButton({ liked, count, onLike, size = 24, isCampaign = false
       <button
         ref={btnRef}
         className={`like-btn${popping ? ' like-pop' : ''}`}
+        aria-label={liked ? 'Unlike' : 'Like'}
+        aria-pressed={Boolean(liked)}
         onClick={handleClick}
         onAnimationEnd={() => setPopping(false)}
       >

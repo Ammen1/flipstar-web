@@ -76,9 +76,12 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
   const loadGifts = async () => {
     try {
       const response = await api.request('/gifts/');
-      const giftsData = response.results || response;
-      console.log('Loaded gifts:', giftsData);
-      setGifts(giftsData);
+      const giftsData = response?.results || response;
+      // Only a list replaces the defaults. Anything else -- an error body,
+      // an envelope, {} -- used to go straight into `gifts`, and the first
+      // gifts.map() took the whole page down with it (on Reels: the video
+      // stopped and the feed vanished the moment Gift was tapped).
+      if (Array.isArray(giftsData) && giftsData.length) setGifts(giftsData);
     } catch (error) {
       console.error('Error loading gifts:', error);
       // Keep using default gifts if API fails

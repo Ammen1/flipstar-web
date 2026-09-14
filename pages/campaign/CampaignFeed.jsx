@@ -5,6 +5,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { InsufficientCoinsModal } from '../../components/common/InsufficientCoinsModal';
 import { ProcessedImage, ProcessedVideo } from '../../components/feed/ProcessedMedia';
 import { isVideoPost } from '../../utils/media';
+import { cacheStillLoadable } from '../../utils/signedUrl';
 
 // Add CSS animation for points notification
 if (typeof document !== 'undefined' && !document.getElementById('points-earned-animation')) {
@@ -50,6 +51,8 @@ const readCfCache = (id, filter) => {
     if (!raw) return null;
     const { ts, data } = JSON.parse(raw);
     if (Date.now() - ts > CF_CACHE_TTL) return null;
+    // Never paint entries whose signed media URLs have run out.
+    if (!cacheStillLoadable(data)) return null;
     return data;
   } catch { return null; }
 };

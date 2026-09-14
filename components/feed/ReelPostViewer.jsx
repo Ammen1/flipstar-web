@@ -12,6 +12,7 @@ import { PostCaptionOverlay } from './PostCaptionOverlay';
 import { isMediaReady, isVideoPost, isVideoUrl } from '../../utils/media';
 import { pickImageSource, pickVideoSource } from '../../utils/connection';
 import { MediaProcessingState } from '../common/MediaProcessingState';
+import { useFreshMedia, useSteadySrc } from '../../hooks/useFreshMedia';
 
 const MEDIA_ROOT = config.API_BASE_URL.replace('/api', '');
 
@@ -71,11 +72,20 @@ export function ReelPostViewer({ posts, initialIndex, user, profileUser, onClose
   const hasNext = currentIndex < posts.length - 1;
   const hasPrev = currentIndex > 0;
 
-  const mediaList = useMemo(() => getPostMedia(currentPost), [currentPost]);
+  // A URL that stops working (a signature run out, a file since replaced) is
+  // reported and swapped for a current one before "could not be loaded".
+  const { post: livePost, onMediaError } = useFreshMedia(currentPost, 'profile-viewer');
+  const mediaList = useMemo(() => getPostMedia(livePost), [livePost]);
   const activeMedia = mediaList[Math.min(mediaIndex, Math.max(0, mediaList.length - 1))] || null;
   const isVideo = Boolean(activeMedia?.isVideo);
   const fullUrl = activeMedia?.url || '';
-  const videoUrl = fullUrl;
+  // A clip that is playing keeps its file when the URLs are refreshed.
+  const videoUrl = useSteadySrc(videoRef, fullUrl);
+  const onLoadFailed = (e) => {
+    onMediaError(e).then((ok) => {
+      if (!ok) setMediaState('error');
+    });
+  };
   const multiMedia = mediaList.length > 1;
 
   // Moving to another post restarts its media; the caption panel re-keys off
@@ -456,7 +466,7 @@ export function ReelPostViewer({ posts, initialIndex, user, profileUser, onClose
             playsInline
             muted={muted}
             onLoadedData={() => setMediaState('ready')}
-            onError={() => setMediaState('error')}
+            onError={onLoadFailed}
           />
         ) : (
           <img
@@ -470,7 +480,7 @@ export function ReelPostViewer({ posts, initialIndex, user, profileUser, onClose
               transition: 'opacity 0.25s ease',
             }}
             onLoad={() => setMediaState('ready')}
-            onError={() => setMediaState('error')}
+            onError={onLoadFailed}
           />
         )}
 

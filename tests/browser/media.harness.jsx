@@ -30,6 +30,7 @@ import { UploadProgressIndicator } from '../../components/common/UploadProgressI
 import { uploadTracker } from '../../services/uploadTracker';
 import { STORE_KEY, createUploadTracker } from '../../utils/uploadTracker';
 import { ContentModeration } from '../../admin/pages/content/ContentModeration';
+import { mediaRecovery } from '../../services/mediaRecovery';
 import api from '../../api';
 
 const ADMIN_THEME = {
@@ -172,14 +173,14 @@ async function run() {
     clips.push(clip);
   }
   assert(clips.every((c) => c.size > 1000), `recorded clips are ${clips.map((c) => c.size)} bytes`);
-  await registerRungs([801, 802, 803, 900, 811, 812, 822], clips);
+  await registerRungs([801, 802, 803, 900, 811, 812, 822, 902], clips);
 
   await test('the page a new post lands on shows it is being prepared, then plays it', async () => {
     connection = NETWORK.normal;
     await mediaRequests(true);
     mount(<VideoDetailPage reelId={900} user={me} onBack={() => {}} subscriptionStatus={{ has_subscription: true }} />);
     await waitFor(() => /Preparing your post/.test(pageText()), 'the processing state');
-    assert(/optimizing your media/.test(pageText()), 'the processing explanation is missing');
+    assert(/optimizing your video for faster playback/.test(pageText()), 'the processing explanation is missing');
     assert(videos().length === 0, 'a player was shown with nothing to play');
 
     await fetch('/__media/control?ready=900'); // the worker finishes
@@ -197,6 +198,25 @@ async function run() {
     assert(/longer than allowed/.test(pageText()), 'the reason is missing');
     assert(!/traceback|exception|ffmpeg|errno|\/srv\/|video_too_long/i.test(pageText()), 'technical detail shown');
     assert(videos().length === 0, 'a player was shown');
+  });
+
+  await test('a photo\'s post page says it is being prepared, then shows the photo', async () => {
+    await mediaRequests(true);
+    await fetch('/__media/control?set=903:PROCESSING:20&kind=image');
+    mount(<VideoDetailPage reelId={903} user={me} onBack={() => {}} subscriptionStatus={{ has_subscription: true }} />);
+    await waitFor(() => /Preparing your post/.test(pageText()), 'the processing state');
+    assert(/optimizing your photo for faster loading/.test(pageText()), `the page says "${pageText()}"`);
+    assert(!/playback/.test(pageText()), 'a photo is described as something to play');
+
+    await fetch('/__media/control?set=903:READY:100&kind=image'); // the worker finishes
+    const img = await waitFor(() => rootEl().querySelector('picture img'), 'the photo, once READY', 15000);
+    assert(pathOf(img.src).startsWith('/media/processed/images/903/v1/'), `shows ${pathOf(img.src)}`);
+    assert(videos().length === 0, 'a photo got a video player');
+    assert(!/Preparing your post/.test(pageText()), 'the processing state stayed up');
+    await waitFor(() => img.complete && img.currentSrc, 'the photo to load');
+    const reqs = await mediaRequests();
+    assert(!reqs.some((p) => p.includes('/source/')), 'the original was requested');
+    return `swapped in by polling: ${pathOf(img.currentSrc)}`;
   });
 
   await test('Reels: only the visible video plays, as the rung for a slow connection', async () => {
@@ -269,6 +289,156 @@ async function run() {
     assert(!reqs.some((p) => p.endsWith('/720w.jpg') || p.endsWith('/full.jpg')), 'the JPEG was downloaded as well');
   });
 
+  // ── media that stops working ─────────────────────────────────────────────
+  // The stub signs media the way a private OBS bucket does, and refuses an
+  // expired signature (403 AccessDenied) or a lost object (404 NoSuchKey)
+  // the way OBS does. "Video unavailable" was what a card showed for either,
+  // for good. Each case starts clean: no overrides, no cached feed.
+  const mediaStatuses = (clear = false) => fetch(`/__media/statuses${clear ? '?clear=1' : ''}`).then((r) => r.json());
+  const apiCalls = (clear = false) => fetch(`/__media/api-log${clear ? '?clear=1' : ''}`).then((r) => r.json());
+  const mediaControl = (params) => fetch(`/__media/control?${params}`);
+  const reportsOf = (log) => log.filter((r) => r.route === '/posts/media/' && r.failures && r.failures.length);
+  const reportFrom = async (surface) =>
+    reportsOf(await apiCalls()).flatMap((r) => r.failures).find((f) => f.surface === surface);
+  const shownPlaceholders = () => Array.from(rootEl().querySelectorAll('.video-error-placeholder'))
+    .filter((el) => getComputedStyle(el).display !== 'none');
+  const issuedAgoMs = (src) => {
+    const d = new URL(src, location.href).searchParams.get('X-Amz-Date') || '';
+    const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(d);
+    return m ? Date.now() - Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : Infinity;
+  };
+  const fresh = async () => {
+    // The previous view first: a clip still playing there would load (and
+    // report) against the state set up for the next test.
+    mount(<div />);
+    Object.keys(localStorage)
+      .filter((k) => k.startsWith('feed_cache_') || k === 'homepage_feed_cache')
+      .forEach((k) => localStorage.removeItem(k));
+    Object.keys(sessionStorage)
+      .filter((k) => k.startsWith('campaign_feed_'))
+      .forEach((k) => sessionStorage.removeItem(k));
+    // The API client keeps GET answers for a minute: an earlier test's
+    // unsigned feed would stand in for the one this test asks for.
+    api.invalidateCache('/');
+    mediaRecovery.forget();
+    await mediaControl('restore=1');
+    await apiCalls(true);
+    await mediaStatuses(true);
+  };
+  const rungsOf = (ids, rungs) => ids.flatMap((id) => rungs.map((r) => `/media/processed/videos/${id}/v1/${r}.webm`)).join(',');
+
+  await test('Reels: a video whose signed URL ran out gets a fresh one and plays -- no "Video unavailable"', async () => {
+    connection = NETWORK.normal;
+    await fresh();
+    await mediaControl('sign=stale');
+    mount(<ReelLayout user={me} activeTab="reels" videosOnly subscriptionStatus={{ has_subscription: true }} />);
+
+    const v = await waitFor(() => playing()[0], 'a reel to play once its URL is refreshed', 15000);
+    const statuses = await mediaStatuses();
+    assert(statuses.some((s) => s.status === 403 && s.path.endsWith('.webm')), 'the expired URL was never tried: nothing was tested');
+    const sent = reportsOf(await apiCalls());
+    assert(sent.length >= 1, 'the failure was never reported');
+    const f = sent[0].failures[0];
+    assert(f.surface === 'reels' && /X-Amz-Date=/.test(f.url) && ['2', '4'].includes(f.error), `reported ${JSON.stringify(f)}`);
+    assert(issuedAgoMs(v.currentSrc) < 60 * 1000, `still playing an old signature: ${v.currentSrc}`);
+    assert(!shownPlaceholders().length, '"Video unavailable" was shown');
+    return `403 → reported (error ${f.error}) → fresh URL playing`;
+  });
+
+  await test('Reels: a rendition storage lost is dropped and the card plays one that exists', async () => {
+    connection = NETWORK.slow; // 360p first
+    await fresh();
+    await mediaControl(`sign=fresh&lose=${rungsOf([801, 802, 803], ['360p'])}`);
+    mount(<ReelLayout user={me} activeTab="reels" videosOnly subscriptionStatus={{ has_subscription: true }} />);
+
+    const v = await waitFor(() => playing()[0], 'a reel to play from a rung that exists', 15000);
+    assert(pathOf(v.currentSrc).endsWith('/480p.webm'), `plays ${pathOf(v.currentSrc)}`);
+    const statuses = await mediaStatuses();
+    assert(statuses.some((s) => s.status === 404 && s.path.endsWith('/360p.webm')), 'the lost rung was never tried');
+    assert(!shownPlaceholders().length, '"Video unavailable" was shown');
+    return '404 on 360p → 480p playing';
+  });
+
+  await test('Reels: a post whose files are all gone says so once, and does not loop', async () => {
+    connection = NETWORK.slow;
+    await fresh();
+    await mediaControl(`sign=fresh&lose=${rungsOf([801, 802, 803], ['360p', '480p', '720p'])}`);
+    mount(<ReelLayout user={me} activeTab="reels" videosOnly subscriptionStatus={{ has_subscription: true }} />);
+
+    const shown = await waitFor(() => shownPlaceholders()[0], '"Video unavailable"', 15000);
+    assert(/Video unavailable/.test(shown.innerText), shown.innerText);
+    assert(shown.getAttribute('data-unavailable-reason') === 'object_missing', shown.getAttribute('data-unavailable-reason'));
+    await sleep(2500);
+    const perPost = {};
+    reportsOf(await apiCalls()).forEach((r) => r.failures.forEach((f) => { perPost[f.id] = (perPost[f.id] || 0) + 1; }));
+    assert(Object.values(perPost).every((n) => n <= 2), `a post was retried in a loop: ${JSON.stringify(perPost)}`);
+    return `reported ${JSON.stringify(perPost)}, then stopped`;
+  });
+
+  await test('a refresh never replays a cached feed whose URLs have run out', async () => {
+    connection = NETWORK.normal;
+    await fresh();
+    const staleDate = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    const stale = `${location.origin}/media/processed/videos/801/v1/480p.webm?X-Amz-Date=${staleDate}&X-Amz-Expires=3600&X-Amz-Signature=old`;
+    localStorage.setItem('feed_cache_reels', JSON.stringify({
+      ts: Date.now(),
+      data: [{ id: 801, user: { id: 51, username: 'creator801' }, creator: 'creator801', handle: '@creator801', caption: 'cached', hashtags: [], likes: 0, comments: 0, imageUrl: stale, thumbnail: null, overlayText: [] }],
+    }));
+    await mediaControl('sign=fresh');
+    mount(<ReelLayout user={me} activeTab="reels" videosOnly subscriptionStatus={{ has_subscription: true }} />);
+
+    const v = await waitFor(() => playing()[0], 'a reel to play', 15000);
+    assert(issuedAgoMs(v.currentSrc) < 60 * 1000, `played ${v.currentSrc}`);
+    const statuses = await mediaStatuses();
+    assert(!statuses.some((s) => s.status === 403), 'the cached, expired URL was put on screen');
+    assert(!reportsOf(await apiCalls()).length, 'needed a recovery: the cache was used');
+  });
+
+  await test('campaign feed: pressing play on an expired URL plays the fresh one', async () => {
+    connection = NETWORK.normal;
+    await fresh();
+    await mediaControl('sign=stale');
+    mount(<CampaignFeed campaignId={7} onBack={() => {}} />);
+    const [a] = await waitFor(() => videos().length === 2 && videos(), 'the campaign videos', 10000);
+    a.muted = true;
+    const seen = [];
+    ['error', 'play', 'pause', 'emptied', 'loadstart'].forEach((t) => a.addEventListener(t, () => seen.push(`${t}${t === 'error' ? a.error?.code : ''}:${a.paused ? 'p' : 'r'}`)));
+    const play = a.play.bind(a);
+    a.play = () => { seen.push(`play()@${issuedAgoMs(a.getAttribute('src')) < 60000 ? 'fresh' : 'stale'}`); return play(); };
+    a.play().catch(() => {});
+    await waitFor(
+      () => isPlaying(a),
+      () => `the entry to play after its URL is refreshed (connected=${a.isConnected} error=${a.error?.code} ` +
+        `paused=${a.paused} ready=${a.readyState} net=${a.networkState} fresh=${issuedAgoMs(a.currentSrc) < 60000} ` +
+        `events=${seen.join(',')})`,
+      15000
+    );
+    assert(issuedAgoMs(a.currentSrc) < 60 * 1000, `plays ${a.currentSrc}`);
+    // Its URL had already run out when the page opened, so it was asked
+    // for before -- or after -- the dead one was tried; either way through
+    // /posts/media/, and the tap on play was not lost.
+    const asked = (await apiCalls()).filter((r) => r.route === '/posts/media/');
+    assert(asked.some((r) => r.ids.includes('811')), `never refreshed: ${JSON.stringify(asked)}`);
+    return `play pressed on an expired URL → ${asked.length} refresh request(s) → playing (${seen.join(',')})`;
+  });
+
+  await test('post page: an expired URL is replaced and the video plays', async () => {
+    await fresh();
+    await mediaControl('set=902:READY:100&sign=stale');
+    mount(<VideoDetailPage reelId={902} user={me} onBack={() => {}} subscriptionStatus={{ has_subscription: true }} />);
+    const v = await waitFor(() => videos()[0], 'the video');
+    v.muted = true;
+    await waitFor(() => issuedAgoMs(v.currentSrc) < 60 * 1000, 'a fresh URL', 15000);
+    await waitFor(() => isPlaying(v) || v.readyState >= 2, 'the video to load', 15000);
+    const asked = (await apiCalls()).filter((r) => r.route === '/posts/media/');
+    assert(asked.some((r) => r.ids.includes('902')), `never refreshed: ${JSON.stringify(asked)}`);
+    assert(!rootEl().querySelector('[data-media-unavailable]'), 'said unavailable');
+  });
+
+  // Whatever happened above, nothing below runs against signed or lost media.
+  mount(<div />);
+  await fresh();
+
   // ── the admin panel ──────────────────────────────────────────────────────
   // Content Moderation showed only `image`, so after the pipeline every
   // video card was an empty clapper: a video's picture is its `thumbnail`.
@@ -301,8 +471,8 @@ async function run() {
   });
 
   // ── the corner upload indicator ──────────────────────────────────────────
-  const setServer = (id, status, progress, { queued = false, error = '' } = {}) =>
-    fetch(`/__media/control?set=${id}:${status}:${progress}${error ? `:${error}` : ''}${queued ? '&queued=1' : ''}`);
+  const setServer = (id, status, progress, { queued = false, error = '', kind = '' } = {}) =>
+    fetch(`/__media/control?set=${id}:${status}:${progress}${error ? `:${error}` : ''}${queued ? '&queued=1' : ''}${kind ? `&kind=${kind}` : ''}`);
   const apiLog = (clear = false) => fetch(`/__media/api-log${clear ? '?clear=1' : ''}`).then((r) => r.json());
   const corner = (id) => document.querySelector(`[data-upload-id="${id}"]`);
   const shownPercent = (id) => corner(id)?.querySelector('[data-upload-percent]')?.textContent;
@@ -334,6 +504,30 @@ async function run() {
     await waitFor(() => !corner(910), 'the indicator to go', 6000);
     window.removeEventListener('flipstar:post-ready', onReady);
     return `seen ${[...seen].join(' → ')} → Posted`;
+  });
+
+  await test('a photo gets the same corner: the server\'s percentage, Posted, then the feed', async () => {
+    const handed = [];
+    const onReady = (e) => handed.push(e.detail);
+    window.addEventListener('flipstar:post-ready', onReady);
+    const photo = { kind: 'image' };
+    await setServer(915, 'PROCESSING', 0, { queued: true, ...photo });
+    uploadTracker.track({ id: 915, processing_status: 'PROCESSING', media_type: 'image' });
+
+    await waitFor(() => /Waiting to process/.test(corner(915)?.innerText || ''), 'the queued state');
+    await setServer(915, 'PROCESSING', 50, photo);
+    await waitFor(() => shownPercent(915) === '50%', '50%');
+    assert(/Processing your photo/.test(corner(915).innerText), `the corner says "${corner(915).innerText}"`);
+
+    await setServer(915, 'READY', 100, photo);
+    await waitFor(() => /Posted/.test(corner(915)?.innerText || ''), '"Posted"');
+    await waitFor(() => handed.some((p) => p.id === 915), 'the feed to be handed the photo');
+    const post = handed.find((p) => p.id === 915);
+    assert(pathOf(post.image) === '/media/processed/images/915/v1/full.jpg' && !post.media, 'the photo arrived without its image');
+    assert(post.image_webp_variants && post.image_variants, 'the photo arrived without its sizes');
+    await waitFor(() => !corner(915), 'the indicator to go', 6000);
+    window.removeEventListener('flipstar:post-ready', onReady);
+    return 'Waiting → 50% → Posted, handed to the feed as a photo';
   });
 
   await test('a failure says why, safely, and stays until dismissed', async () => {

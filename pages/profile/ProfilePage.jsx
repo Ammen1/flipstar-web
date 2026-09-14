@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, memo } from "react";
+import { useState, useEffect, useCallback, memo, useSyncExternalStore } from "react";
 import { Grid, Film, Bookmark, Settings, ChevronLeft, UserPlus, UserCheck, Edit, Trash2, Edit2, MoreVertical, Trophy, Flag, Share2, Wallet, X, Crown, Coins, Flame, Ban, Shield } from "lucide-react";
 import api from "../../api";
 import config from "../../config";
@@ -13,6 +13,8 @@ import { pickImageSource, pickImageWebp } from '../../utils/connection';
 import { MediaProcessingState } from '../../components/common/MediaProcessingState';
 import { usePostProcessing } from '../../hooks/usePostProcessing';
 import { forgetUploadId, uploadIdFor } from '../../utils/uploadId';
+import { failedLoad, mediaRecovery, resumeAfterRecovery } from '../../services/mediaRecovery';
+import { cacheStillLoadable } from '../../utils/signedUrl';
 
 // Profile page cache helpers
 const PROFILE_CACHE_KEY = (userId) => `profile_cache_${userId}`;
@@ -24,6 +26,11 @@ function readProfileCache(userId) {
     if (!raw) return null;
     const { ts, data } = JSON.parse(raw);
     if (Date.now() - ts > PROFILE_CACHE_TTL) {
+      localStorage.removeItem(PROFILE_CACHE_KEY(userId));
+      return null;
+    }
+    // Thirty minutes of cache can hold signed media URLs that have run out.
+    if (!cacheStillLoadable(data)) {
       localStorage.removeItem(PROFILE_CACHE_KEY(userId));
       return null;
     }
@@ -66,6 +73,8 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
   const { blockUser, unblockUser, isUserBlocked, refreshBlockedUsers, blockedUsers } = useBlock();
   const isOwnProfile = !userId || userId === user?.id;
   const [isDesktop, setIsDesktop] = useState(window.innerWidth > 1024);
+  // Re-render the grid when a post's media is refreshed (services/mediaRecovery.js).
+  useSyncExternalStore(mediaRecovery.subscribe, mediaRecovery.getVersion, mediaRecovery.getVersion);
 
   useEffect(() => {
     const handleResize = () => setIsDesktop(window.innerWidth > 1024);
@@ -1176,14 +1185,23 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
               }
 
               const toAbsolute = (u) => (u && !u.startsWith('http') ? `${config.API_BASE_URL.replace('/api', '')}${u}` : u || '');
-              const mediaUrl = post.media || post.image || '';
+              // The newest media the server has given for the post; a tile
+              // whose URL stops working asks for a current one.
+              const tile = mediaRecovery.freshen(post);
+              const onTileError = (e) => {
+                const { url, src, error, element, time, playing } = failedLoad(e);
+                mediaRecovery.recover(post, { url, error, surface: 'profile' }).then((result) => {
+                  if (result.ok) resumeAfterRecovery(element, time, playing, src);
+                });
+              };
+              const mediaUrl = tile.media || tile.image || '';
               const fullUrl = toAbsolute(mediaUrl);
               const isVideo = isVideoUrl(mediaUrl);
               // A tile is a third of the screen: the smallest rendition is
               // plenty, whatever the connection.
-              const tileImage = toAbsolute(pickImageSource(post, 'slow')) || fullUrl;
-              const tileWebp = toAbsolute(pickImageWebp(post, 'slow'));
-              const tilePoster = post.thumbnail ? toAbsolute(post.thumbnail) : undefined;
+              const tileImage = toAbsolute(pickImageSource(tile, 'slow')) || fullUrl;
+              const tileWebp = toAbsolute(pickImageWebp(tile, 'slow'));
+              const tilePoster = tile.thumbnail ? toAbsolute(tile.thumbnail) : undefined;
 
               if (!mediaUrl) {
                 return (
@@ -1221,6 +1239,7 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
                       // With a poster the tile needs nothing from the video
                       // until it is hovered; without one, the first frame.
                       preload={tilePoster ? 'none' : 'metadata'}
+                      onError={onTileError}
                       onMouseEnter={(e) => e.target.play().catch((err) => {
                         if (err.name !== 'AbortError') console.log('Play error:', err);
                       })}
@@ -1251,6 +1270,7 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
                     alt={post.caption}
                     loading="lazy"
                     decoding="async"
+                    onError={onTileError}
                     style={{
                       position: "absolute",
                       top: 0, left: 0, right: 0, bottom: 0,

@@ -9,6 +9,7 @@ import { isVideoUrl, isVideoPost } from '../../utils/media';
 import { pickImageSource, pickVideoSource } from '../../utils/connection';
 import { likeCountOf, commentCountOf, shareCountOf, formatCount } from '../../utils/engagement';
 import { SharePostSheet } from './SharePostSheet';
+import { useFreshMedia, useSteadySrc } from '../../hooks/useFreshMedia';
 
 /**
  * TikTok-style desktop viewer: one full-height 9:16 clip at a time, with the
@@ -161,9 +162,24 @@ export function DesktopReelViewer({
 
   // ── playback ────────────────────────────────────────────────────────────
 
+  // A URL that stops working (a signature run out, a file since replaced) is
+  // reported and swapped for a current one before "didn't load" is shown;
+  // a clip that is playing keeps its file when the URLs are refreshed.
+  const { post: live, onMediaError } = useFreshMedia(post, 'desktop-reels');
+  const mediaSrc = useSteadySrc(videoEl, live ? mediaSrcOf(live, apiBase) : '');
+  const onLoadFailed = (e) => {
+    setBuffering(true);
+    onMediaError(e).then((ok) => {
+      if (!ok) {
+        setBuffering(false);
+        setLoadError(true);
+      }
+    });
+  };
+
   // Image posts render a still in the same slot; the playback chrome below is
   // hidden for them because none of it applies to an image.
-  const isVideo = isVideoPost(post);
+  const isVideo = isVideoPost(live || post);
 
   // Only the visible clip may play; everything else is paused and rewound so
   // no audio survives off-screen.
@@ -406,16 +422,16 @@ export function DesktopReelViewer({
             key={`${index}-${post.id}-${retryKey}`}
             ref={(el) => { videoEl.current = el; }}
             className="drv-video"
-            src={mediaSrcOf(post, apiBase)}
+            src={mediaSrc}
             /* The backend generates a 320x720 thumbnail per reel
                (api/tasks/media.py). Prefer it over post.image: that is the
                full-size still, so using it as a poster downloads a 1080px
                image to cover the first moment of playback. */
             poster={
-              post.thumbnail
-                ? mediaSrcOf({ media: post.thumbnail }, apiBase)
-                : post.image && !isVideoUrl(post.image)
-                  ? mediaSrcOf({ media: post.image }, apiBase)
+              live.thumbnail
+                ? mediaSrcOf({ media: live.thumbnail }, apiBase)
+                : live.image && !isVideoUrl(live.image)
+                  ? mediaSrcOf({ media: live.image }, apiBase)
                   : undefined
             }
             playsInline
@@ -429,7 +445,7 @@ export function DesktopReelViewer({
             onStalled={() => setBuffering(true)}
             onCanPlay={() => setBuffering(false)}
             onPlaying={() => { setBuffering(false); setLoadError(false); }}
-            onError={() => { setBuffering(false); setLoadError(true); }}
+            onError={onLoadFailed}
             onTimeUpdate={(e) => {
               const v = e.currentTarget;
               if (v.duration) setProgress((v.currentTime / v.duration) * 100);
@@ -450,12 +466,12 @@ export function DesktopReelViewer({
             <img
               key={`${index}-${post.id}-${retryKey}`}
               className="drv-video"
-              src={mediaSrcOf(post, apiBase)}
+              src={mediaSrc}
               alt={post.caption || ''}
               draggable={false}
               onLoadStart={() => { setBuffering(true); setLoadError(false); }}
               onLoad={() => { setBuffering(false); setLoadError(false); }}
-              onError={() => { setBuffering(false); setLoadError(true); }}
+              onError={onLoadFailed}
             />
           )}
 

@@ -2,12 +2,13 @@
  * End-to-end tests in a real browser.
  *
  *   npm run test:browser                 every suite
- *   npm run test:browser -- explorer     one suite (camera | explorer | media)
+ *   npm run test:browser -- explorer     one suite (camera | explorer | media | reels)
  *   CHROME_PATH=... npm run test:browser to pick the browser
  *
  * Each suite is tests/browser/<suite>.harness.jsx, which mounts real pages
  * (the post page with its camera; the Explore page; the post page, Reels and
- * campaign feed playing processed media). It is bundled with the
+ * campaign feed playing processed media; the Reels page driven by real taps,
+ * clicks and swipes through /__input). It is bundled with the
  * esbuild that ships inside Vite, served from a local server that also stubs
  * the API, and run in headless Chrome or Edge with Chromium's fake camera and
  * microphone. The page posts its results back and this script prints them.
@@ -19,7 +20,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -27,7 +28,107 @@ import { build } from 'esbuild';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const TIMEOUT_MS = Number(process.env.BROWSER_TEST_TIMEOUT_MS || 240000);
-const SUITES = ['camera', 'explorer', 'media'];
+const SUITES = ['camera', 'explorer', 'media', 'reels'];
+
+// ── Real input ──────────────────────────────────────────────────────────────
+// A harness that needs a genuine tap, click or swipe -- hit-tested by the
+// browser, with the touch -> mouse -> click sequence a phone produces --
+// POSTs /__input and this drives it through the DevTools protocol. An
+// element.click() in the page skips all of that, which is exactly where
+// "tapping Share paused the video" lived.
+
+async function connectDevTools(profile) {
+  const file = path.join(profile, 'DevToolsActivePort');
+  for (let i = 0; i < 100 && !existsSync(file); i++) await new Promise((r) => setTimeout(r, 100));
+  const port = readFileSync(file, 'utf8').split('\n')[0].trim();
+  const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+  const page = targets.find((t) => t.type === 'page');
+  const ws = new WebSocket(page.webSocketDebuggerUrl);
+  await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
+  let next = 0;
+  const pending = new Map();
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (!msg.id || !pending.has(msg.id)) return;
+    const { resolve, reject } = pending.get(msg.id);
+    pending.delete(msg.id);
+    if (msg.error) reject(new Error(msg.error.message));
+    else resolve(msg.result);
+  };
+  return {
+    send(method, params = {}) {
+      next += 1;
+      const id = next;
+      return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        ws.send(JSON.stringify({ id, method, params }));
+      });
+    },
+    close: () => ws.close(),
+  };
+}
+
+async function performInput(devtools, action) {
+  const { kind, x, y } = action;
+  if (kind === 'viewport') {
+    // { width, height, mobile }: a desktop-sized page, or back to the phone.
+    if (action.reset) return devtools.send('Emulation.clearDeviceMetricsOverride');
+    return devtools.send('Emulation.setDeviceMetricsOverride', {
+      width: action.width, height: action.height, deviceScaleFactor: 1, mobile: Boolean(action.mobile),
+    });
+  }
+  if (kind === 'click') {
+    await devtools.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+    await devtools.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 });
+    await devtools.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 });
+    return undefined;
+  }
+  if (kind === 'tap') {
+    // A finger: it lands, drifts a few pixels (`jitter`) and lifts.
+    await devtools.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+    await devtools.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    if (action.jitter) {
+      await devtools.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + action.jitter, y: y + action.jitter }] });
+    }
+    await devtools.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    return undefined;
+  }
+  if (kind === 'doubletap') {
+    // Two taps `gap` ms apart, sent back to back from here: a round trip to
+    // the page between them could stretch the gap past a double-tap window.
+    await devtools.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+    for (let i = 0; i < 2; i++) {
+      await devtools.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+      await devtools.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      if (i === 0) await new Promise((r) => setTimeout(r, action.gap || 80));
+    }
+    return undefined;
+  }
+  if (kind === 'press') {
+    // A finger held still for `ms`, then lifted: a long press.
+    await devtools.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+    await devtools.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    await new Promise((r) => setTimeout(r, action.ms || 700));
+    await devtools.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    return undefined;
+  }
+  if (kind === 'swipe') {
+    // A finger dragged from (x, y) by dy in small steps, then lifted --
+    // the browser scrolls (and snaps) as it would under a real one.
+    await devtools.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+    const steps = 12;
+    await devtools.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    for (let i = 1; i <= steps; i++) {
+      await devtools.send('Input.dispatchTouchEvent', {
+        type: 'touchMove', touchPoints: [{ x, y: Math.round(y + (action.dy * i) / steps) }],
+      });
+      await new Promise((r) => setTimeout(r, 16));
+    }
+    await devtools.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    return undefined;
+  }
+  throw new Error(`unknown input ${kind}`);
+}
 
 function findBrowser() {
   const candidates = [
@@ -206,6 +307,43 @@ function processedPhoto(origin, id, caption) {
   };
 }
 
+// Signed as the backend's storage signs on a private bucket (SigV4): the URL
+// works for X-Amz-Expires seconds from X-Amz-Date, and /media/ below answers
+// an expired one the way OBS does -- 403 AccessDenied, an XML body.
+const amzDate = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+
+function signUrl(url, issuedMs, lifetime = 3600) {
+  if (typeof url !== 'string' || !url) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}X-Amz-Algorithm=AWS4-HMAC-SHA256` +
+    `&X-Amz-Date=${amzDate(issuedMs)}&X-Amz-Expires=${lifetime}&X-Amz-SignedHeaders=host&X-Amz-Signature=e2e${issuedMs}`;
+}
+
+function signPost(post, issuedMs) {
+  const one = (u) => signUrl(u, issuedMs);
+  const all = (o) => (o ? Object.fromEntries(Object.entries(o).map(([k, v]) => [k, one(v)])) : o);
+  return {
+    ...post,
+    media: one(post.media),
+    image: one(post.image),
+    thumbnail: one(post.thumbnail),
+    media_variants: all(post.media_variants),
+    image_variants: all(post.image_variants),
+    image_webp_variants: all(post.image_webp_variants),
+  };
+}
+
+function signatureExpired(searchParams) {
+  const date = searchParams.get('X-Amz-Date');
+  const lifetime = Number(searchParams.get('X-Amz-Expires'));
+  if (!date || !lifetime) return false;
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(date);
+  if (!m) return true;
+  return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) + lifetime * 1000 <= Date.now();
+}
+
+const STALE_MS = 2 * 60 * 60 * 1000;
+const PHOTO_IDS = new Set([813, 823]);
+
 function newMediaState() {
   // processing: id -> { processing_status, processing_progress, processing_error, queued },
   // what /posts/processing/ and /reels/<id>/ answer, set by the suite through
@@ -214,11 +352,70 @@ function newMediaState() {
     [900, { processing_status: 'PROCESSING', processing_progress: 30, processing_error: null, queued: false }],
     [901, { processing_status: 'FAILED', processing_progress: 20, processing_error: 'video_too_long', queued: false }],
   ]);
-  return { files: new Map(), requests: [], processing, apiLog: [] };
+  // signing: how feed responses sign media -- 'none' (public objects, the
+  // default), 'fresh', or 'stale' (issued two hours ago: already expired).
+  // deleted: /media/ paths storage has lost (404 NoSuchKey).
+  // statuses: every /media/ answer, {path, status}.
+  return {
+    files: new Map(), requests: [], processing, apiLog: [],
+    signing: 'none', deleted: new Set(), statuses: [],
+    liked: new Set(), saved: new Set(),
+  };
 }
 
-function mediaApi(media, route, url, origin) {
+function mediaApi(media, route, url, origin, body) {
   const own = { id: 1, username: 'e2e_author' };
+  // Like and save toggle, answering as api/views/core.py does.
+  const toggled = /^\/reels\/(\d+)\/(vote|save)\/$/.exec(route);
+  if (toggled) {
+    const id = Number(toggled[1]);
+    const set = toggled[2] === 'vote' ? media.liked : media.saved;
+    const on = !set.has(id);
+    if (on) set.add(id); else set.delete(id);
+    media.apiLog.push({ route, ids: [String(id)] });
+    return [200, toggled[2] === 'vote' ? { voted: on, votes: on ? 1 : 0 } : { saved: on }];
+  }
+  const served = (post) => (media.signing === 'none'
+    ? post
+    : signPost(post, media.signing === 'stale' ? Date.now() - STALE_MS : Date.now()));
+  if (route === '/posts/media/') {
+    // POST /posts/media/ as api/views/core.py answers it: the posts' media
+    // signed now, less anything storage has lost, and for a reported failure
+    // a media_check with the reason (api/services/media_availability.py).
+    let asked = {};
+    try { asked = JSON.parse(body.toString('utf8') || '{}'); } catch { asked = {}; }
+    const ids = (asked.ids || []).map(Number);
+    const failures = asked.failures || [];
+    media.apiLog.push({ route, ids: ids.map(String), failures });
+    const lost = (u) => typeof u === 'string' && media.deleted.has(new URL(u, origin).pathname);
+    const posts = ids.map((id) => {
+      const state = media.processing.get(id);
+      if (state && state.processing_status !== 'READY') {
+        return { id, media: null, image: null, thumbnail: null, media_variants: null, media_type: state.media_type || 'video', ...state, media_check: null };
+      }
+      const post = PHOTO_IDS.has(id) ? processedPhoto(origin, id, '') : processedVideo(origin, id, '');
+      const missing = [];
+      if (lost(post.media)) { missing.push('media'); post.media = null; }
+      for (const [rung, u] of Object.entries(post.media_variants || {})) {
+        if (lost(u)) { missing.push(rung); delete post.media_variants[rung]; }
+      }
+      if (post.media_variants && !Object.keys(post.media_variants).length) post.media_variants = null;
+      if (!post.media && post.media_variants) post.media = post.media_variants['480'] || post.media_variants['360'] || null;
+      if (post.thumbnail && lost(post.thumbnail)) post.thumbnail = null;
+      const failure = failures.find((f) => Number(f.id) === id);
+      let check = null;
+      if (failure) {
+        let expired = false;
+        try { expired = signatureExpired(new URL(String(failure.url), origin).searchParams); } catch { /* not a URL */ }
+        check = {
+          reason: missing.length ? 'object_missing' : expired ? 'expired_signature' : 'available',
+          repairing: missing.length > 0,
+        };
+      }
+      return { ...signPost(post, Date.now()), media_check: check };
+    });
+    return [200, { posts, expires_in: 3600 }];
+  }
   if (route === '/posts/processing/') {
     const ids = (url.searchParams.get('ids') || '').split(',').filter(Boolean);
     media.apiLog.push({ route, ids });
@@ -233,15 +430,24 @@ function mediaApi(media, route, url, origin) {
     const id = Number(single[1]);
     media.apiLog.push({ route, ids: [String(id)] });
     const state = media.processing.get(id);
-    if (state.processing_status === 'READY') return [200, { ...processedVideo(origin, id, 'fresh upload'), user: own }];
+    if (state.processing_status === 'READY') {
+      const done = state.media_type === 'image' ? processedPhoto : processedVideo;
+      return [200, { ...served(done(origin, id, 'fresh upload')), user: own }];
+    }
     return [200, {
       id, user: own, caption: 'my new clip', media: null, image: null, thumbnail: null,
       media_type: 'video', votes: 0, comment_count: 0, created_at: new Date().toISOString(), ...state,
     }];
   }
   if (route === '/reels/') {
+    // is_liked / is_saved from what this viewer has toggled, as the API does.
     return [200, {
-      results: [801, 802, 803].map((id, i) => processedVideo(origin, id, `clip ${i + 1}`)),
+      results: [801, 802, 803].map((id, i) => ({
+        ...served(processedVideo(origin, id, `clip ${i + 1}`)),
+        is_liked: media.liked.has(id),
+        votes: media.liked.has(id) ? 1 : 0,
+        is_saved: media.saved.has(id),
+      })),
       next: null,
     }];
   }
@@ -279,9 +485,9 @@ function mediaApi(media, route, url, origin) {
     });
     return [200, {
       posts: [
-        entry(0, processedVideo(origin, 811, 'entry one')),
-        entry(1, processedVideo(origin, 812, 'entry two')),
-        entry(2, processedPhoto(origin, 813, 'entry three')),
+        entry(0, served(processedVideo(origin, 811, 'entry one'))),
+        entry(1, served(processedVideo(origin, 812, 'entry two'))),
+        entry(2, served(processedPhoto(origin, 813, 'entry three'))),
       ],
     }];
   }
@@ -344,6 +550,8 @@ async function main() {
   let html = '';
   let state = null;
   let resolveResults = () => {};
+  let profileDir = '';
+  let devtools = null;
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
@@ -360,6 +568,22 @@ async function main() {
     }
     if (url.pathname.startsWith('/media/')) {
       if (state) state.media.requests.push(url.pathname);
+      const answered = (status) => state && state.media.statuses.push({ path: url.pathname, status });
+      // As OBS answers: an expired signature is refused, a lost object is
+      // not found -- both with an XML body a <video> cannot play.
+      if (state && signatureExpired(url.searchParams)) {
+        answered(403);
+        res.writeHead(403, { 'Content-Type': 'application/xml' });
+        res.end('<?xml version="1.0" encoding="UTF-8"?><Error><Code>AccessDenied</Code><Message>Request has expired</Message></Error>');
+        return undefined;
+      }
+      if (state && state.media.deleted.has(url.pathname)) {
+        answered(404);
+        res.writeHead(404, { 'Content-Type': 'application/xml' });
+        res.end('<?xml version="1.0" encoding="UTF-8"?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>');
+        return undefined;
+      }
+      answered(200);
       const file = state && state.media.files.get(url.pathname);
       if (file) {
         res.writeHead(200, { 'Content-Type': file.type, 'Content-Length': file.bytes.length });
@@ -382,13 +606,19 @@ async function main() {
       if (url.searchParams.get('clear') === '1') state.media.requests.length = 0;
       return json(200, list);
     }
+    if (url.pathname === '/__media/statuses') {
+      const list = state.media.statuses.slice();
+      if (url.searchParams.get('clear') === '1') state.media.statuses.length = 0;
+      return json(200, list);
+    }
     if (url.pathname === '/__media/control') {
       if (url.searchParams.has('ready')) {
         state.media.processing.set(Number(url.searchParams.get('ready')), {
           processing_status: 'READY', processing_progress: 100, processing_error: null, queued: false,
         });
       }
-      // ?set=910:PROCESSING:25[:error]&queued=1 -- what the worker has reached.
+      // ?set=910:PROCESSING:25[:error]&queued=1&kind=image -- what the worker
+      // has reached, for a video unless kind says it is a photo.
       if (url.searchParams.has('set')) {
         const [id, status, progress, error] = url.searchParams.get('set').split(':');
         state.media.processing.set(Number(id), {
@@ -396,8 +626,21 @@ async function main() {
           processing_progress: Number(progress) || 0,
           processing_error: error || null,
           queued: url.searchParams.get('queued') === '1',
+          media_type: url.searchParams.get('kind') === 'image' ? 'image' : 'video',
         });
       }
+      // ?sign=none|fresh|stale  ?lose=/media/a.webm,/media/b.webm  ?restore=1
+      if (url.searchParams.has('sign')) state.media.signing = url.searchParams.get('sign');
+      (url.searchParams.get('lose') || '').split(',').filter(Boolean).forEach((p) => state.media.deleted.add(p));
+      if (url.searchParams.get('restore') === '1') {
+        state.media.deleted.clear();
+        state.media.signing = 'none';
+      }
+      if (url.searchParams.get('unlike') === '1') {
+        state.media.liked.clear();
+        state.media.saved.clear();
+      }
+      if (url.searchParams.has('gifts')) state.media.giftsBroken = url.searchParams.get('gifts') === 'broken';
       return json(200, {});
     }
     if (url.pathname === '/__media/api-log') {
@@ -408,6 +651,15 @@ async function main() {
     if (url.pathname === '/__log') {
       console.log(`  ${body.toString('utf8')}`);
       return json(200, {});
+    }
+    if (url.pathname === '/__input') {
+      try {
+        devtools = devtools || await connectDevTools(profileDir);
+        const result = await performInput(devtools, JSON.parse(body.toString('utf8') || '{}'));
+        return json(200, { ok: true, result: result || null });
+      } catch (e) {
+        return json(500, { ok: false, error: String(e && e.message) });
+      }
     }
     if (url.pathname === '/__results') {
       json(200, {});
@@ -454,8 +706,25 @@ async function main() {
     }
     if (route === '/crypto/public-key/') return json(404, {}); // E2E off: plain JSON
     if (route === '/categories/') return json(200, suite === 'media' ? [] : EXPLORE_CATEGORIES);
-    if (suite === 'media') {
-      const answer = mediaApi(state.media, route, url, origin);
+    if (suite === 'reels') {
+      // The whole app at /reels: a signed-in, subscribed account, so Like,
+      // Share and the rest do their job instead of sending to /subscription.
+      if (route === '/subscription/status/') return json(200, { has_subscription: true, status: 'active' });
+      if (route === '/profile/me/') return json(200, { user: { id: 1, username: 'e2e_author' } });
+      if (route === '/gifts/' && state.media.giftsBroken) return json(200, {});
+      if (route === '/gifts/') {
+        // Paginated, as DRF answers it.
+        return json(200, {
+          count: 2, next: null, previous: null,
+          results: [
+            { id: 1, name: 'Rose', description: 'A rose', coin_value: 10, rarity: 'common', category: 'flowers' },
+            { id: 2, name: 'Crown', description: 'A crown', coin_value: 100, rarity: 'rare', category: 'special' },
+          ],
+        });
+      }
+    }
+    if (suite === 'media' || suite === 'reels') {
+      const answer = mediaApi(state.media, route, url, origin, body);
       if (answer) return json(answer[0], answer[1]);
     }
     if (route === '/posts/processing/') {
@@ -535,15 +804,22 @@ async function main() {
 
     console.log(`\n── ${name} ──`);
     const profile = mkdtempSync(path.join(tmpdir(), `flipstar-${name}-e2e-`));
+    profileDir = profile;
+    devtools = null;
     const child = spawn(browser, [
       '--headless=new',
+      // For /__input: real taps, clicks and swipes (see performInput).
+      '--remote-debugging-port=0',
       '--no-first-run',
       '--no-default-browser-check',
       `--user-data-dir=${profile}`,
       // Chromium's synthetic camera and microphone, and "Allow" for every prompt.
       '--use-fake-device-for-media-stream',
       '--use-fake-ui-for-media-stream',
-      '--autoplay-policy=no-user-gesture-required',
+      // Reels runs under the real autoplay policy -- muted autoplay only,
+      // sound only after a gesture -- as a phone does. The others play
+      // without a gesture to keep their setup short.
+      ...(name === 'reels' ? [] : ['--autoplay-policy=no-user-gesture-required']),
       '--enable-unsafe-swiftshader',
       '--ignore-gpu-blocklist',
       '--disable-background-timer-throttling',
@@ -556,6 +832,7 @@ async function main() {
     const timer = setTimeout(() => resolveResults({ timeout: true, tests: [] }), TIMEOUT_MS);
     const outcome = await results;
     clearTimeout(timer);
+    if (devtools) { try { devtools.close(); } catch (_) { /* already gone */ } devtools = null; }
     if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
     else child.kill('SIGKILL');
     try { rmSync(profile, { recursive: true, force: true }); } catch (_) { /* the browser may still hold it */ }

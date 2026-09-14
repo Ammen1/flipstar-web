@@ -21,6 +21,8 @@ import { getCampaignId, isCampaignPost as postIsCampaign, getCampaignTitle } fro
 import { ModernCommentSection } from '../../components/messaging/ModernCommentSection';
 import { isVideoUrl, isVideoPost, isMediaReady } from '../../utils/media';
 import { connectionTier, videoPreload, pickVideoSource, pickImageSource, pickImageWebp } from '../../utils/connection';
+import { useFreshMedia, useSteadySrc } from '../../hooks/useFreshMedia';
+import { cacheStillLoadable } from '../../utils/signedUrl';
 
 const BACKEND = config.API_BASE_URL.replace('/api', '');
 
@@ -52,6 +54,13 @@ function readHomeCache() {
     if (!raw) return null;
     const { ts, data } = JSON.parse(raw);
     if (Date.now() - ts > CACHE_TTL) {
+      localStorage.removeItem(CACHE_KEY);
+      return null;
+    }
+    // The stamp is when the cache was written, not when its URLs were
+    // signed: posts carried over from earlier pages keep older signatures.
+    // A cache holding URLs that have run out would show dead media.
+    if (!cacheStillLoadable(data)) {
       localStorage.removeItem(CACHE_KEY);
       return null;
     }
@@ -906,7 +915,11 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
   const [showInsufficientCoinsModal, setShowInsufficientCoinsModal] = useState(false);
   const likeInteracted = useRef(false);
   const saveInteracted = useRef(false);
-  const [imgError, setImgError] = useState(false);
+  // The post's media kept loadable (hooks/useFreshMedia.js): a URL that
+  // stops working -- a signature run out, a file since replaced -- is
+  // reported and swapped for a current one; the card gives up only when the
+  // server has nothing left to load.
+  const { post: live, onMediaError, unavailable: imgError } = useFreshMedia(post, 'home');
   // Drives the thumbnail -> full-image handover below.
   const [fullImageReady, setFullImageReady] = useState(false);
   // A hint, never a gate: on a slow connection nothing beyond the current
@@ -1115,8 +1128,8 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
   };
 
   // Detect if this post has video media
-  const raw = post.media || post.image || '';
-  const isVideo = isVideoPost(post);
+  const raw = live.media || live.image || '';
+  const isVideo = isVideoPost(live);
 
   // Which encode to fetch. The backend advertises smaller rungs in
   // media_variants / image_variants; the pickers prefer one that suits the
@@ -1125,11 +1138,13 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
   //
   // isVideoPost decides the branch below, so the source has to be picked on
   // the same basis -- a video post must never be handed an image variant.
-  const chosen = isVideo ? pickVideoSource(post, netTier) : pickImageSource(post, netTier);
+  const chosen = isVideo ? pickVideoSource(live, netTier) : pickImageSource(live, netTier);
   const mediaSrc = mediaUrl(chosen || raw);
+  // A clip that is playing keeps its file when the URLs are refreshed.
+  const videoSrc = useSteadySrc(videoRef, mediaSrc);
   // The same rendition as WebP, offered through <picture> so the browser
   // takes it only if it can decode it; the JPEG above is the fallback.
-  const webpPick = isVideo ? '' : pickImageWebp(post, netTier);
+  const webpPick = isVideo ? '' : pickImageWebp(live, netTier);
   const webpSrc = webpPick ? mediaUrl(webpPick) : '';
 
   // The cheap preview. api/tasks/media.py generates a 320x720 thumbnail for
@@ -1140,9 +1155,9 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
   //
   // Falls back to post.image so posts processed before thumbnails existed
   // keep the behaviour they have now rather than losing their poster.
-  const previewSrc = post.thumbnail
-    ? mediaUrl(post.thumbnail)
-    : (post.image ? mediaUrl(post.image) : null);
+  const previewSrc = live.thumbnail
+    ? mediaUrl(live.thumbnail)
+    : (live.image ? mediaUrl(live.image) : null);
   // Same caption/description resolution the overlay uses, so the two agree on
   // whether there is anything to show.
   const hasCaption = Boolean(captionOf(post));
@@ -1706,7 +1721,7 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
               <>
                 <video
                   ref={videoRef}
-                  src={mediaSrc}
+                  src={videoSrc}
                   poster={previewSrc || undefined}
                   preload={videoPreload(index, netTier)}
                   loading={index === 0 ? 'eager' : 'lazy'}
@@ -1716,13 +1731,13 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
                   onPlay={() => setVideoPlaying(true)}
                   onPause={() => setVideoPlaying(false)}
                   onLoadedData={() => setVideoReady(true)}
-                  onError={() => setImgError(true)}
+                  onError={onMediaError}
                 />
                 {/* Placeholder for videos with no poster. It is opaque and
                     covers the whole frame, so it must be removed as soon as
                     the video has a frame to show — otherwise the clip plays
                     underneath it and you get sound with no picture. */}
-                {!post.image && !videoReady && (
+                {!live.image && !videoReady && (
                   <div style={{
                     position: 'absolute', inset: 0,
                     background: 'linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%)',
@@ -1787,13 +1802,15 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
                         : {}),
                     }}
                     onClick={handleImageClick}
-                    onError={() => setImgError(true)}
+                    onError={onMediaError}
                   />
                 </picture>
               </div>
             )
           ) : (
-            <div style={{ width: '100%', height: 260, background: T?.cardBg || '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T?.sub || '#666', fontSize: 14 }}>No media</div>
+            <div data-media-unavailable={imgError || undefined} style={{ width: '100%', height: 260, background: T?.cardBg || '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T?.sub || '#666', fontSize: 14 }}>
+              {imgError ? (isVideo ? 'Video unavailable' : 'Photo unavailable') : 'No media'}
+            </div>
           )}
 
           {/* Play button overlay - only shows when paused */}

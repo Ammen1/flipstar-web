@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef } from 'react';
 import config from '../../config';
 import { connectionTier, pickImageSource, pickImageWebp, pickVideoSource } from '../../utils/connection';
 import { pauseOtherVideos } from '../../utils/media';
+import { useFreshMedia, useSteadySrc } from '../../hooks/useFreshMedia';
+import { sameRendition } from '../../utils/mediaRecovery';
 
 /**
  * Processed post media for the pages outside the main feeds (campaign feed
@@ -18,15 +20,39 @@ const absolute = (url) => (!url ? '' : url.startsWith('http') ? url : `${MEDIA_R
  * Posts without variants show `image` exactly as before.
  */
 export function ProcessedImage({ post, alt = '', style, className, ...rest }) {
+  const { post: live, onMediaError, unavailable } = useFreshMedia(post, 'campaign');
   const tier = connectionTier();
-  const jpg = absolute(pickImageSource(post, tier));
-  const webp = absolute(pickImageWebp(post, tier));
+  const jpg = absolute(pickImageSource(live, tier));
+  const webp = absolute(pickImageWebp(live, tier));
   if (!jpg) return null;
+  if (unavailable) return <Unavailable what="Photo" className={className} style={style} />;
   return (
     <picture style={{ display: 'contents' }}>
       {webp && <source srcSet={webp} type="image/webp" />}
-      <img src={jpg} alt={alt} loading="lazy" decoding="async" className={className} style={style} {...rest} />
+      <img src={jpg} alt={alt} loading="lazy" decoding="async" className={className} style={style} onError={onMediaError} {...rest} />
     </picture>
+  );
+}
+
+function Unavailable({ what, className, style }) {
+  return (
+    <div
+      data-media-unavailable
+      role="status"
+      className={className}
+      style={{
+        ...style,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: 160,
+        background: '#111',
+        color: 'rgba(255,255,255,0.7)',
+        fontSize: 13,
+      }}
+    >
+      {what} unavailable
+    </div>
   );
 }
 
@@ -47,8 +73,14 @@ export function ProcessedImage({ post, alt = '', style, className, ...rest }) {
  */
 export function ProcessedVideo({ post, style, className, ...rest }) {
   const ref = useRef(null);
-  const src = useMemo(() => absolute(pickVideoSource(post, connectionTier())), [post?.id, post?.media]);
-  const poster = post?.thumbnail ? absolute(post.thumbnail) : undefined;
+  // A URL that stops working (a signature run out, a file since replaced)
+  // is reported and swapped for a current one (hooks/useFreshMedia.js).
+  const { post: live, onMediaError, unavailable } = useFreshMedia(post, 'campaign');
+  // The rung is chosen once per post; a refresh brings the same rung under a
+  // new URL (sameRendition), and a playing clip keeps its file (useSteadySrc).
+  const first = useMemo(() => pickVideoSource(post, connectionTier()), [post?.id]);
+  const src = useSteadySrc(ref, absolute(sameRendition(live, first) || pickVideoSource(live, connectionTier())));
+  const poster = live?.thumbnail ? absolute(live.thumbnail) : undefined;
 
   useEffect(() => {
     const el = ref.current;
@@ -66,6 +98,7 @@ export function ProcessedVideo({ post, style, className, ...rest }) {
   }, []);
 
   if (!src) return null;
+  if (unavailable) return <Unavailable what="Video" className={className} style={style} />;
   return (
     <video
       ref={ref}
@@ -76,6 +109,7 @@ export function ProcessedVideo({ post, style, className, ...rest }) {
       preload={poster ? 'none' : 'metadata'}
       controls
       playsInline
+      onError={onMediaError}
       onPlay={(e) => pauseOtherVideos(e.currentTarget)}
       className={className}
       style={style}
