@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { Heart, Trophy, MessageCircle, Share2, Bookmark, MoreHorizontal, Eye, CheckCircle, Play, X, Send, Info, Link2, Download, Flag, Trash2, User, Gift, AtSign, Search, Zap } from 'lucide-react';
 import api from '../../api';
 import config from '../../config';
@@ -23,6 +23,13 @@ import { isVideoUrl, isVideoPost, isMediaReady } from '../../utils/media';
 import { connectionTier, videoPreload, pickVideoSource, pickImageSource, pickImageWebp } from '../../utils/connection';
 import { useFreshMedia, useSteadySrc } from '../../hooks/useFreshMedia';
 import { cacheStillLoadable } from '../../utils/signedUrl';
+import {
+  forgetFeedPosition,
+  recallFeedPosition,
+  rememberFeedPosition,
+  restoreFeedPosition,
+  visiblePostId,
+} from '../../utils/feedPosition';
 
 const BACKEND = config.API_BASE_URL.replace('/api', '');
 
@@ -47,6 +54,10 @@ function timeAgo(dateStr) {
 // Cache helpers for HomePage
 const CACHE_KEY = 'homepage_feed_cache';
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes cache for better persistence
+// Enough to hold several infinite-scroll pages, so returning from a single
+// post finds the feed as deep as the user left it, without letting one feed
+// eat the storage quota.
+const CACHE_MAX_POSTS = 60;
 
 function readHomeCache() {
   try {
@@ -2578,17 +2589,27 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
   const [posts, setPosts] = useState(() => mergeLocalEngagement(readHomeCache() || []));
   const [loading, setLoading] = useState(() => !readHomeCache());
   const [mounted, setMounted] = useState(() => !!readHomeCache()); // Start mounted if we have cache
-  const [page, setPage] = useState(0);
+  // Where the user was when they left Home for a single post, read once at
+  // mount -- before any effect can scroll -- so the restore below can win
+  // against the snap-to-top and the refetch that would otherwise land them on
+  // post 1. Cleared as soon as it has been honoured, so an ordinary tab change
+  // still starts at the top.
+  const returningTo = useRef(recallFeedPosition('home'));
+  // Set once the position has been put back. Layout effects run before passive
+  // ones, so without this the snap-to-top below would fire *after* the restore
+  // and undo it -- landing the user on post 1 again.
+  const restored = useRef(false);
+  const snappedTab = useRef(null);
+  const catchUpFetches = useRef(0);
+  // Continue paginating from where they were, rather than from offset 0.
+  const [page, setPage] = useState(() => returningTo.current?.page || 0);
   const [hasMore, setHasMore] = useState(true);
   const videoObserverRef = useRef(null);
   // Desktop shows one clip at a time (TikTok style) instead of the card feed.
   const [viewerIndex, setViewerIndex] = useState(0);
   const [viewerCommentPost, setViewerCommentPost] = useState(null);
   const loaderRef = useRef(null);
-  
-  // Persistence key for scroll position
-  const SCROLL_POS_KEY = 'homepage_scroll_pos';
-  
+
   // Pull to refresh state
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -2631,18 +2652,11 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blockedUsers]);
 
-  // Restore scroll position after mount
-  useEffect(() => {
-    if (mounted && posts.length > 0) {
-      const savedPos = sessionStorage.getItem(SCROLL_POS_KEY);
-      if (savedPos) {
-        // Use a small delay to ensure content is painted
-        setTimeout(() => {
-          window.scrollTo({ top: parseInt(savedPos, 10), behavior: 'instant' });
-        }, 100);
-      }
-    }
-  }, [mounted, posts.length]);
+  // Restoring the position lives further down, next to `isMobile`: the card
+  // feed and the desktop viewer are restored differently, and both need to
+  // know which one is on screen. This used to save and restore `window.scrollY`
+  // -- but the feed scrolls inside its own container, so the value written was
+  // always 0 and the restore moved nothing.
 
   // Scroll to specific post when initialPostId is provided
   useEffect(() => {
@@ -2690,17 +2704,7 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
     }
   }, [initialPostId, posts.length]);
 
-  // Save scroll position before unmount or periodically
-  useEffect(() => {
-    const handleScroll = () => {
-      // Don't save if we are at the very top (might be a reset)
-      if (window.scrollY > 100) {
-        sessionStorage.setItem(SCROLL_POS_KEY, window.scrollY.toString());
-      }
-    };
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
+  // (Saving the position also lives further down, with the restore.)
 
   const LIMIT = 5; // Load fewer posts initially for faster LCP
   const PULL_THRESHOLD = 80;
@@ -2858,7 +2862,11 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
       // Overlapping pages would otherwise repeat posts in the feed.
       const newPosts = dedupeById(reset ? filtered : [...postsRef.current, ...filtered]);
       setPosts(newPosts);
-      if (reset) writeHomeCache(newPosts);
+      // Every page, not just the first. The cache is what survives the trip to
+      // a single post, so caching only page one meant everything the user had
+      // scrolled into view was thrown away on the way back. Capped, because
+      // this shares a storage quota with the rest of the app.
+      writeHomeCache(newPosts.slice(0, CACHE_MAX_POSTS));
       setHasMore(Array.isArray(data) ? results.length === limit : !!data.next);
       setPage(offset);
     } catch (e) {
@@ -2938,7 +2946,11 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
       // remount. api.js request-dedup makes repeat calls cheap, but this
       // avoids kicking off a background fetch when the user just briefly
       // left and came back.
-      if (!loadedTabsRef.current.has(activeTab)) {
+      //
+      // Not while returning from a post: a reset fetch replaces the feed with
+      // page one, which throws away the pages the user had scrolled through
+      // and moves the ground under the restore.
+      if (!loadedTabsRef.current.has(activeTab) && !returningTo.current) {
         loadedTabsRef.current.add(activeTab);
         setTimeout(() => fetchPosts(0, true), 2000);
       }
@@ -2953,6 +2965,12 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
   // browser restored a stale scroll position or an infinite-scroll fetch
   // slipped in before paint, we'd land deep in the feed.  Force top.
   useEffect(() => {
+    // Snap on a real tab change, always. On mount, only when the user is not
+    // on their way back to where they were: this effect is the reason
+    // returning from a single post landed on post 1.
+    const tabChanged = snappedTab.current !== null && snappedTab.current !== activeTab;
+    snappedTab.current = activeTab;
+    if (!tabChanged && (returningTo.current || restored.current)) return;
     // Run in a microtask so the new posts have painted and the container
     // actually has a scrollHeight to scroll within.
     const snap = () => {
@@ -2968,6 +2986,10 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
   useEffect(() => {
     const handleTabReselect = (e) => {
       if (e.detail?.tab !== 'home') return;
+      // An explicit 'take me to the top': the remembered position would only
+      // fight it on the next visit.
+      forgetFeedPosition('home');
+      returningTo.current = null;
       if (containerRef.current) containerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
       fetchPosts(0, true);
     };
@@ -2980,7 +3002,9 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && hasMore && !loading) {
-          fetchPosts(page + LIMIT, false);
+          // The offset is how many posts are in hand, not how many pages were
+          // counted: a restored feed starts with the cache, not with page one.
+          fetchPosts(postsRef.current.length, false);
         }
       },
       { threshold: 0.1 }
@@ -3018,6 +3042,10 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
       setPullDistance(PULL_THRESHOLD);
       // Clear cache and fetch fresh data
       try {
+        // Pull to refresh asks for the newest posts, so the old position no
+        // longer means anything.
+        forgetFeedPosition('home');
+        returningTo.current = null;
         localStorage.removeItem('home_feed_cache');
         await fetchPosts(0, true);
       } catch (e) {
@@ -3046,6 +3074,112 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
       window.removeEventListener('orientationchange', onResize);
     };
   }, []);
+
+  // ── Coming back from a single post ────────────────────────────────────────
+  //
+  // Home and /post/:id are sibling routes, so opening a post unmounts this
+  // component: state, scroll offset and any infinitely-scrolled pages go with
+  // it. The position is remembered on the way out (below) and put back here,
+  // anchored on the post the user was looking at rather than a pixel offset --
+  // cards change height as media loads, and the offset would land elsewhere.
+  //
+  // In a layout effect, so it happens before the browser paints: the user
+  // never sees post 1 flash by on the way to where they were.
+  useLayoutEffect(() => {
+    const target = returningTo.current;
+    if (!target || !posts.length) return;
+
+    if (isMobile) {
+      const container = containerRef.current;
+      if (!container) return;
+      // Keeps correcting while the feed grows under it -- images and videos
+      // finishing their load move the anchor after the first attempt.
+      return restoreFeedPosition(container, target, {
+        onDone: (landed) => {
+          if (!landed) return;
+          returningTo.current = null;
+          restored.current = true;
+        },
+      });
+    } else {
+      // The desktop viewer shows one post at a time; its index is the position.
+      const index = viewerPosts.findIndex((p) => String(p.id) === String(target.postId));
+      if (index < 0) return;
+      setViewerIndex(index);
+    }
+    // Honoured: from here on Home behaves normally, including snapping to the
+    // top when the user switches tabs.
+    returningTo.current = null;
+    restored.current = true;
+  }, [posts, viewerPosts, isMobile]);
+
+  // The anchor can be deeper than the cached pages -- the cache is capped, and
+  // it expires sooner than the position does. Fetch forward a few pages until
+  // the post appears, rather than leaving the user near the top with no
+  // explanation.
+  useEffect(() => {
+    const target = returningTo.current;
+    if (!target || loading || !hasMore) return;
+    if (!posts.length || catchUpFetches.current >= 3) return;
+    if (posts.some((p) => String(p.id) === String(target.postId))) return;
+    if (posts.length >= target.count) return;
+    catchUpFetches.current += 1;
+    fetchPosts(posts.length, false);
+  }, [posts, loading, hasMore, fetchPosts]);
+
+  // Remember where they are, so the next trip to a post can come back here.
+  // Throttled to one write per frame: this runs on every scroll event.
+  const rememberPosition = useCallback((postId) => {
+    // Never while a restore is still in flight: the scroll is at 0 until it
+    // lands, and saving that would overwrite the very position being restored
+    // -- which is how the memory got lost on the way back.
+    if (returningTo.current) return;
+    const container = containerRef.current;
+    if (!isMobile) {
+      const current = viewerPosts[viewerIndex];
+      const anchor = postId ?? current?.id;
+      if (anchor != null) {
+        rememberFeedPosition('home', { postId: anchor, offset: 0, page, count: viewerPosts.length });
+      }
+      return;
+    }
+    if (!container) return;
+    rememberFeedPosition('home', {
+      postId: postId ?? visiblePostId(container),
+      offset: container.scrollTop,
+      page,
+      count: postsRef.current.length,
+    });
+  }, [isMobile, page, viewerIndex, viewerPosts]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!isMobile || !container) return;
+    let frame = 0;
+    const save = () => { frame = 0; rememberPosition(); };
+    const onScroll = () => { if (!frame) frame = requestAnimationFrame(save); };
+    container.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      container.removeEventListener('scroll', onScroll);
+      if (frame) cancelAnimationFrame(frame);
+      // Leaving the feed -- for a post, or anywhere else. One last write, so
+      // the position is the one they actually left from.
+      save();
+    };
+  }, [isMobile, rememberPosition]);
+
+  // Desktop has no scrolling to listen to: the viewer's index is the position.
+  useEffect(() => {
+    if (isMobile) return;
+    rememberPosition();
+  }, [isMobile, viewerIndex, rememberPosition]);
+
+  // Opening a post: record that exact post, not merely whatever sits nearest
+  // the top of the viewport, so Back returns to the card they tapped.
+  const openPost = useCallback((postId) => {
+    rememberPosition(postId);
+    onShowVideoDetail?.(postId);
+  }, [rememberPosition, onShowVideoDetail]);
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: T?.bg || '#0D0D0D' }}>
@@ -3223,7 +3357,7 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
           onHashtagClick={() => onShowExplorer?.()}
           onFollow={(id) => handleFollow(id)}
           isFollowing={(p) => followStates[p?.user?.id] ?? p?.user?.is_following}
-          onNeedMore={() => { if (hasMore && !loading) fetchPosts(page + LIMIT); }}
+          onNeedMore={() => { if (hasMore && !loading) fetchPosts(postsRef.current.length); }}
         />
       ) : (
       /* Feed — tight padding so each post fits fully in the viewport. */
@@ -3273,10 +3407,10 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
                   T={T}
                   onShowProfile={onShowProfile}
                   onRequireAuth={onRequireAuth}
-                  onNavigateToReel={onShowVideoDetail}
+                  onNavigateToReel={openPost}
                   onCommentAdded={() => {}}
                   onVoteAdded={() => {}}
-                  onShowVideoDetail={onShowVideoDetail}
+                  onShowVideoDetail={openPost}
                   onHashtagClick={() => onShowExplorer?.()}
                   videoObserver={videoObserverRef.current}
                   onShowWallet={onShowWallet}

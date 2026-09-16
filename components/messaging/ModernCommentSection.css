@@ -2,17 +2,21 @@
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
+
 .modern-comment-overlay {
   padding-bottom: 0;
 }
+
+/* The sheet's real height is set inline, measured from the visual viewport
+   (utils/sheetMetrics.js) so that it survives the keyboard opening. This is
+   only the fallback for a browser that renders before that measurement, and
+   the ceiling for the docked desktop panel. */
 .modern-comment-modal {
   max-height: 85vh;
 }
-@media (max-width: 1024px) {
-  .modern-comment-overlay {
-    padding-bottom: 0;
-  }
+
+@supports (height: 100dvh) {
   .modern-comment-modal {
-    max-height: 85vh;
+    max-height: 85dvh;
   }
 }

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { X, Heart, MessageCircle, Send, Loader, Flag, AtSign, Gift } from "lucide-react";
 import api from "../../api";
 import config from "../../config";
@@ -8,6 +9,7 @@ import { readCoinError, INSUFFICIENT, AUTH } from "../../utils/coinErrors";
 import { getRelativeTime } from "../../utils/timeUtils";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useLanguage } from "../../contexts/LanguageContext";
+import { readSheetMetrics, watchSheetMetrics } from "../../utils/sheetMetrics";
 import GiftPage from "../../pages/gift/GiftPage";
 import "./ModernCommentSection.css";
 
@@ -288,6 +290,10 @@ export function ModernCommentSection({ reelId, user, onClose, onCommentPosted, o
   const [loading, setLoading] = useState(true);
   const [posting, setPosting] = useState(false);
   const [expandedReplies, setExpandedReplies] = useState(() => new Set());
+  // The sheet is sized from the visual viewport, and re-sized when the
+  // keyboard opens: see utils/sheetMetrics.js.
+  const [sheet, setSheet] = useState(readSheetMetrics);
+  useEffect(() => watchSheetMetrics(setSheet), []);
 
   const toggleReplies = (commentId) => {
     setExpandedReplies(prev => {
@@ -534,7 +540,8 @@ export function ModernCommentSection({ reelId, user, onClose, onCommentPosted, o
     }
   };
 
-  return (
+  // The whole sheet; portalled to <body> below.
+  const sheetUi = (
     <>
       <div
         className={`modern-comment-overlay${variant === 'panel' ? ' is-panel' : ''}`}
@@ -579,7 +586,17 @@ export function ModernCommentSection({ reelId, user, onClose, onCommentPosted, o
             ...(variant === 'panel'
               ? { maxWidth: "none", height: "100%", borderRadius: 0,
                   borderLeft: `1px solid ${T.border || 'rgba(255,255,255,0.1)'}` }
-              : { maxWidth: 600, borderRadius: "20px 20px 0 0" }),
+              // A measured height, not "as tall as its contents": with no
+              // comments the sheet was a stub a few lines high, with its input
+              // off the bottom of the screen. marginBottom lifts it clear of
+              // the keyboard -- see utils/sheetMetrics.js.
+              : {
+                  maxWidth: 600,
+                  borderRadius: "20px 20px 0 0",
+                  height: sheet.height,
+                  maxHeight: "none",
+                  marginBottom: sheet.lift,
+                }),
           }}
         >
         {/* Header */}
@@ -905,6 +922,16 @@ export function ModernCommentSection({ reelId, user, onClose, onCommentPosted, o
     </div>
     </>
   );
+
+  // Mounted at the end of <body>, not inside the page that opened it.
+  //
+  // "position: fixed" only means "fixed to the viewport" while no ancestor
+  // creates a containing block, and a z-index only competes inside the
+  // nearest stacking context. Rendered within a page, this sheet lost to the
+  // app's bottom navigation -- which is how the nav ended up lying across the
+  // comment input. As a sibling of the navigation, its z-index means what it
+  // says, whatever the page around it does.
+  return typeof document === 'undefined' ? sheetUi : createPortal(sheetUi, document.body);
 }
 
 

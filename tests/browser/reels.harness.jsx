@@ -175,6 +175,7 @@ const activeCard = () => cards().find((c) => isPlaying(c.querySelector('video'))
 /** A fresh Reels page with its first reel playing; the card that plays. */
 async function freshReels() {
   Object.keys(localStorage).filter((k) => k.startsWith('feed_cache_')).forEach((k) => localStorage.removeItem(k));
+    Object.keys(sessionStorage).filter((k) => k.startsWith('feed_position_')).forEach((k) => sessionStorage.removeItem(k));
   await fetch('/__media/control?unlike=1');
   opened.length = 0;
   mount(reels());
@@ -444,6 +445,7 @@ async function run() {
   ]);
   async function appReels() {
     Object.keys(localStorage).filter((k) => k.startsWith('feed_cache_')).forEach((k) => localStorage.removeItem(k));
+    Object.keys(sessionStorage).filter((k) => k.startsWith('feed_position_')).forEach((k) => sessionStorage.removeItem(k));
     await fetch('/__media/control?unlike=1');
     mount(<RouterProvider router={router} />);
     if (router.state.location.pathname !== '/reels') await router.navigate('/reels');
@@ -507,6 +509,7 @@ async function run() {
   const desktopVideo = () => document.querySelector('.drv-player video');
   async function freshDesktop() {
     Object.keys(localStorage).filter((k) => k.startsWith('feed_cache_')).forEach((k) => localStorage.removeItem(k));
+    Object.keys(sessionStorage).filter((k) => k.startsWith('feed_position_')).forEach((k) => sessionStorage.removeItem(k));
     await fetch('/__media/control?unlike=1');
     mount(reels());
     const v = await waitFor(() => { const el = desktopVideo(); return el && isPlaying(el) && el; }, 'the desktop viewer to play', 15000);
@@ -545,7 +548,275 @@ async function run() {
     await waitFor(() => isPlaying(video), 'the second click to play', 4000);
   });
 
+  // ── coming back from a single post ───────────────────────────────────────
+  // Home, Reels and /post/:id are sibling routes, so opening a post unmounts
+  // the feed: state, scroll offset and any infinitely-scrolled pages go with
+  // it. These drive the real router, because the bug was a navigation one --
+  // the feed came back and started at the first post.
   await input({ kind: 'viewport', reset: true });
+
+  /** The id of the card at the top of a scroller: what the user is looking at. */
+  const topmost = (container, attribute) => {
+    if (!container) return null;
+    const top = container.getBoundingClientRect().top;
+    let best = null;
+    let bestDistance = Infinity;
+    for (const el of container.querySelectorAll(`[${attribute}]`)) {
+      const box = el.getBoundingClientRect();
+      const distance = Math.abs(box.top - top);
+      if (box.bottom > top + 1 && distance < bestDistance) {
+        bestDistance = distance;
+        best = el.getAttribute(attribute);
+      }
+    }
+    return best;
+  };
+
+  /** The scrolling ancestor of a card -- the feeds scroll a container of their
+   *  own, not the window. */
+  const scrollerOf = (el) => {
+    let node = el;
+    while (node && node !== document.body) {
+      if (node.scrollHeight > node.clientHeight + 4 && /auto|scroll/.test(getComputedStyle(node).overflowY)) return node;
+      node = node.parentElement;
+    }
+    return null;
+  };
+
+  const visibleReel = () => topmost(document.querySelector('.video-feed-container'), 'data-video-id');
+
+  await test('in the app: Reels → a single post → Back returns to the same reel', async () => {
+    await appReels();
+    await router.navigate('/reels');
+    await waitFor(() => router.state.location.pathname === '/reels', 'the Reels route', 8000);
+    const card = await waitFor(activeCard, 'a reel to play', 15000);
+    await sleep(500);
+    const first = visibleReel();
+    // Move off the first reel: coming back to it is exactly the bug.
+    const r = card.querySelector('video').getBoundingClientRect();
+    await input({
+      kind: 'swipe',
+      x: Math.round(r.left + r.width * 0.4),
+      y: Math.round(r.top + r.height * 0.7),
+      dy: -Math.round(r.height * 0.6),
+    });
+    const watching = await waitFor(
+      () => { const id = visibleReel(); return id && id !== first ? id : null; },
+      'the next reel',
+      8000,
+    );
+    await sleep(500);
+
+    await router.navigate(`/post/${watching}`);
+    await waitFor(() => router.state.location.pathname === `/post/${watching}`, 'the post page', 8000);
+    await sleep(400);
+
+    await router.navigate(-1); // what Back does
+    await waitFor(() => router.state.location.pathname === '/reels', 'Reels again', 8000);
+    const back = await waitFor(
+      () => (visibleReel() === watching ? watching : null),
+      () => `reel ${watching} to be restored (showing ${visibleReel()}, the first is ${first})`,
+      8000,
+    );
+    assert(back !== first, 'came back to the first reel');
+    return `left on reel ${watching}, came back to ${back}`;
+  });
+
+  await test('in the app: Home → a single post → Back returns to the same post', async () => {
+    localStorage.removeItem('homepage_feed_cache');
+    sessionStorage.removeItem('feed_position_home');
+    mount(<RouterProvider router={router} />);
+    await router.navigate('/');
+    await waitFor(() => router.state.location.pathname === '/', 'the Home route', 8000);
+    await waitFor(() => rootEl().querySelector('[data-post-id]'), 'the Home feed', 20000);
+    await sleep(600);
+
+    const feed = scrollerOf(rootEl().querySelector('[data-post-id]'));
+    if (!feed) return 'this layout does not scroll the card feed';
+
+    // Down to a post that is not the first one.
+    feed.scrollTop = feed.scrollHeight;
+    await sleep(600);
+    const reading = topmost(feed, 'data-post-id');
+    const firstPost = rootEl().querySelector('[data-post-id]').getAttribute('data-post-id');
+    assert(reading && reading !== firstPost, `could not scroll off the first post (showing ${reading})`);
+
+    await router.navigate(`/post/${reading}`);
+    await waitFor(() => router.state.location.pathname === `/post/${reading}`, 'the post page', 8000);
+    await sleep(400);
+
+    await router.navigate(-1);
+    await waitFor(() => router.state.location.pathname === '/', 'Home again', 8000);
+    await waitFor(() => rootEl().querySelector(`[data-post-id="${reading}"]`), 'the post back in the feed', 12000);
+    await sleep(400);
+    const back = await waitFor(
+      () => {
+        const container = scrollerOf(rootEl().querySelector('[data-post-id]'));
+        return container && topmost(container, 'data-post-id') === reading ? reading : null;
+      },
+      () => {
+        const container = scrollerOf(rootEl().querySelector('[data-post-id]'));
+        return `post ${reading} to be restored (showing ${container ? topmost(container, 'data-post-id') : 'no feed'})`;
+      },
+      8000,
+    );
+    assert(back !== firstPost, 'came back to the first post');
+    return `left on post ${reading}, came back to ${back}`;
+  });
+
+  // ── the comments sheet ───────────────────────────────────────────────────
+  // Opened over the app, with the real bottom navigation underneath it: the
+  // sheet used to be as tall as its contents and mounted inside the page, so
+  // the navigation lay across the input and there was nothing to type into.
+
+  const sheetEl = () => document.querySelector('.modern-comment-modal');
+  const commentInput = () => sheetEl()?.querySelector('input[type="text"]');
+  const bottomNav = () => Array.from(document.querySelectorAll('nav')).find((n) => {
+    const box = n.getBoundingClientRect();
+    return box.height > 0 && Math.abs(box.bottom - window.innerHeight) < 4;
+  });
+
+  /** Type into a React-controlled input the way a keyboard does. */
+  const typeInto = (el, text) => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(el, text);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+
+  async function openComments() {
+    const card = await appReels();
+    const button = card.querySelector('[data-reel-action="comment"]');
+    assert(button, 'no comment control on the card');
+    await tap(button);
+    await waitFor(sheetEl, 'the comments sheet', 8000);
+    await sleep(500);
+    return card;
+  }
+
+  await test('comments: the sheet uses the screen, and shows the empty state', async () => {
+    await openComments();
+    const box = sheetEl().getBoundingClientRect();
+    const vv = window.visualViewport;
+    const share = box.height / window.innerHeight;
+    assert(share > 0.6, `the sheet is only ${Math.round(share * 100)}% of the screen`);
+    assert(box.bottom <= window.innerHeight + 2, 'the sheet hangs below the screen');
+    const text = (sheetEl().innerText || '').replace(/\s+/g, ' ');
+    assert(/Comments \(0\)/.test(text), `no header count in "${text.slice(0, 60)}"`);
+    assert(/No comments yet/.test(text), 'no empty state');
+    return `${Math.round(share * 100)}% of the screen`;
+  });
+
+  await test('comments: the input is reachable, not under the bottom navigation', async () => {
+    await openComments();
+    const input = commentInput();
+    assert(input, 'no comment input in the sheet');
+    const box = input.getBoundingClientRect();
+    assert(box.width > 0 && box.height > 0, 'the input has no size');
+    assert(box.bottom <= window.innerHeight, `the input is ${Math.round(box.bottom - window.innerHeight)}px off-screen`);
+
+    // Whatever the navigation does, a finger on the input must reach the input.
+    const hit = document.elementFromPoint(Math.round(box.left + box.width / 2), Math.round(box.top + box.height / 2));
+    assert(hit === input || input.contains(hit), `a tap on the input lands on <${hit?.tagName?.toLowerCase()}>`);
+
+    const nav = bottomNav();
+    if (nav) {
+      const navBox = nav.getBoundingClientRect();
+      const overlaps = navBox.top < box.bottom && navBox.bottom > box.top;
+      if (overlaps) {
+        // Allowed only if the sheet is the one in front.
+        const overNav = document.elementFromPoint(Math.round(navBox.left + navBox.width / 2), Math.round(navBox.top + navBox.height / 2));
+        assert(sheetEl().contains(overNav) || overNav?.closest?.('.modern-comment-overlay'),
+          'the bottom navigation is in front of the comments sheet');
+      }
+      return overlaps ? 'sheet covers the navigation' : 'input sits clear of the navigation';
+    }
+    return 'no bottom navigation in this layout';
+  });
+
+  await test('comments: writing one posts it, and the count goes up', async () => {
+    const card = await openComments();
+    const input = commentInput();
+    const send = Array.from(sheetEl().querySelectorAll('button')).pop();
+    assert(send, 'no Send button');
+    assert(send.disabled, 'Send is offered with an empty box');
+
+    typeInto(input, 'first comment from the browser test');
+    await waitFor(() => !send.disabled, 'Send to become available', 4000);
+    await tap(send);
+
+    await waitFor(
+      () => (sheetEl()?.innerText || '').includes('first comment from the browser test'),
+      'the new comment in the list',
+      8000,
+    );
+    await waitFor(() => (sheetEl()?.innerText || '').includes('Comments (1)'), 'the header count', 5000);
+    assert(!commentInput().value, 'the box kept the text after posting');
+
+    // The card's own counter follows.
+    const count = card.querySelector('[data-reel-action="comment"]')?.parentElement?.innerText || '';
+    return `header and card both read 1 (card: "${count.replace(/\s+/g, ' ').trim()}")`;
+  });
+
+  await test('comments: closing returns to the same reel, still playing', async () => {
+    const card = await openComments();
+    const reel = card.querySelector('[data-video-id]')?.dataset.videoId;
+    const close = sheetEl().querySelector('button');
+    await tap(close);
+    await waitFor(() => !sheetEl(), 'the sheet to close', 5000);
+    const showing = visibleReel();
+    assert(showing === reel, `left reel ${reel}, came back to ${showing}`);
+    assert(router.state.location.pathname === '/reels', `left the page for ${router.state.location.pathname}`);
+    return `still on reel ${reel}`;
+  });
+
+
+  await test('comments: on a single post the sheet clears the bottom navigation too', async () => {
+    // The page in the bug report. Its comments used to be a separate,
+    // cut-down panel positioned inside the page, so the app's bottom
+    // navigation lay across the input and there was nothing to type into.
+    mount(<RouterProvider router={router} />);
+    await router.navigate('/post/801');
+    await waitFor(() => router.state.location.pathname === '/post/801', 'the post page', 8000);
+    const commentButton = await waitFor(
+      () => Array.from(rootEl().querySelectorAll('button')).find((b) => b.getAttribute('aria-label') === 'Comments'),
+      'the comment button on the post page',
+      15000,
+    );
+    await sleep(400);
+    await tap(commentButton);
+    await waitFor(sheetEl, 'the comments sheet', 8000);
+    await sleep(400);
+
+    const box = sheetEl().getBoundingClientRect();
+    const share = box.height / window.innerHeight;
+    assert(share > 0.6, `the sheet is only ${Math.round(share * 100)}% of the screen`);
+
+    const input = commentInput();
+    assert(input, 'no comment input');
+    const inputBox = input.getBoundingClientRect();
+    assert(inputBox.bottom <= window.innerHeight, 'the input is off the bottom of the screen');
+    const hit = document.elementFromPoint(
+      Math.round(inputBox.left + inputBox.width / 2),
+      Math.round(inputBox.top + inputBox.height / 2),
+    );
+    assert(hit === input || input.contains(hit), `a tap on the input lands on <${hit?.tagName?.toLowerCase()}>`);
+
+    typeInto(input, 'a comment from the post page');
+    const send = Array.from(sheetEl().querySelectorAll('button')).pop();
+    await waitFor(() => !send.disabled, 'Send to become available', 4000);
+    await tap(send);
+    await waitFor(
+      () => (sheetEl()?.innerText || '').includes('a comment from the post page'),
+      'the new comment in the list',
+      8000,
+    );
+
+    await tap(sheetEl().querySelector('button'));
+    await waitFor(() => !sheetEl(), 'the sheet to close', 5000);
+    assert(router.state.location.pathname === '/post/801', 'closing the sheet left the page');
+    return `${Math.round(share * 100)}% of the screen, input reachable`;
+  });
+
 
   await test('no uncaught errors from the page', async () => {
     assert(!pageErrors.length, pageErrors.join('\n'));

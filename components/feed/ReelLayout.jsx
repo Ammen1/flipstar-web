@@ -56,6 +56,13 @@ import {
 import { sameRendition } from '../../utils/mediaRecovery';
 import { cacheStillLoadable, expiresWithin } from '../../utils/signedUrl';
 import { getCampaignId, isCampaignPost } from '../../utils/campaign';
+import {
+  forgetFeedPosition,
+  recallFeedPosition,
+  rememberFeedPosition,
+  restoreFeedPosition,
+  visiblePostId,
+} from '../../utils/feedPosition';
 const ShareIconFilled = ({ size = 26, color = '#fff', style = {} }) => (
   <Share2 size={size} color={color} style={style} />
 );
@@ -255,6 +262,17 @@ export const ReelLayout = memo(function ReelLayout({
   }, []);
   const [loading, setLoading] = useState(true);
   const [mounted, setMounted] = useState(false);
+  // Which reel the user was watching when they left for a single post, read
+  // once at mount. Reels and /post/:id are sibling routes, so this component
+  // is unmounted and rebuilt on the way back; without this it restarted at the
+  // first video. Cleared once honoured, so an ordinary tab change still starts
+  // at the top.
+  const positionKey = activeTab || 'reels';
+  const returningTo = useRef(initialVideoId ? null : recallFeedPosition(positionKey));
+  // Layout effects run before passive ones: without this the restore would be
+  // undone a moment later by the autoplay below, which scrolls to the first
+  // reel as it starts it.
+  const restored = useRef(false);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -608,6 +626,8 @@ export const ReelLayout = memo(function ReelLayout({
   useEffect(() => {
     const handleTabReselect = (e) => {
       if (e.detail?.tab !== activeTab) return;
+      forgetFeedPosition(positionKey);
+      returningTo.current = null;
       // Snap back to very first video
       const container = document.querySelector('.video-feed-container');
       if (container) container.scrollTo({ top: 0, behavior: 'smooth' });
@@ -861,6 +881,67 @@ export const ReelLayout = memo(function ReelLayout({
     }
   }, [loadingMore, hasMore, page]);
 
+  // ── Coming back from a single post ──────────────────────────────────────
+  //
+  // Anchored on the reel the user was watching, not a pixel offset: this is a
+  // snap container whose slides are viewport-sized, so an offset taken on one
+  // screen height lands on a different reel at another.
+  //
+  // In a layout effect, so the first reel never flashes past on the way.
+  useLayoutEffect(() => {
+    const target = returningTo.current;
+    if (!target || !videos.length) return;
+    const container = feedContainerRef.current || document.querySelector('.video-feed-container');
+    if (!container) return;
+    // Keeps correcting while the feed grows under it: a reel that has not
+    // loaded yet is shorter than a screen, and the browser clamps the scroll.
+    return restoreFeedPosition(container, target, {
+      attribute: 'data-video-id',
+      onDone: (landed) => {
+        if (!landed) return;
+        // The restored reel is the one that should be playing.
+        if (target.postId != null) {
+          activeVideoIdRef.current = String(target.postId);
+          setActiveVideoId(String(target.postId));
+        }
+        returningTo.current = null;
+        restored.current = true;
+      },
+    });
+  }, [videos]);
+
+  // Remember which reel is on screen, so the next trip to a post comes back
+  // here. Throttled to one write per frame; the last write happens as the
+  // feed unmounts, which is the one that matters.
+  const rememberPosition = useCallback((postId) => {
+    // Never while a restore is still in flight: the scroll is at 0 until it
+    // lands, and saving that would overwrite the very position being restored
+    // -- which is how the memory got lost on the way back.
+    if (returningTo.current) return;
+    const container = feedContainerRef.current || document.querySelector('.video-feed-container');
+    if (!container) return;
+    rememberFeedPosition(positionKey, {
+      postId: postId ?? activeVideoIdRef.current ?? visiblePostId(container, 'data-video-id'),
+      offset: container.scrollTop,
+      page,
+      count: videosRef.current?.length || videos.length,
+    });
+  }, [positionKey, page, videos.length]);
+
+  useEffect(() => {
+    const container = feedContainerRef.current || document.querySelector('.video-feed-container');
+    if (!container) return;
+    let frame = 0;
+    const save = () => { frame = 0; rememberPosition(); };
+    const onScroll = () => { if (!frame) frame = requestAnimationFrame(save); };
+    container.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      container.removeEventListener('scroll', onScroll);
+      if (frame) cancelAnimationFrame(frame);
+      save();
+    };
+  }, [rememberPosition]);
+
   // IntersectionObserver to control video playback AND lazy-load src
   useEffect(() => {
     // Observer for playback (50% visible for better performance)
@@ -967,6 +1048,10 @@ export const ReelLayout = memo(function ReelLayout({
   // (see the `mounted` note on the observer effect above).
   useEffect(() => {
     if (videos.length === 0 || loading || !mounted) return;
+    // Not while the user is being put back where they were, and not after:
+    // playing the first video scrolls the snap container to it, which is the
+    // restore undone.
+    if (returningTo.current || restored.current) return;
 
     const firstVideo = videos[0];
     const videoElement = videoRefs.current[firstVideo.id];
@@ -1915,6 +2000,8 @@ export const ReelLayout = memo(function ReelLayout({
       setPullDistance(PULL_THRESHOLD);
       // Clear cache and fetch fresh data
       try {
+        forgetFeedPosition(positionKey);
+        returningTo.current = null;
         localStorage.removeItem(CACHE_KEY(activeTab));
         setVideos([]);
         setPage(1);

@@ -1,41 +1,136 @@
-import React, { Suspense, lazy, useCallback } from 'react';
-import { createBrowserRouter, Navigate, useNavigate, useParams, useLocation, useSearchParams } from 'react-router-dom';
-import { useAuth } from './contexts/AuthContext';
-import { useTheme } from './contexts/ThemeContext';
-import { readFilterParams, writeFilterParams } from './utils/explorerFeed';
+import React, { Suspense, lazy, useCallback } from "react";
+import {
+  createBrowserRouter,
+  Navigate,
+  useNavigate,
+  useParams,
+  useLocation,
+  useSearchParams,
+} from "react-router-dom";
+import { useAuth } from "./contexts/AuthContext";
+import { useTheme } from "./contexts/ThemeContext";
+import { readFilterParams, writeFilterParams } from "./utils/explorerFeed";
 
-const AppLayout = lazy(() => import('./components/layout/AppLayout'));
+const AppLayout = lazy(() => import("./components/layout/AppLayout"));
 
-const PhoneLoginModal = lazy(() => import('./components/auth/PhoneLoginModal').then(m => ({ default: m.PhoneLoginModal })));
-const SubscriptionRegisterModal = lazy(() => import('./components/auth/SubscriptionRegisterModal').then(m => ({ default: m.SubscriptionRegisterModal })));
-const HomePage = lazy(() => import('./pages/feed/HomePage').then(m => ({ default: m.HomePage })));
-const ReelLayout = lazy(() => import('./components/feed/ReelLayout').then(m => ({ default: m.ReelLayout || m })));
-const MessagesPage = lazy(() => import('./pages/messaging/MessagesPage').then(m => ({ default: m.MessagesPage })));
-const ExplorerPage = lazy(() => import('./pages/feed/ExplorerPage').then(m => ({ default: m.ExplorerPage })));
-const EnhancedPostPage = lazy(() => import('./pages/general/EnhancedPostPage').then(m => ({ default: m.EnhancedPostPage })));
-const ProfilePage = lazy(() => import('./pages/profile/ProfilePage').then(m => ({ default: m.ProfilePage })));
-const EditProfilePage = lazy(() => import('./pages/profile/EditProfilePage').then(m => ({ default: m.EditProfilePage })));
-const FollowersListPage = lazy(() => import('./pages/profile/FollowersListPage').then(m => ({ default: m.FollowersListPage })));
-const NotificationsPage = lazy(() => import('./pages/general/NotificationsPage').then(m => ({ default: m.NotificationsPage })));
-const SettingsPage = lazy(() => import('./pages/settings/SettingsPage').then(m => ({ default: m.SettingsPage })));
-const WalletPage = lazy(() => import('./pages/subscription/WalletPage').then(m => ({ default: m.WalletPage })));
-const BuyCoinsPage = lazy(() => import('./pages/wallet/BuyCoinsPage'));
-const SubscriptionPage = lazy(() => import('./pages/subscription/SubscriptionPage').then(m => ({ default: m.SubscriptionPage })));
-const CampaignsPage = lazy(() => import('./pages/campaign/CampaignsPage').then(m => ({ default: m.CampaignsPage })));
-const CampaignDetailPage = lazy(() => import('./pages/campaign/CampaignDetailPage').then(m => ({ default: m.CampaignDetailPage })));
-const CampaignLeaderboard = lazy(() => import('./pages/campaign/CampaignLeaderboard'));
-const GlobalLeaderboardPage = lazy(() => import('./pages/leaderboard/GlobalLeaderboardPage').then(m => ({ default: m.GlobalLeaderboardPage })));
-const CampaignFeed = lazy(() => import('./pages/campaign/CampaignFeed'));
-const VideoDetailPage = lazy(() => import('./pages/feed/VideoDetailPage').then(m => ({ default: m.VideoDetailPage })));
-const AdminApp = lazy(() => import('./admin/AdminApp').then(m => ({ default: m.AdminApp })));
-const DeleteAccountPage = lazy(() => import('./pages/settings/DeleteAccountPage').then(m => ({ default: m.DeleteAccountPage })));
-const PrivacyPolicyPage = lazy(() => import('./pages/settings/PrivacyPolicyPage').then(m => ({ default: m.PrivacyPolicyPage })));
+const PhoneLoginModal = lazy(() =>
+  import("./components/auth/PhoneLoginModal").then((m) => ({
+    default: m.PhoneLoginModal,
+  })),
+);
+const SubscriptionRegisterModal = lazy(() =>
+  import("./components/auth/SubscriptionRegisterModal").then((m) => ({
+    default: m.SubscriptionRegisterModal,
+  })),
+);
+const HomePage = lazy(() =>
+  import("./pages/feed/HomePage").then((m) => ({ default: m.HomePage })),
+);
+const ReelLayout = lazy(() =>
+  import("./components/feed/ReelLayout").then((m) => ({
+    default: m.ReelLayout || m,
+  })),
+);
+const MessagesPage = lazy(() =>
+  import("./pages/messaging/MessagesPage").then((m) => ({
+    default: m.MessagesPage,
+  })),
+);
+const ExplorerPage = lazy(() =>
+  import("./pages/feed/ExplorerPage").then((m) => ({
+    default: m.ExplorerPage,
+  })),
+);
+const EnhancedPostPage = lazy(() =>
+  import("./pages/general/EnhancedPostPage").then((m) => ({
+    default: m.EnhancedPostPage,
+  })),
+);
+const ProfilePage = lazy(() =>
+  import("./pages/profile/ProfilePage").then((m) => ({
+    default: m.ProfilePage,
+  })),
+);
+const EditProfilePage = lazy(() =>
+  import("./pages/profile/EditProfilePage").then((m) => ({
+    default: m.EditProfilePage,
+  })),
+);
+const FollowersListPage = lazy(() =>
+  import("./pages/profile/FollowersListPage").then((m) => ({
+    default: m.FollowersListPage,
+  })),
+);
+const NotificationsPage = lazy(() =>
+  import("./pages/general/NotificationsPage").then((m) => ({
+    default: m.NotificationsPage,
+  })),
+);
+const SettingsPage = lazy(() =>
+  import("./pages/settings/SettingsPage").then((m) => ({
+    default: m.SettingsPage,
+  })),
+);
+const WalletPage = lazy(() =>
+  import("./pages/subscription/WalletPage").then((m) => ({
+    default: m.WalletPage,
+  })),
+);
+const BuyCoinsPage = lazy(() => import("./pages/wallet/BuyCoinsPage"));
+const SubscriptionPage = lazy(() =>
+  import("./pages/subscription/SubscriptionPage").then((m) => ({
+    default: m.SubscriptionPage,
+  })),
+);
+const CampaignsPage = lazy(() =>
+  import("./pages/campaign/CampaignsPage").then((m) => ({
+    default: m.CampaignsPage,
+  })),
+);
+const CampaignDetailPage = lazy(() =>
+  import("./pages/campaign/CampaignDetailPage").then((m) => ({
+    default: m.CampaignDetailPage,
+  })),
+);
+const CampaignLeaderboard = lazy(
+  () => import("./pages/campaign/CampaignLeaderboard"),
+);
+const GlobalLeaderboardPage = lazy(() =>
+  import("./pages/leaderboard/GlobalLeaderboardPage").then((m) => ({
+    default: m.GlobalLeaderboardPage,
+  })),
+);
+const CampaignFeed = lazy(() => import("./pages/campaign/CampaignFeed"));
+const VideoDetailPage = lazy(() =>
+  import("./pages/feed/VideoDetailPage").then((m) => ({
+    default: m.VideoDetailPage,
+  })),
+);
+const AdminApp = lazy(() =>
+  import("./admin/AdminApp").then((m) => ({ default: m.AdminApp })),
+);
+const DeleteAccountPage = lazy(() =>
+  import("./pages/settings/DeleteAccountPage").then((m) => ({
+    default: m.DeleteAccountPage,
+  })),
+);
+const PrivacyPolicyPage = lazy(() =>
+  import("./pages/settings/PrivacyPolicyPage").then((m) => ({
+    default: m.PrivacyPolicyPage,
+  })),
+);
 
 const PageLoader = () => (
-  <div style={{
-    display: 'flex', justifyContent: 'center', alignItems: 'center',
-    height: '60vh', color: '#999', fontSize: 14,
-  }}>
+  <div
+    style={{
+      display: "flex",
+      justifyContent: "center",
+      alignItems: "center",
+      height: "60vh",
+      color: "#999",
+      fontSize: 14,
+    }}
+  >
     Loading...
   </div>
 );
@@ -46,21 +141,41 @@ const Lazy = ({ children }) => (
 
 function useNavHelpers() {
   const navigate = useNavigate();
-  const { authUser, requestLogout, openTopUpModal, subscriptionStatus, subscriptionChecked, setAuthUser } = useAuth();
+  const {
+    authUser,
+    requestLogout,
+    openTopUpModal,
+    subscriptionStatus,
+    subscriptionChecked,
+    setAuthUser,
+  } = useAuth();
   const { colors } = useTheme();
   const { reelId: paramReelId } = useParams();
 
-  const openLoginModal = useCallback(() => { navigate('/login', { replace: true }); }, [navigate]);
+  const openLoginModal = useCallback(() => {
+    navigate("/login", { replace: true });
+  }, [navigate]);
 
   const requireAuth = useCallback(() => {
-    if (!authUser) { openLoginModal(); return false; }
+    if (!authUser) {
+      openLoginModal();
+      return false;
+    }
     return true;
   }, [authUser, openLoginModal]);
 
   return {
-    navigate, authUser, requestLogout, openLoginModal, openTopUpModal,
-    subscriptionStatus, subscriptionChecked, setAuthUser,
-    colors, requireAuth, paramReelId,
+    navigate,
+    authUser,
+    requestLogout,
+    openLoginModal,
+    openTopUpModal,
+    subscriptionStatus,
+    subscriptionChecked,
+    setAuthUser,
+    colors,
+    requireAuth,
+    paramReelId,
   };
 }
 
@@ -74,17 +189,21 @@ function HomePageWrapper() {
     <HomePage
       user={h.authUser}
       subscriptionStatus={h.subscriptionStatus}
-      onShowProfile={(userId) => h.navigate(userId ? `/profile/${userId}` : '/profile')}
-      onShowPostPage={() => h.navigate('/create')}
+      onShowProfile={(userId) =>
+        h.navigate(userId ? `/profile/${userId}` : "/profile")
+      }
+      onShowPostPage={() => h.navigate("/create")}
       onRequireAuth={h.openLoginModal}
-      onShowExplorer={() => h.navigate('/explore')}
-      onShowLeaderboard={() => h.navigate('/leaderboard')}
+      onShowExplorer={() => h.navigate("/explore")}
+      onShowLeaderboard={() => h.navigate("/leaderboard")}
       onShowVideoDetail={(reelId) => h.navigate(`/post/${reelId}`)}
-      onShowCampaigns={() => h.navigate('/campaigns')}
-      onShowCampaignDetail={(campaignId) => h.navigate(`/campaigns/${campaignId}`)}
-      onShowWallet={() => h.navigate('/wallet')}
+      onShowCampaigns={() => h.navigate("/campaigns")}
+      onShowCampaignDetail={(campaignId) =>
+        h.navigate(`/campaigns/${campaignId}`)
+      }
+      onShowWallet={() => h.navigate("/wallet")}
       onShowCoinPurchase={h.openTopUpModal}
-      onShowSubscription={() => h.navigate('/subscription')}
+      onShowSubscription={() => h.navigate("/subscription")}
     />
   );
 }
@@ -99,18 +218,20 @@ function ReelLayoutWrapper() {
       videosOnly={true}
       onLogout={h.requestLogout}
       onRequireAuth={h.openLoginModal}
-      onShowPostPage={() => h.navigate('/create')}
-      onShowProfile={(userId) => h.navigate(userId ? `/profile/${userId}` : '/profile')}
-      onShowSettings={() => h.navigate('/settings')}
-      onShowCampaigns={() => h.navigate('/campaigns')}
+      onShowPostPage={() => h.navigate("/create")}
+      onShowProfile={(userId) =>
+        h.navigate(userId ? `/profile/${userId}` : "/profile")
+      }
+      onShowSettings={() => h.navigate("/settings")}
+      onShowCampaigns={() => h.navigate("/campaigns")}
       onCampaignClick={(campaignId) => h.navigate(`/campaigns/${campaignId}`)}
-      onShowNotifications={() => h.navigate('/notifications')}
+      onShowNotifications={() => h.navigate("/notifications")}
       onShowVideoDetail={(reelId) => h.navigate(`/post/${reelId}`)}
-      onShowExplorer={() => h.navigate('/explore')}
-      onShowWallet={() => h.navigate('/wallet')}
+      onShowExplorer={() => h.navigate("/explore")}
+      onShowWallet={() => h.navigate("/wallet")}
       onShowCoinPurchase={h.openTopUpModal}
       subscriptionStatus={h.subscriptionStatus}
-      onShowSubscription={() => h.navigate('/subscription')}
+      onShowSubscription={() => h.navigate("/subscription")}
     />
   );
 }
@@ -120,9 +241,11 @@ function MessagesPageWrapper() {
   return (
     <MessagesPage
       user={h.authUser}
-      onShowProfile={(userId) => h.navigate(userId ? `/profile/${userId}` : '/profile')}
+      onShowProfile={(userId) =>
+        h.navigate(userId ? `/profile/${userId}` : "/profile")
+      }
       onRequireAuth={h.openLoginModal}
-      onShowPostPage={() => h.navigate('/create')}
+      onShowPostPage={() => h.navigate("/create")}
       /* Distinct from onShowPostPage, which across this app means "open the
          composer" and ignores its argument. Tapping a shared post card was
          wired to that one, so it navigated to /create instead of to the post.
@@ -140,8 +263,11 @@ function ExplorerPageWrapper() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { categorySlug, timeRange } = readFilterParams(searchParams);
   const onFiltersChange = useCallback(
-    (next) => setSearchParams((prev) => writeFilterParams(prev, next), { replace: true }),
-    [setSearchParams]
+    (next) =>
+      setSearchParams((prev) => writeFilterParams(prev, next), {
+        replace: true,
+      }),
+    [setSearchParams],
   );
   return (
     <ExplorerPage
@@ -150,13 +276,15 @@ function ExplorerPageWrapper() {
       onFiltersChange={onFiltersChange}
       user={h.authUser}
       onBack={() => h.navigate(-1)}
-      onShowProfile={(userId) => h.navigate(userId ? `/profile/${userId}` : '/profile')}
+      onShowProfile={(userId) =>
+        h.navigate(userId ? `/profile/${userId}` : "/profile")
+      }
       onShowVideoDetail={(reelId) => h.navigate(`/post/${reelId}`)}
       onShowPostDetail={(postId) => h.navigate(`/post/${postId}`)}
-      onShowPostPage={() => h.navigate('/create')}
+      onShowPostPage={() => h.navigate("/create")}
       onRequireAuth={h.openLoginModal}
-      onShowSettings={() => h.navigate('/settings')}
-      onShowNotifications={() => h.navigate('/notifications')}
+      onShowSettings={() => h.navigate("/settings")}
+      onShowNotifications={() => h.navigate("/notifications")}
     />
   );
 }
@@ -170,15 +298,15 @@ function EnhancedPostPageWrapper() {
       // Straight to Home once the upload is accepted; the corner indicator
       // follows the processing. `replace`, so Back does not reopen the
       // composer for a post that is already made.
-      onPostSuccess={() => h.navigate('/', { replace: true })}
-      onNavHome={() => h.navigate('/')}
-      onNavReels={() => h.navigate('/reels')}
-      onNavMessages={() => h.navigate('/messages')}
-      onNavProfile={() => h.navigate('/profile')}
+      onPostSuccess={() => h.navigate("/", { replace: true })}
+      onNavHome={() => h.navigate("/")}
+      onNavReels={() => h.navigate("/reels")}
+      onNavMessages={() => h.navigate("/messages")}
+      onNavProfile={() => h.navigate("/profile")}
       onShowCoinPurchase={h.openTopUpModal}
       onRequireAuth={h.openLoginModal}
       subscriptionStatus={h.subscriptionStatus}
-      onShowSubscription={() => h.navigate('/subscription')}
+      onShowSubscription={() => h.navigate("/subscription")}
     />
   );
 }
@@ -191,14 +319,18 @@ function ProfilePageWrapper() {
       user={h.authUser}
       userId={userId ? parseInt(userId) : h.authUser?.id}
       onBack={() => h.navigate(-1)}
-      onEditProfile={() => h.navigate('/profile/edit')}
-      onShowSettings={() => h.navigate('/settings')}
-      onShowWallet={() => h.navigate('/wallet')}
-      onShowSubscription={() => h.navigate('/subscription')}
+      onEditProfile={() => h.navigate("/profile/edit")}
+      onShowSettings={() => h.navigate("/settings")}
+      onShowWallet={() => h.navigate("/wallet")}
+      onShowSubscription={() => h.navigate("/subscription")}
       onShowCoinPurchase={h.openTopUpModal}
       onShowPostDetail={(postId, isVideo) => h.navigate(`/post/${postId}`)}
-      onShowFollowers={(uid) => h.navigate(`/profile/${uid || h.authUser?.id}/followers`)}
-      onShowFollowing={(uid) => h.navigate(`/profile/${uid || h.authUser?.id}/following`)}
+      onShowFollowers={(uid) =>
+        h.navigate(`/profile/${uid || h.authUser?.id}/followers`)
+      }
+      onShowFollowing={(uid) =>
+        h.navigate(`/profile/${uid || h.authUser?.id}/following`)
+      }
     />
   );
 }
@@ -218,7 +350,9 @@ function FollowersListPageWrapper() {
   const h = useNavHelpers();
   const { userId } = useParams();
   const location = useLocation();
-  const type = location.pathname.endsWith('/following') ? 'following' : 'followers';
+  const type = location.pathname.endsWith("/following")
+    ? "following"
+    : "followers";
   return (
     <FollowersListPage
       user={h.authUser}
@@ -226,7 +360,7 @@ function FollowersListPageWrapper() {
       type={type}
       onBack={() => h.navigate(-1)}
       onUserClick={(userId) => {
-        const id = typeof userId === 'object' ? userId.id : userId;
+        const id = typeof userId === "object" ? userId.id : userId;
         h.navigate(`/profile/${id}`);
       }}
     />
@@ -240,11 +374,11 @@ function NotificationsPageWrapper() {
       user={h.authUser}
       onUserClick={(userId) => h.navigate(`/profile/${userId}`)}
       onBack={() => h.navigate(-1)}
-      onShowPostPage={() => h.navigate('/create')}
+      onShowPostPage={() => h.navigate("/create")}
       onLogout={h.requestLogout}
-      onShowProfile={() => h.navigate('/profile')}
-      onShowSettings={() => h.navigate('/settings')}
-      onShowCampaigns={() => h.navigate('/campaigns')}
+      onShowProfile={() => h.navigate("/profile")}
+      onShowSettings={() => h.navigate("/settings")}
+      onShowCampaigns={() => h.navigate("/campaigns")}
       onShowVideoDetail={(reelId) => h.navigate(`/post/${reelId}`)}
     />
   );
@@ -257,9 +391,9 @@ function SettingsPageWrapper() {
       user={h.authUser}
       onClose={() => h.navigate(-1)}
       onLogout={h.requestLogout}
-      onShowWallet={() => h.navigate('/wallet')}
-      onShowSubscription={() => h.navigate('/subscription')}
-      onShowEditProfile={() => h.navigate('/profile/edit')}
+      onShowWallet={() => h.navigate("/wallet")}
+      onShowSubscription={() => h.navigate("/subscription")}
+      onShowEditProfile={() => h.navigate("/profile/edit")}
     />
   );
 }
@@ -285,15 +419,9 @@ function BuyCoinsPageWrapper() {
   const goBack = useCallback(() => {
     if (returnTo) h.navigate(returnTo);
     else if (window.history.length > 1) h.navigate(-1);
-    else h.navigate('/wallet');
+    else h.navigate("/wallet");
   }, [returnTo, h.navigate]);
-  return (
-    <BuyCoinsPage
-      theme={h.colors}
-      onBack={goBack}
-      onDone={goBack}
-    />
-  );
+  return <BuyCoinsPage theme={h.colors} onBack={goBack} onDone={goBack} />;
 }
 
 function SubscriptionPageWrapper() {
@@ -304,7 +432,7 @@ function SubscriptionPageWrapper() {
       onBack={() => h.navigate(-1)}
       onAuthSuccess={(user, token) => {
         h.setAuthUser(user);
-        localStorage.setItem('authToken', token);
+        localStorage.setItem("authToken", token);
       }}
     />
   );
@@ -326,8 +454,10 @@ function CampaignDetailPageWrapper() {
   return (
     <CampaignDetailPage
       campaignId={parseInt(campaignId)}
-      onBack={() => h.navigate('/campaigns')}
-      onShowLeaderboard={() => h.navigate(`/campaigns/${campaignId}/leaderboard`)}
+      onBack={() => h.navigate("/campaigns")}
+      onShowLeaderboard={() =>
+        h.navigate(`/campaigns/${campaignId}/leaderboard`)
+      }
       onShowFeed={() => h.navigate(`/campaigns/${campaignId}/feed`)}
     />
   );
@@ -340,8 +470,12 @@ function GlobalLeaderboardPageWrapper() {
   const h = useNavHelpers();
   return (
     <GlobalLeaderboardPage
-      onBack={() => (window.history.length > 1 ? h.navigate(-1) : h.navigate('/'))}
-      onShowProfile={(userId) => h.navigate(userId ? `/profile/${userId}` : '/profile')}
+      onBack={() =>
+        window.history.length > 1 ? h.navigate(-1) : h.navigate("/")
+      }
+      onShowProfile={(userId) =>
+        h.navigate(userId ? `/profile/${userId}` : "/profile")
+      }
     />
   );
 }
@@ -372,14 +506,18 @@ function CampaignFeedWrapper() {
 function VideoDetailPageWrapper() {
   const h = useNavHelpers();
   const { reelId } = useParams();
+  const location = useLocation();
+  const openedDirectly = location.key === "default";
   return (
     <VideoDetailPage
       reelId={parseInt(reelId)}
       user={h.authUser}
-      onBack={() => h.navigate(-1)}
-      onShowProfile={(userId) => h.navigate(userId ? `/profile/${userId}` : '/profile')}
+      onBack={() => (openedDirectly ? h.navigate("/") : h.navigate(-1))}
+      onShowProfile={(userId) =>
+        h.navigate(userId ? `/profile/${userId}` : "/profile")
+      }
       subscriptionStatus={h.subscriptionStatus}
-      onShowSubscription={() => h.navigate('/subscription')}
+      onShowSubscription={() => h.navigate("/subscription")}
     />
   );
 }
@@ -390,10 +528,10 @@ function SubscriptionPageStandalone() {
     <Lazy>
       <SubscriptionPage
         user={h.authUser}
-        onBack={() => h.navigate('/')}
+        onBack={() => h.navigate("/")}
         onAuthSuccess={(user, token) => {
           h.setAuthUser(user);
-          localStorage.setItem('authToken', token);
+          localStorage.setItem("authToken", token);
         }}
       />
     </Lazy>
@@ -404,8 +542,8 @@ function LoginPageWrapper() {
   const h = useNavHelpers();
   const location = useLocation();
   const params = new URLSearchParams(location.search);
-  const prefillPhone = params.get('phone') || '';
-  const telebirrOtpMode = params.get('telebirr_otp_mode') === 'true';
+  const prefillPhone = params.get("phone") || "";
+  const telebirrOtpMode = params.get("telebirr_otp_mode") === "true";
   return (
     <Lazy>
       <PhoneLoginModal
@@ -413,13 +551,16 @@ function LoginPageWrapper() {
         telebirrOtpMode={telebirrOtpMode}
         onSuccess={(u) => {
           h.setAuthUser(u);
-          localStorage.setItem('authToken', u.token || localStorage.getItem('authToken'));
-          h.navigate('/', { replace: true });
+          localStorage.setItem(
+            "authToken",
+            u.token || localStorage.getItem("authToken"),
+          );
+          h.navigate("/", { replace: true });
         }}
         // "Subscribe" belongs on the plans page. /register is the OTP
         // registration form, which assumes the user already has a
         // subscription to verify against.
-        onSignUp={() => h.navigate('/subscription')}
+        onSignUp={() => h.navigate("/subscription")}
         onClose={() => h.navigate(-1)}
       />
     </Lazy>
@@ -430,10 +571,10 @@ function RegisterPageWrapper() {
   const h = useNavHelpers();
   const location = useLocation();
   const params = new URLSearchParams(location.search);
-  const prefillPhone = params.get('phone') || '';
-  const prefillOtp = params.get('otp') || '';
-  const existingUser = params.get('existing_user') === 'true';
-  const fromTelebirr = params.get('from_telebirr') === 'true';
+  const prefillPhone = params.get("phone") || "";
+  const prefillOtp = params.get("otp") || "";
+  const existingUser = params.get("existing_user") === "true";
+  const fromTelebirr = params.get("from_telebirr") === "true";
   return (
     <Lazy>
       <SubscriptionRegisterModal
@@ -443,10 +584,13 @@ function RegisterPageWrapper() {
         fromTelebirr={fromTelebirr}
         onSuccess={(u, isNewUser) => {
           h.setAuthUser(u);
-          localStorage.setItem('authToken', u.token || localStorage.getItem('authToken'));
-          h.navigate('/', { replace: true });
+          localStorage.setItem(
+            "authToken",
+            u.token || localStorage.getItem("authToken"),
+          );
+          h.navigate("/", { replace: true });
         }}
-        onBackToLogin={() => h.navigate('/login')}
+        onBackToLogin={() => h.navigate("/login")}
       />
     </Lazy>
   );
@@ -464,62 +608,214 @@ function AdminWrapper() {
 
 export const router = createBrowserRouter([
   {
-    path: '/privacy-policy',
-    element: <Lazy><PrivacyPolicyPage /></Lazy>,
+    path: "/privacy-policy",
+    element: (
+      <Lazy>
+        <PrivacyPolicyPage />
+      </Lazy>
+    ),
   },
   {
-    path: '/privacy',
+    path: "/privacy",
     element: <Navigate to="/privacy-policy" replace />,
   },
   {
-    path: '/delete-account',
-    element: <Lazy><DeleteAccountPage /></Lazy>,
+    path: "/delete-account",
+    element: (
+      <Lazy>
+        <DeleteAccountPage />
+      </Lazy>
+    ),
   },
   {
-    path: '/account-deletion',
+    path: "/account-deletion",
     element: <Navigate to="/delete-account" replace />,
   },
   {
-    path: '/subscription',
+    path: "/subscription",
     element: <SubscriptionPageStandalone />,
   },
   {
-    path: '/login',
+    path: "/login",
     element: <LoginPageWrapper />,
   },
   {
-    path: '/register',
+    path: "/register",
     element: <RegisterPageWrapper />,
   },
   {
-    path: '/admin/*',
+    path: "/admin/*",
     element: <AdminWrapper />,
   },
   {
-    path: '/',
-    element: <Lazy><AppLayout /></Lazy>,
+    path: "/",
+    element: (
+      <Lazy>
+        <AppLayout />
+      </Lazy>
+    ),
     children: [
-      { index: true, element: <Lazy><HomePageWrapper /></Lazy> },
-      { path: 'reels', element: <Lazy><ReelLayoutWrapper /></Lazy> },
-      { path: 'messages', element: <Lazy><MessagesPageWrapper /></Lazy> },
-      { path: 'explore', element: <Lazy><ExplorerPageWrapper /></Lazy> },
-      { path: 'create', element: <Lazy><EnhancedPostPageWrapper /></Lazy> },
-      { path: 'notifications', element: <Lazy><NotificationsPageWrapper /></Lazy> },
-      { path: 'settings', element: <Lazy><SettingsPageWrapper /></Lazy> },
-      { path: 'wallet', element: <Lazy><WalletPageWrapper /></Lazy> },
-      { path: 'buy-coins', element: <Lazy><BuyCoinsPageWrapper /></Lazy> },
-      { path: 'campaigns', element: <Lazy><CampaignsPageWrapper /></Lazy> },
-      { path: 'campaigns/:campaignId', element: <Lazy><CampaignDetailPageWrapper /></Lazy> },
-      { path: 'campaigns/:campaignId/leaderboard', element: <Lazy><CampaignLeaderboardWrapper /></Lazy> },
-      { path: 'leaderboard', element: <Lazy><GlobalLeaderboardPageWrapper /></Lazy> },
-      { path: 'campaigns/:campaignId/feed', element: <Lazy><CampaignFeedWrapper /></Lazy> },
-      { path: 'profile', element: <Lazy><ProfilePageWrapper /></Lazy> },
-      { path: 'profile/edit', element: <Lazy><EditProfilePageWrapper /></Lazy> },
-      { path: 'profile/:userId', element: <Lazy><ProfilePageWrapper /></Lazy> },
-      { path: 'profile/:userId/followers', element: <Lazy><FollowersListPageWrapper /></Lazy> },
-      { path: 'profile/:userId/following', element: <Lazy><FollowersListPageWrapper /></Lazy> },
-      { path: 'post/:reelId', element: <Lazy><VideoDetailPageWrapper /></Lazy> },
-      { path: '*', element: <Navigate to="/" replace /> },
+      {
+        index: true,
+        element: (
+          <Lazy>
+            <HomePageWrapper />
+          </Lazy>
+        ),
+      },
+      {
+        path: "reels",
+        element: (
+          <Lazy>
+            <ReelLayoutWrapper />
+          </Lazy>
+        ),
+      },
+      {
+        path: "messages",
+        element: (
+          <Lazy>
+            <MessagesPageWrapper />
+          </Lazy>
+        ),
+      },
+      {
+        path: "explore",
+        element: (
+          <Lazy>
+            <ExplorerPageWrapper />
+          </Lazy>
+        ),
+      },
+      {
+        path: "create",
+        element: (
+          <Lazy>
+            <EnhancedPostPageWrapper />
+          </Lazy>
+        ),
+      },
+      {
+        path: "notifications",
+        element: (
+          <Lazy>
+            <NotificationsPageWrapper />
+          </Lazy>
+        ),
+      },
+      {
+        path: "settings",
+        element: (
+          <Lazy>
+            <SettingsPageWrapper />
+          </Lazy>
+        ),
+      },
+      {
+        path: "wallet",
+        element: (
+          <Lazy>
+            <WalletPageWrapper />
+          </Lazy>
+        ),
+      },
+      {
+        path: "buy-coins",
+        element: (
+          <Lazy>
+            <BuyCoinsPageWrapper />
+          </Lazy>
+        ),
+      },
+      {
+        path: "campaigns",
+        element: (
+          <Lazy>
+            <CampaignsPageWrapper />
+          </Lazy>
+        ),
+      },
+      {
+        path: "campaigns/:campaignId",
+        element: (
+          <Lazy>
+            <CampaignDetailPageWrapper />
+          </Lazy>
+        ),
+      },
+      {
+        path: "campaigns/:campaignId/leaderboard",
+        element: (
+          <Lazy>
+            <CampaignLeaderboardWrapper />
+          </Lazy>
+        ),
+      },
+      {
+        path: "leaderboard",
+        element: (
+          <Lazy>
+            <GlobalLeaderboardPageWrapper />
+          </Lazy>
+        ),
+      },
+      {
+        path: "campaigns/:campaignId/feed",
+        element: (
+          <Lazy>
+            <CampaignFeedWrapper />
+          </Lazy>
+        ),
+      },
+      {
+        path: "profile",
+        element: (
+          <Lazy>
+            <ProfilePageWrapper />
+          </Lazy>
+        ),
+      },
+      {
+        path: "profile/edit",
+        element: (
+          <Lazy>
+            <EditProfilePageWrapper />
+          </Lazy>
+        ),
+      },
+      {
+        path: "profile/:userId",
+        element: (
+          <Lazy>
+            <ProfilePageWrapper />
+          </Lazy>
+        ),
+      },
+      {
+        path: "profile/:userId/followers",
+        element: (
+          <Lazy>
+            <FollowersListPageWrapper />
+          </Lazy>
+        ),
+      },
+      {
+        path: "profile/:userId/following",
+        element: (
+          <Lazy>
+            <FollowersListPageWrapper />
+          </Lazy>
+        ),
+      },
+      {
+        path: "post/:reelId",
+        element: (
+          <Lazy>
+            <VideoDetailPageWrapper />
+          </Lazy>
+        ),
+      },
+      { path: "*", element: <Navigate to="/" replace /> },
     ],
   },
 ]);

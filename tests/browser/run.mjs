@@ -360,6 +360,8 @@ function newMediaState() {
     files: new Map(), requests: [], processing, apiLog: [],
     signing: 'none', deleted: new Set(), statuses: [],
     liked: new Set(), saved: new Set(),
+    // comments: per reel, newest first, as the API returns them.
+    comments: new Map(), nextCommentId: 9001,
   };
 }
 
@@ -425,6 +427,30 @@ function mediaApi(media, route, url, origin, body) {
       .map((id) => ({ id, media_type: 'video', created_at: new Date().toISOString(), ...media.processing.get(id) }));
     return [200, { posts: rows }];
   }
+  // Comments on a reel: the list, and a POST that returns the new one.
+  const commentRoute = /^\/reels\/(\d+)\/comments\/$/.exec(route);
+  if (commentRoute) {
+    const id = Number(commentRoute[1]);
+    const thread = media.comments.get(id) || [];
+    if (body && body.length) {
+      let text = '';
+      try { text = JSON.parse(body.toString('utf8')).text || ''; } catch { text = ''; }
+      const comment = {
+        id: media.nextCommentId++,
+        reel: id,
+        text,
+        user: { id: 1, username: 'e2e_author', profile_photo: null },
+        created_at: new Date().toISOString(),
+        likes_count: 0,
+        is_liked: false,
+        parent: null,
+      };
+      media.comments.set(id, [comment, ...thread]);
+      media.apiLog.push({ route, ids: [String(id)], text });
+      return [201, comment];
+    }
+    return [200, { count: thread.length, next: null, previous: null, results: thread }];
+  }
   const single = /^\/reels\/(\d+)\/$/.exec(route);
   if (single && media.processing.has(Number(single[1]))) {
     const id = Number(single[1]);
@@ -437,6 +463,21 @@ function mediaApi(media, route, url, origin, body) {
     return [200, {
       id, user: own, caption: 'my new clip', media: null, image: null, thumbnail: null,
       media_type: 'video', votes: 0, comment_count: 0, created_at: new Date().toISOString(), ...state,
+    }];
+  }
+  if (single) {
+    // GET /reels/<id>/ for a post of the feed: what the single-post page
+    // (/post/:reelId) loads. Without it that page has no author and cannot
+    // render, which is not a thing the real API does.
+    const id = Number(single[1]);
+    media.apiLog.push({ route, ids: [String(id)] });
+    const post = PHOTO_IDS.has(id) ? processedPhoto(origin, id, 'a photo') : processedVideo(origin, id, `clip ${id}`);
+    return [200, {
+      ...served(post),
+      user: own,
+      is_liked: media.liked.has(id),
+      is_saved: media.saved.has(id),
+      comments: [],
     }];
   }
   if (route === '/reels/') {
