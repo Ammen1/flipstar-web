@@ -16,6 +16,7 @@ import { InsufficientCoinsModal } from '../../components/common/InsufficientCoin
 import { PostCaptionOverlay, captionOf } from '../../components/feed/PostCaptionOverlay';
 import { DesktopReelViewer } from '../../components/feed/DesktopReelViewer';
 import { dedupeById } from '../../utils/collections';
+import { canEngage } from '../../utils/engagementGate';
 import { likeCountOf, commentCountOf, shareCountOf } from '../../utils/engagement';
 import { getCampaignId, isCampaignPost as postIsCampaign, getCampaignTitle } from '../../utils/campaign';
 import { ModernCommentSection } from '../../components/messaging/ModernCommentSection';
@@ -1176,11 +1177,8 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
 
   const handleLike = async (e) => {
     e.stopPropagation();
-    if (!api.hasToken()) { onRequireAuth?.(); return; }
-
-    // Block non-subscribers from liking
-    const hasSubscription = subscriptionStatus?.has_subscription;
-    if (!hasSubscription) {
+    // Subscription only -- signed out is just one way of not having one.
+    if (!canEngage(subscriptionStatus)) {
       onShowSubscription?.();
       return;
     }
@@ -1230,6 +1228,10 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
 
   const handleShare = async (e) => {
     e.stopPropagation();
+    if (!canEngage(subscriptionStatus)) {
+      onShowSubscription?.();
+      return;
+    }
     setShareSearch('');
     setSearchingShareUsers(false);
 
@@ -1412,10 +1414,8 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
 
   const handleCommentClick = (e) => {
     e.stopPropagation();
-    
-    // Block non-subscribers from commenting
-    const hasSubscription = subscriptionStatus?.has_subscription;
-    if (!hasSubscription) {
+
+    if (!canEngage(subscriptionStatus)) {
       onShowSubscription?.();
       return;
     }
@@ -1957,7 +1957,14 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
               {post.user?.username !== currentUser?.username && (
                 <button aria-label="Send gift"
                   className="hp-btn hp-action"
-                  onClick={(e) => { e.stopPropagation(); setShowGiftModal(true); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!canEngage(subscriptionStatus)) {
+                      onShowSubscription?.();
+                      return;
+                    }
+                    setShowGiftModal(true);
+                  }}
                   title="Send Gift"
                   style={{
                     background: 'none', border: 'none', cursor: 'pointer',

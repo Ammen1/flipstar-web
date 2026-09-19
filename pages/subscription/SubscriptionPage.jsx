@@ -38,7 +38,12 @@ const getFallbackTiers = () => [
   },
 ];
 
-export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
+export function SubscriptionPage({ user, onBack, onAuthSuccess, onLogin, variant = 'page' }) {
+  // 'page' fills the viewport at /subscription. 'modal' is the same content
+  // inside components/subscription/SubscriptionModal, which owns the height,
+  // the scrolling and the close control -- so the page must not also claim a
+  // viewport height, or it would scroll inside a sheet that already scrolls.
+  const asModal = variant === 'modal';
   const { colors: T } = useTheme();
   const { t } = useLanguage();
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 480);
@@ -1105,6 +1110,30 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
   const getTierColor = (durationType) => PLAN_COLORS[durationType] || BRAND_GREEN;
   const getTierIcon  = (durationType) => PLAN_ICON[durationType] || Crown;
 
+  // How many days a plan covers, for comparing plans of different lengths on
+  // the only basis that makes them comparable: what a day costs.
+  const DAYS_IN = { daily: 1, weekly: 7, monthly: 30 };
+  const daysCovered = (tier) => tier?.duration_days || DAYS_IN[tier?.duration_type] || 0;
+  const pricePerDay = (tier) => {
+    const days = daysCovered(tier);
+    const price = Number(tier?.price_etb);
+    if (!days || !Number.isFinite(price) || days <= 1) return null;
+    // One decimal: 2.3 ETB/day reads as a price, 2.33333 reads as noise.
+    return Math.round((price / days) * 10) / 10;
+  };
+
+  // The cheapest day on offer gets the badge. Ties and missing prices simply
+  // produce no badge rather than picking one arbitrarily.
+  const bestValueTierId = (() => {
+    const priced = tiers
+      .map((t) => ({ id: t.id, perDay: pricePerDay(t) }))
+      .filter((t) => t.perDay != null);
+    if (priced.length < 2) return null;
+    const cheapest = priced.reduce((a, b) => (b.perDay < a.perDay ? b : a));
+    const ties = priced.filter((t) => t.perDay === cheapest.perDay);
+    return ties.length === 1 ? cheapest.id : null;
+  })();
+
   if (loading) {
     return (
       <div style={{ padding: 40, textAlign: 'center', color: '#666', background: M_BG, minHeight: '100vh' }}>
@@ -1117,7 +1146,15 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
   const hasAnySubscription = isActive;
 
   return (
-    <div style={{ ...(isMobile ? { height: '100dvh', overflow: 'hidden', display: 'flex', flexDirection: 'column' } : { minHeight: '100vh' }), background: M_BG, color: '#fff' }}>
+    <div style={{
+      ...(asModal
+        ? {}
+        : isMobile
+          ? { height: '100dvh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }
+          : { minHeight: '100vh' }),
+      background: M_BG,
+      color: '#fff',
+    }}>
       {/* Reconciliation Progress Overlay */}
       {reconciling && (
         <div style={{
@@ -1151,10 +1188,10 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
         </div>
       )}
 
-      {/* Header */}
+      {/* Header. Hidden in the sheet, which has its own close button. */}
       <div style={{
         padding: isMobile ? '4px 12px' : '12px 16px',
-        display: 'flex',
+        display: asModal ? 'none' : 'flex',
         alignItems: 'center',
         position: isMobile ? 'relative' : 'sticky',
         top: 0,
@@ -1177,9 +1214,83 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
 
       <div style={{ maxWidth: '100%', margin: '0 auto', paddingBottom: isMobile ? 4 : 32, ...(isMobile ? { flex: 1 } : {}) }}>
         {/* Hero */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: isMobile ? '6px 16px' : '32px 24px' }}>
-          <div style={{ fontSize: isMobile ? 17 : 32, fontWeight: 900, marginBottom: isMobile ? 2 : 8, color: '#fff' }}>FlipStar Premium</div>
-          <div style={{ fontSize: isMobile ? 11 : 16, color: BRAND_GREEN, textAlign: 'center', fontWeight: 600 }}>Unlock the full experience</div>
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center',
+          padding: asModal ? '10px 20px 16px' : (isMobile ? '6px 16px' : '32px 24px'),
+          // A wash of brand colour behind the crest, so the sheet opens on
+          // something with a bit of life rather than a flat dark panel.
+          background: asModal
+            ? `radial-gradient(120% 90% at 50% 0%, ${BRAND_GREEN}1F 0%, transparent 70%)`
+            : 'transparent',
+        }}>
+          {asModal && (
+            <div style={{
+              width: 52, height: 52, borderRadius: 18,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              marginBottom: 10,
+              background: `linear-gradient(145deg, ${BRAND_GREEN}, #6ea32e)`,
+              boxShadow: `0 10px 26px ${BRAND_GREEN}44`,
+            }}>
+              <Crown size={26} color="#0B0B0C" />
+            </div>
+          )}
+          <div style={{
+            fontSize: asModal ? 22 : (isMobile ? 17 : 32),
+            fontWeight: 900,
+            marginBottom: asModal ? 4 : (isMobile ? 2 : 8),
+            color: '#fff',
+            letterSpacing: -0.3,
+          }}>FlipStar Premium</div>
+          <div style={{
+            fontSize: asModal ? 13 : (isMobile ? 11 : 16),
+            color: asModal ? '#9a9a9a' : BRAND_GREEN,
+            textAlign: 'center', fontWeight: 600,
+            maxWidth: 300, lineHeight: 1.45,
+          }}>
+            {asModal
+              ? 'Like, comment, share and send gifts — pick a plan to join in.'
+              : 'Unlock the full experience'}
+          </div>
+
+          {/* A way in for somebody who already pays.
+             
+              Subscriptions are sold outside this app: by texting 1, 2 or 3 to
+              9286, and through telebirr. Those subscribers arrive here with an
+              active plan and no session, and every route to this page was
+              asking them to buy a second one -- there was nothing on it that
+              led to a login at all.
+             
+              Only when signed out. A signed-in subscriber has nothing to log
+              in to, and a signed-in non-subscriber is being asked to pick a
+              plan, not to prove who they are. */}
+          {!user && onLogin && (
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              gap: 6, flexWrap: 'wrap',
+              marginTop: asModal ? 12 : 16,
+              fontSize: asModal ? 13 : (isMobile ? 11 : 14),
+              color: '#8a8a8a', fontWeight: 600,
+            }}>
+              <span>Already subscribed?</span>
+              <button
+                type="button"
+                onClick={onLogin}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  padding: '6px 4px',
+                  color: BRAND_GREEN,
+                  fontSize: 'inherit',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                  textUnderlineOffset: 3,
+                }}
+              >
+                Log in
+              </button>
+            </div>
+          )}
           {isActive && (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, marginTop: 14 }}>
               <div style={{
@@ -1243,6 +1354,12 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
               const isCurrent = isActive && currentSubscription?.tier?.id === tier.id;
               const isProcessingThis = processing && processingTierId === tier.id;
               const hasSubscription = isActive;
+              // The longest plan on offer is the best value per day, so it is
+              // the one to point at. Derived from the plans themselves rather
+              // than hard-coded to 'monthly', which would silently stop being
+              // true the moment the tiers change.
+              const isBest = tier.id === bestValueTierId;
+              const perDay = pricePerDay(tier);
 
               return (
                 <div
@@ -1256,25 +1373,46 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
                     }
                   }}
                   style={{
-                    background: isCurrent ? BRAND_GREEN + '10' : M_CARD,
-                    borderRadius: isMobile ? 14 : 24,
-                    padding: isMobile ? 10 : 24,
-                    border: `2px solid ${isCurrent ? BRAND_GREEN : M_BORDER}`,
+                    background: isCurrent
+                      ? BRAND_GREEN + '10'
+                      : isBest
+                        ? `linear-gradient(160deg, ${BRAND_GREEN}14 0%, ${M_CARD} 55%)`
+                        : M_CARD,
+                    borderRadius: asModal ? 16 : (isMobile ? 14 : 24),
+                    padding: asModal ? 14 : (isMobile ? 10 : 24),
+                    border: `${isBest || isCurrent ? 2 : 1}px solid ${
+                      isCurrent ? BRAND_GREEN : isBest ? BRAND_GREEN + '66' : M_BORDER
+                    }`,
                     position: 'relative',
-                    transition: 'all 0.3s ease',
+                    transition: 'transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease',
                     cursor: isCurrent || hasSubscription || isProcessingThis ? 'default' : 'pointer',
                   }}
                   onMouseEnter={(e) => {
                     if (isCurrent || hasSubscription || isProcessingThis) return;
-                    e.currentTarget.style.transform = 'translateY(-4px)';
-                    e.currentTarget.style.boxShadow = '0 12px 32px rgba(143,196,65,0.3)';
+                    e.currentTarget.style.transform = 'translateY(-3px)';
+                    e.currentTarget.style.borderColor = BRAND_GREEN;
+                    e.currentTarget.style.boxShadow = `0 12px 30px ${BRAND_GREEN}33`;
                   }}
                   onMouseOut={(e) => {
                     if (isCurrent || hasSubscription || isProcessingThis) return;
                     e.currentTarget.style.transform = 'translateY(0)';
+                    e.currentTarget.style.borderColor = isBest ? BRAND_GREEN + '66' : M_BORDER;
                     e.currentTarget.style.boxShadow = 'none';
                   }}
                 >
+                {isBest && !isCurrent && (
+                  <div style={{
+                    position: 'absolute', top: -9, right: 14,
+                    background: `linear-gradient(135deg, ${BRAND_GREEN}, #6ea32e)`,
+                    padding: '3px 10px', borderRadius: 20,
+                    color: '#0B0B0C', fontSize: 10, fontWeight: 800,
+                    letterSpacing: 0.3,
+                    boxShadow: `0 4px 12px ${BRAND_GREEN}55`,
+                  }}>
+                    BEST VALUE
+                  </div>
+                )}
+
                 {isCurrent && (
                   <div style={{
                     position: 'absolute', top: -10, right: 14,
@@ -1311,6 +1449,14 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
                       {tier.price_etb}
                     </div>
                     <div style={{ fontSize: isMobile ? 9 : 13, color: BRAND_GREEN, fontWeight: 600 }}>ETB</div>
+                    {perDay != null && (
+                      <div style={{
+                        fontSize: asModal ? 10 : (isMobile ? 9 : 12),
+                        color: '#7a7a7a', fontWeight: 600, marginTop: 2, whiteSpace: 'nowrap',
+                      }}>
+                        {perDay} ETB/day
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

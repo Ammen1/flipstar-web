@@ -28,7 +28,7 @@ import { build } from 'esbuild';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const TIMEOUT_MS = Number(process.env.BROWSER_TEST_TIMEOUT_MS || 240000);
-const SUITES = ['camera', 'explorer', 'media', 'reels'];
+const SUITES = ['camera', 'explorer', 'media', 'reels', 'subscription'];
 
 // ── Real input ──────────────────────────────────────────────────────────────
 // A harness that needs a genuine tap, click or swipe -- hit-tested by the
@@ -747,6 +747,15 @@ async function main() {
     }
     if (route === '/crypto/public-key/') return json(404, {}); // E2E off: plain JSON
     if (route === '/categories/') return json(200, suite === 'media' ? [] : EXPLORE_CATEGORIES);
+    if (suite === 'subscription') {
+      // Signed in, nothing paid for: the case the plans sheet exists for.
+      // The tiers endpoint is deliberately absent, so the page falls back to
+      // its offline list -- which is the path worth covering, because that
+      // list has its own copy of the on-demand rule.
+      if (route === '/subscription/status/') return json(200, { has_subscription: false, status: 'none' });
+      if (route === '/profile/me/') return json(200, { user: { id: 1, username: 'e2e_author' } });
+      if (route === '/gifts/') return json(200, { count: 0, next: null, previous: null, results: [] });
+    }
     if (suite === 'reels') {
       // The whole app at /reels: a signed-in, subscribed account, so Like,
       // Share and the rest do their job instead of sending to /subscription.
@@ -764,7 +773,7 @@ async function main() {
         });
       }
     }
-    if (suite === 'media' || suite === 'reels') {
+    if (suite === 'media' || suite === 'reels' || suite === 'subscription') {
       const answer = mediaApi(state.media, route, url, origin, body);
       if (answer) return json(answer[0], answer[1]);
     }

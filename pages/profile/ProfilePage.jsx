@@ -1703,27 +1703,20 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
                       const daysFromEnd = 6 - i;
                       const active = daysFromEnd < cur;
                       const isToday = day.isToday;
+                      // Always false now: the login bonus has ended and the
+                      // API reports bonus_available: false. Kept as a read of
+                      // the field rather than a hard `false` so that if the
+                      // reward ever comes back, it comes back here.
                       const canClaim = isToday && streakData.login_streak.bonus_available && !claimed;
                       return (
                         <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                           <div
-                            onClick={async () => {
-                              if (!canClaim || claiming) return;
-                              setClaiming(true);
-                              try {
-                                await api.request('/gamification/login-bonus/', {
-                                  method: 'POST',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({})
-                                });
-                                setClaimed(true);
-                                await loadStreakData();
-                              } catch (error) {
-                                console.error('Failed to claim bonus:', error);
-                              } finally {
-                                setClaiming(false);
-                              }
-                            }}
+                            // Nothing to claim: coins come with the
+                            // subscription now, credited on every charge
+                            // (api/services/subscription_gift.py). The call
+                            // that used to be here is gone rather than left
+                            // to fail quietly against an endpoint that now
+                            // refuses.
                             style={{
                               width: 36, height: 36, borderRadius: '50%',
                               background: active ? 'linear-gradient(135deg,#8fc441,#F59E0B)' : isToday && canClaim ? 'rgba(249,224,139,0.1)' : isToday ? 'rgba(249,224,139,0.1)' : '#F5F5F4',
@@ -1746,11 +1739,11 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
                   })()}
                 </div>
 
-                {claimed && (
-                  <div style={{ textAlign: 'center', padding: '16px', background: '#ECFDF5', borderRadius: 14, color: '#10B981', fontWeight: 700 }}>
-                    ✅ Bonus Claimed!
-                  </div>
-                )}
+                <div style={{ textAlign: 'center', padding: '14px 16px', background: '#ECFDF5', borderRadius: 14, color: '#065F46', fontWeight: 600, fontSize: 13, lineHeight: 1.45 }}>
+                  Your coins now arrive with your subscription — every time your
+                  plan is charged, the gift is added to your balance. There is
+                  nothing to claim.
+                </div>
               </>
             ) : (
               <div style={{ textAlign: 'center', padding: 40, color: '#78716C' }}>

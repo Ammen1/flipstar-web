@@ -145,6 +145,7 @@ function useNavHelpers() {
     authUser,
     requestLogout,
     openTopUpModal,
+    openSubscriptionModal,
     subscriptionStatus,
     subscriptionChecked,
     setAuthUser,
@@ -170,6 +171,7 @@ function useNavHelpers() {
     requestLogout,
     openLoginModal,
     openTopUpModal,
+    openSubscriptionModal,
     subscriptionStatus,
     subscriptionChecked,
     setAuthUser,
@@ -203,7 +205,7 @@ function HomePageWrapper() {
       }
       onShowWallet={() => h.navigate("/wallet")}
       onShowCoinPurchase={h.openTopUpModal}
-      onShowSubscription={() => h.navigate("/subscription")}
+      onShowSubscription={h.openSubscriptionModal}
     />
   );
 }
@@ -231,7 +233,7 @@ function ReelLayoutWrapper() {
       onShowWallet={() => h.navigate("/wallet")}
       onShowCoinPurchase={h.openTopUpModal}
       subscriptionStatus={h.subscriptionStatus}
-      onShowSubscription={() => h.navigate("/subscription")}
+      onShowSubscription={h.openSubscriptionModal}
     />
   );
 }
@@ -306,7 +308,7 @@ function EnhancedPostPageWrapper() {
       onShowCoinPurchase={h.openTopUpModal}
       onRequireAuth={h.openLoginModal}
       subscriptionStatus={h.subscriptionStatus}
-      onShowSubscription={() => h.navigate("/subscription")}
+      onShowSubscription={h.openSubscriptionModal}
     />
   );
 }
@@ -322,7 +324,7 @@ function ProfilePageWrapper() {
       onEditProfile={() => h.navigate("/profile/edit")}
       onShowSettings={() => h.navigate("/settings")}
       onShowWallet={() => h.navigate("/wallet")}
-      onShowSubscription={() => h.navigate("/subscription")}
+      onShowSubscription={h.openSubscriptionModal}
       onShowCoinPurchase={h.openTopUpModal}
       onShowPostDetail={(postId, isVideo) => h.navigate(`/post/${postId}`)}
       onShowFollowers={(uid) =>
@@ -392,6 +394,11 @@ function SettingsPageWrapper() {
       onClose={() => h.navigate(-1)}
       onLogout={h.requestLogout}
       onShowWallet={() => h.navigate("/wallet")}
+      // Settings navigates to the page, it does not open the sheet. The sheet
+      // exists so that asking somebody to subscribe does not tear down the
+      // feed they were watching; from Settings there is no feed to protect,
+      // and a row in a settings list is expected to take you somewhere you
+      // can link to and come back from.
       onShowSubscription={() => h.navigate("/subscription")}
       onShowEditProfile={() => h.navigate("/profile/edit")}
     />
@@ -517,7 +524,7 @@ function VideoDetailPageWrapper() {
         h.navigate(userId ? `/profile/${userId}` : "/profile")
       }
       subscriptionStatus={h.subscriptionStatus}
-      onShowSubscription={() => h.navigate("/subscription")}
+      onShowSubscription={h.openSubscriptionModal}
     />
   );
 }
@@ -529,6 +536,7 @@ function SubscriptionPageStandalone() {
       <SubscriptionPage
         user={h.authUser}
         onBack={() => h.navigate("/")}
+        onLogin={() => h.navigate("/login")}
         onAuthSuccess={(user, token) => {
           h.setAuthUser(user);
           localStorage.setItem("authToken", token);

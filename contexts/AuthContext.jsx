@@ -29,10 +29,15 @@ export function AuthProvider({ children }) {
   const [subscriptionChecked, setSubscriptionChecked] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showTopUpModal, setShowTopUpModal] = useState(false);
+  // The plans, shown over whatever the viewer was doing rather than by
+  // navigating away from it. See components/subscription/SubscriptionModal.
+  const [showSubscriptionModal, setShowSubscriptionModal] = useState(false);
   const [logoutPromptOpen, setLogoutPromptOpen] = useState(false);
 
   const openLoginModal = useCallback(() => setShowLoginModal(true), []);
   const openTopUpModal = useCallback(() => setShowTopUpModal(true), []);
+  const openSubscriptionModal = useCallback(() => setShowSubscriptionModal(true), []);
+  const closeSubscriptionModal = useCallback(() => setShowSubscriptionModal(false), []);
 
   // Every logout button asks through here; LogoutDialog does the rest.
   const requestLogout = useCallback(() => setLogoutPromptOpen(true), []);
@@ -213,6 +218,9 @@ export function AuthProvider({ children }) {
     showTopUpModal,
     setShowTopUpModal,
     openTopUpModal,
+    showSubscriptionModal,
+    openSubscriptionModal,
+    closeSubscriptionModal,
   };
 
   return (

@@ -8,11 +8,13 @@ import webPush from '../../services/WebPushService';
 import telebirrH5 from '../../services/TelebirrH5Service';
 import { rediscoverUploads } from '../../services/uploadTracker';
 import { UploadProgressIndicator } from '../common/UploadProgressIndicator';
+import { SubscriptionModal } from '../subscription/SubscriptionModal';
 
 export default function AppLayout() {
   const {
     authUser, requestLogout,
     showTopUpModal, setShowTopUpModal,
+    showSubscriptionModal, closeSubscriptionModal,
     subscriptionStatus, subscriptionChecked, setAuthUser,
   } = useAuth();
   const navigate = useNavigate();
@@ -211,6 +213,25 @@ export default function AppLayout() {
       </AppShell>
       {/* Uploads still being processed, on every page (TikTok-style). */}
       {authUser && <UploadProgressIndicator onOpen={(id) => navigate(`/post/${id}`)} />}
+      {/* Rendered here, inside the layout the feeds live in, so opening the
+          plans leaves the feed mounted: the post, the scroll position and the
+          loaded pages are all still there when it closes. */}
+      <SubscriptionModal
+        open={showSubscriptionModal}
+        onClose={closeSubscriptionModal}
+        user={authUser}
+        onAuthSuccess={(user, token) => {
+          setAuthUser(user);
+          if (token) localStorage.setItem('authToken', token);
+        }}
+        onLogin={() => {
+          // Close first: the sheet is portalled to document.body, so leaving
+          // it open would park it on top of the login form it just sent the
+          // viewer to.
+          closeSubscriptionModal();
+          navigate('/login');
+        }}
+      />
       <LogoutDialog />
     </>
   );

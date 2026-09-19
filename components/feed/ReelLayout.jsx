@@ -35,6 +35,7 @@ import { AlertModal } from '../common/AlertModal';
 import GiftPage from "../../pages/gift/GiftPage";
 import { BoostModal } from '../subscription/BoostModal';
 import { getRelativeTime } from '../../utils/timeUtils';
+import { canEngage } from '../../utils/engagementGate';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import realtimeService from '../../services/RealtimeService';
@@ -1110,11 +1111,11 @@ export const ReelLayout = memo(function ReelLayout({
   }, [audioEnabled, activeVideoId]);
 
   const handleDoubleTap = (videoId) => {
-    if (!user) {
-      onRequireAuth();
+    if (!canEngage(subscriptionStatus)) {
+      onShowSubscription?.();
       return;
     }
-    
+
     // Trigger like (only if not already liked)
     const video = videos.find(v => v.id === videoId);
     if (video && !video.liked) {
@@ -1281,14 +1282,8 @@ export const ReelLayout = memo(function ReelLayout({
   })), [videos]);
 
   const handleLike = async (videoId) => {
-    if (!user) {
-      onRequireAuth();
-      return;
-    }
-
-    // Block non-subscribers from liking
-    const hasSubscription = subscriptionStatus?.has_subscription;
-    if (!hasSubscription) {
+    // Subscription only -- signed out is just one way of not having one.
+    if (!canEngage(subscriptionStatus)) {
       onShowSubscription?.();
       return;
     }
@@ -1505,9 +1500,7 @@ export const ReelLayout = memo(function ReelLayout({
   };
 
   const handleShare = async (videoId) => {
-    // Block non-subscribers from sharing
-    const hasSubscription = subscriptionStatus?.has_subscription;
-    if (!hasSubscription) {
+    if (!canEngage(subscriptionStatus)) {
       onShowSubscription?.();
       return;
     }
@@ -3408,8 +3401,8 @@ export const ReelLayout = memo(function ReelLayout({
                         data-reel-action="comment"
                         aria-label="Comments"
                         onClick={() => {
-                          if (!user) {
-                            onRequireAuth();
+                          if (!canEngage(subscriptionStatus)) {
+                            onShowSubscription?.();
                             return;
                           }
                           // Prevent rapid clicking that causes React error #426
@@ -3487,8 +3480,8 @@ export const ReelLayout = memo(function ReelLayout({
                           data-reel-action="gift"
                           aria-label="Send a gift"
                           onClick={() => {
-                            if (!user) {
-                              onRequireAuth();
+                            if (!canEngage(subscriptionStatus)) {
+                              onShowSubscription?.();
                               return;
                             }
                             setGiftReelId(video.id);

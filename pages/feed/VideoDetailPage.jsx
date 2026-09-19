@@ -4,6 +4,7 @@ import api from '../../api';
 import config from '../../config';
 import { useLegacyT } from '../../contexts/ThemeContext';
 import { isMediaReady, isVideoPost } from '../../utils/media';
+import { canEngage } from '../../utils/engagementGate';
 import { pickImageSource, pickImageWebp, pickVideoSource } from '../../utils/connection';
 import { SharePostSheet } from '../../components/feed/SharePostSheet';
 import { ModernCommentSection } from '../../components/messaging/ModernCommentSection';
@@ -162,11 +163,10 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
   };
 
   const handleLike = async () => {
-    if (!user) return;
-
-    // Block non-subscribers from liking
-    const hasSubscription = subscriptionStatus?.has_subscription;
-    if (!hasSubscription) {
+    // Subscription only -- signed out is just one way of not having one.
+    // This used to `return` silently when signed out, so the heart simply
+    // did nothing and said nothing.
+    if (!canEngage(subscriptionStatus)) {
       onShowSubscription?.();
       return;
     }
@@ -214,6 +214,11 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
     // The share control sits over the video, whose own click handler toggles
     // playback -- without this, opening the sheet also paused the post.
     e?.stopPropagation?.();
+
+    if (!canEngage(subscriptionStatus)) {
+      onShowSubscription?.();
+      return;
+    }
 
     // Previously this called navigator.clipboard.writeText directly. That
     // object does not exist outside a secure context, which is every phone
@@ -413,7 +418,13 @@ export function VideoDetailPage({ reelId, onBack, onShowProfile, user, subscript
           <RailAction
             ariaLabel="Comments"
             label={commentCount ? String(commentCount) : ''}
-            onClick={() => setShowComments(!showComments)}
+            onClick={() => {
+              if (!canEngage(subscriptionStatus)) {
+                onShowSubscription?.();
+                return;
+              }
+              setShowComments(!showComments);
+            }}
           >
             <MessageCircle size={RAIL_ICON} color="#fff" />
           </RailAction>
