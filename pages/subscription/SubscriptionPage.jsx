@@ -8,6 +8,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import telebirrH5 from '../../services/TelebirrH5Service';
 import { isSubscriptionActive } from '../../utils/subscription';
+import { offerablePlans } from '../../utils/planOffers';
 import { sanitizePhoneInput, toE164, PHONE_MAX_DIGITS, INVALID_PHONE_MESSAGE, COUNTRY_CODE } from '../../utils/phone';
 
 const getFallbackTiers = () => [
@@ -40,7 +41,6 @@ const getFallbackTiers = () => [
 export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
   const { colors: T } = useTheme();
   const { t } = useLanguage();
-  
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 480);
   
   useEffect(() => {
@@ -444,9 +444,13 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
       
       // Only update tiers if API returns valid data
       if (Array.isArray(tiersData) && tiersData.length > 0) {
-        // Filter out OnDemand tier
-        let filteredTiers = tiersData.filter(tier => tier.name !== 'OnDemand');
-        console.log('[SubscriptionPage] After filtering OnDemand:', filteredTiers);
+        // On-demand is not a way to start: it has no duration and tops up an
+        // account that already exists, so a first-time subscriber buying one
+        // is charged and gets nothing. The API leaves it out for a request
+        // with no user (api/views/subscription.py); this applies the same rule
+        // to the cached and offline paths, and changes nothing once signed in.
+        let filteredTiers = offerablePlans(tiersData, user);
+        console.log('[SubscriptionPage] Plans offered:', filteredTiers);
         
         // Don't filter out daily tier in SuperApp - show it with mandate details
         setTiers(filteredTiers);
@@ -459,8 +463,8 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess }) {
       }
     } catch (error) {
       console.error('Error loading subscription data:', error);
-      // Keep using fallback tiers without OnDemand
-      let fallbackTiers = getFallbackTiers().filter(tier => tier.name !== 'OnDemand');
+      // Same rule when the API could not be reached.
+      let fallbackTiers = offerablePlans(getFallbackTiers(), user);
       // Don't filter out daily tier in SuperApp - show it with mandate details
       setTiers(fallbackTiers);
     }
