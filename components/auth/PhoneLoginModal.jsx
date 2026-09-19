@@ -130,6 +130,14 @@ export function PhoneLoginModal({
       if (e?.status === 429) {
         lockout.start(e.retryAfter);
         setError('');
+      } else if (e?.data?.code === 'pin_not_set' || e?.data?.requires_pin_setup) {
+        // Subscribing by telebirr USSD push creates the account without a PIN
+        // -- there is no registration step in that flow. Telling this person
+        // their PIN is wrong is false, and sending them to Sign up gets them
+        // "Phone number already registered". The PIN reset is the one route
+        // that works, so they are taken straight into it.
+        setError('');
+        setShowForgot(true);
       } else {
         const msg = e?.data?.error || e?.message || '';
         const remaining = e?.data?.attempts_remaining;
@@ -639,7 +647,7 @@ export function PhoneLoginModal({
                     cursor: 'pointer',
                   }}
                 >
-                  Forgot PIN?
+                  Forgot PIN? Or set one for the first time
                 </button>
               </div>
             </form>

@@ -28,7 +28,7 @@ import { build } from 'esbuild';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const TIMEOUT_MS = Number(process.env.BROWSER_TEST_TIMEOUT_MS || 240000);
-const SUITES = ['camera', 'explorer', 'media', 'reels', 'subscription'];
+const SUITES = ['camera', 'explorer', 'media', 'reels', 'subscription', 'coins'];
 
 // ── Real input ──────────────────────────────────────────────────────────────
 // A harness that needs a genuine tap, click or swipe -- hit-tested by the
@@ -747,6 +747,36 @@ async function main() {
     }
     if (route === '/crypto/public-key/') return json(404, {}); // E2E off: plain JSON
     if (route === '/categories/') return json(200, suite === 'media' ? [] : EXPLORE_CATEGORIES);
+    if (suite === 'coins') {
+      // The staging price list: a flat 10 coins/Birr with bonuses on the
+      // tiers, and the custom_purchase block the page reads its rate from.
+      // Kept in step with the server, which derives the same rate from these
+      // very packages (api/services/coin_pricing.py).
+      if (route === '/wallet/config/') {
+        return json(200, {
+          currency: 'ETB',
+          currency_label: 'Birr',
+          coins_per_birr: 100,
+          custom_purchase: {
+            enabled: true,
+            coins_per_birr: '10',
+            min_etb: '1.00',
+            max_etb: '1000.00',
+            decimal_places: 2,
+          },
+          packages: [
+            { id: 1, name: 'Starter Pack', price_etb: '10.00', coin_amount: 100, bonus_coins: 0, total_coins: 100 },
+            { id: 2, name: 'Good Value', price_etb: '25.00', coin_amount: 250, bonus_coins: 25, total_coins: 275 },
+            { id: 3, name: 'Most Popular', price_etb: '50.00', coin_amount: 500, bonus_coins: 75, total_coins: 575 },
+          ],
+        });
+      }
+      if (route === '/profile/me/') {
+        return json(200, { user: { id: 1, username: 'e2e_buyer' }, phone_number: '251911000111' });
+      }
+      if (route === '/wallet/') return json(200, { balance: { total: 120 } });
+      if (route === '/subscription/status/') return json(200, { has_subscription: true, status: 'active' });
+    }
     if (suite === 'subscription') {
       // Signed in, nothing paid for: the case the plans sheet exists for.
       // The tiers endpoint is deliberately absent, so the page falls back to

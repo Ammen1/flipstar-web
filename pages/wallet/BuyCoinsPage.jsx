@@ -6,6 +6,7 @@ import {
 import api from '../../api';
 import telebirrH5 from '../../services/TelebirrH5Service';
 import { sanitizePhoneInput, toE164, PHONE_MAX_DIGITS, INVALID_PHONE_MESSAGE } from '../../utils/phone';
+import { readPricing, quoteCoins, formatBirr } from '../../utils/coinPricing';
 
 /**
  * Buy Coins — dedicated full page.
@@ -33,6 +34,9 @@ function allowedPayMethods(priceEtb, opts) {
     ? ['telebirr', 'airtime']
     : ['telebirr'];
 }
+
+/** The id the custom card selects under; never a real package id. */
+const CUSTOM_ID = '__custom__';
 
 const POLL_MS = 3000;
 const POLL_TIMEOUT_MS = 90000;
@@ -376,6 +380,11 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [phoneLocked, setPhoneLocked] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
+  // Typing an amount no package covers. `pricing` (rate + limits) comes from
+  // /wallet/config/ so nothing about the price is decided here.
+  const [customAmount, setCustomAmount] = useState('');
+  const [customTouched, setCustomTouched] = useState(false);
+  const [pricing, setPricing] = useState(null);
   const [isInSuperApp, setIsInSuperApp] = useState(false);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -413,6 +422,7 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
       return;
     }
 
+    setPricing(readPricing(cfg.value));
     const list = normalizePackages(cfg.value && cfg.value.packages);
     setPackages(list);
     setSelectedId((prev) => (list.some((p) => p._id === prev) ? prev : null));
@@ -446,9 +456,40 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
     });
   }, [packages]);
 
+  // A custom amount is offered only outside the SuperApp: in there, purchases
+  // go through /wallet/telebirr/initiate/, which takes a package id and has no
+  // amount form. Showing the card there would offer something that cannot be
+  // paid for.
+  const customAllowed = Boolean(pricing) && !isInSuperApp;
+  const customQuote = useMemo(
+    // `decorated` goes in so an amount that is exactly a package price
+    // previews that package's coins -- the same rule the server applies.
+    () => (customAllowed ? quoteCoins(customAmount, pricing, decorated) : null),
+    [customAllowed, customAmount, pricing, decorated],
+  );
+
+  // Shaped exactly like a package so the confirm sheet, the pay-method rules
+  // and the purchase call need no special case -- only the request body does.
+  const customPkg = useMemo(() => {
+    if (!customQuote || !customQuote.ok) return null;
+    return {
+      _id: CUSTOM_ID,
+      id: null,
+      _isCustom: true,
+      _name: 'Custom amount',
+      _priceEtb: customQuote.amount,
+      _totalCoins: customQuote.coins,
+      _bonusCoins: 0,
+      allows_airtime: false,
+    };
+  }, [customQuote]);
+
   const selected = useMemo(
-    () => decorated.find((p) => p._id === selectedId) || null,
-    [decorated, selectedId],
+    () =>
+      selectedId === CUSTOM_ID
+        ? customPkg
+        : decorated.find((p) => p._id === selectedId) || null,
+    [decorated, selectedId, customPkg],
   );
 
   const needsPhone = !isInSuperApp;
@@ -568,6 +609,13 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
     setConfirmOpen(false);
 
     if (telebirrH5.isInSuperApp()) {
+      // The card is hidden in the SuperApp, so this is unreachable rather than
+      // a case to handle -- but it fails loudly here instead of sending a null
+      // package id if that ever stops being true.
+      if (selected._isCustom) {
+        setResult({ ok: false, message: 'Choose a package to pay inside telebirr.' });
+        return;
+      }
       setBusy('telebirr');
       try {
         const r = await telebirrH5.purchasePackage(selected.id);
@@ -611,12 +659,15 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
       const initial = (wallet && wallet.balance && wallet.balance.total) || 0;
       setInitialCoinBalance(initial);
 
+      // The one place a custom amount differs from a package: what is asked
+      // for. The server prices it and credits its own figure either way.
       const response = await api.request('/wallet/telebirrUssdPurchase/', {
         method: 'POST',
-        body: JSON.stringify({
-          package_id: selected.id,
-          phone_number: toE164(phoneNumber),
-        }),
+        body: JSON.stringify(
+          selected._isCustom
+            ? { amount_etb: String(selected._priceEtb), phone_number: toE164(phoneNumber) }
+            : { package_id: selected.id, phone_number: toE164(phoneNumber) },
+        ),
       });
 
       if (response.success) {
@@ -794,6 +845,111 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
               </div>
             </section>
 
+            {customAllowed && (
+              <section className="bc-section" aria-labelledby="bc-custom-head">
+                <h2 className="bc-section-head" id="bc-custom-head">
+                  <Coins size={14} /> Or enter your own amount
+                </h2>
+
+                <div
+                  className="bc-card"
+                  data-selected={selectedId === CUSTOM_ID}
+                  style={{ cursor: 'default', display: 'block', padding: 18 }}
+                >
+                  <label
+                    htmlFor="bc-custom-amount"
+                    style={{ display: 'block', fontSize: 12, fontWeight: 800, opacity: 0.75, marginBottom: 8 }}
+                  >
+                    Amount
+                  </label>
+
+                  <div style={{ position: 'relative', marginBottom: 14 }}>
+                    <input
+                      id="bc-custom-amount"
+                      type="text"
+                      inputMode="decimal"
+                      autoComplete="off"
+                      placeholder={`e.g. 5`}
+                      value={customAmount}
+                      aria-describedby="bc-custom-msg"
+                      aria-invalid={Boolean(customTouched && customAmount && !customQuote.ok)}
+                      onChange={(e) => {
+                        setCustomTouched(true);
+                        // Digits and a single dot only: a text input with a
+                        // filter, rather than type=number, whose spinners and
+                        // locale-dependent decimal separator both cause
+                        // trouble on phones.
+                        const next = e.target.value.replace(/[^\d.]/g, '');
+                        if ((next.match(/\./g) || []).length > 1) return;
+                        setCustomAmount(next);
+                        if (next) setSelectedId(CUSTOM_ID);
+                      }}
+                      onFocus={() => { if (customAmount) setSelectedId(CUSTOM_ID); }}
+                      style={{
+                        width: '100%',
+                        boxSizing: 'border-box',
+                        padding: '14px 58px 14px 14px',
+                        borderRadius: 14,
+                        border: '1.5px solid var(--bc-border, #2a2a2a)',
+                        background: 'rgba(255,255,255,0.03)',
+                        color: 'inherit',
+                        fontSize: 18,
+                        fontWeight: 800,
+                        outline: 'none',
+                      }}
+                    />
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)',
+                        fontSize: 13, fontWeight: 800, opacity: 0.6, pointerEvents: 'none',
+                      }}
+                    >
+                      Birr
+                    </span>
+                  </div>
+
+                  <div
+                    id="bc-custom-msg"
+                    role="status"
+                    aria-live="polite"
+                    style={{ minHeight: 44 }}
+                  >
+                    {customQuote.ok ? (
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.7 }}>
+                          You will receive
+                        </span>
+                        <strong style={{ fontSize: 22, fontWeight: 900 }}>
+                          {formatCoins(customQuote.coins)}
+                        </strong>
+                        <span style={{ fontSize: 13, fontWeight: 800, opacity: 0.8 }}>Coins</span>
+                      </div>
+                    ) : customTouched && customAmount ? (
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#F87171' }}>
+                        {customQuote.message}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 12, fontWeight: 600, opacity: 0.6 }}>
+                        {formatBirr(pricing.minEtb)}–{formatBirr(pricing.maxEtb)} Birr.
+                        Bonus coins come with the packages above.
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    className="bc-primary"
+                    disabled={!customQuote.ok}
+                    onClick={() => { setSelectedId(CUSTOM_ID); setConfirmOpen(true); }}
+                    style={{ width: '100%', marginTop: 12 }}
+                  >
+                    Continue to Buy
+                  </button>
+                </div>
+              </section>
+            )}
+
             <section className="bc-section" aria-labelledby="bc-phone-head">
               <h2 className="bc-section-head" id="bc-phone-head">
                 <Smartphone size={14} /> Phone Number
@@ -880,8 +1036,12 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
             </div>
 
             <div className="bc-row">
-              <span className="bc-row-k">Package</span>
+              <span className="bc-row-k">{selected._isCustom ? 'Purchase' : 'Package'}</span>
               <span className="bc-row-v">{selected._name}</span>
+            </div>
+            <div className="bc-row">
+              <span className="bc-row-k">Amount</span>
+              <span className="bc-row-v">{formatBirr(selected._priceEtb)} Birr</span>
             </div>
             <div className="bc-row">
               <span className="bc-row-k">Coins</span>
