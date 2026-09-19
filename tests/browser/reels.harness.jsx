@@ -818,6 +818,46 @@ async function run() {
   });
 
 
+  // ── the settings rows ────────────────────────────────────────────────────
+  // Every row that leaves Settings used to close it first -- a habit from when
+  // Settings was a modal. As a route, closing is a step back in history, so
+  // each row went back to whatever opened Settings (Profile) and the push to
+  // the real destination was undone: every row landed on Profile.
+
+  const settingsRow = (name) => document.querySelector(`[data-settings-row="${name}"]`);
+
+  async function openSettings() {
+    mount(<RouterProvider router={router} />);
+    // From Profile, the way a user actually reaches Settings.
+    await router.navigate('/profile');
+    await waitFor(() => router.state.location.pathname === '/profile', 'the profile page', 10000);
+    await router.navigate('/settings');
+    await waitFor(() => router.state.location.pathname === '/settings', 'the settings page', 10000);
+    await waitFor(() => settingsRow('wallet'), 'the settings rows', 15000);
+    await sleep(300);
+  }
+
+  for (const row of [
+    { name: 'wallet', to: '/wallet' },
+    { name: 'subscription', to: '/subscription' },
+    { name: 'edit-profile', to: '/profile/edit' },
+  ]) {
+    await test(`settings: ${row.name} opens ${row.to}, not the page behind Settings`, async () => {
+      await openSettings();
+      const el = settingsRow(row.name);
+      assert(el, `no ${row.name} row`);
+      await tap(el);
+      const landed = await waitFor(
+        () => (router.state.location.pathname !== '/settings' ? router.state.location.pathname : null),
+        'the row to go somewhere',
+        8000,
+      );
+      assert(landed === row.to, `went to ${landed}`);
+      return `reached ${landed}`;
+    });
+  }
+
+
   await test('no uncaught errors from the page', async () => {
     assert(!pageErrors.length, pageErrors.join('\n'));
   });

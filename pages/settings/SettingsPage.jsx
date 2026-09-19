@@ -459,6 +459,9 @@ export function SettingsPage({ user, onClose, onLogout, onShowWallet, onShowSubs
       const c = danger ? '#EF4444' : (color || T.txt);
       return (
         <div
+          // Names the row for the tests, which check that each one reaches
+          // its own destination rather than all landing in the same place.
+          data-settings-row={String(title || '').toLowerCase().replace(/\s+/g, '-')}
           onClick={type === 'switch' ? undefined : onPress}
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -573,9 +576,15 @@ export function SettingsPage({ user, onClose, onLogout, onShowWallet, onShowSubs
           {/* Account */}
           <SectionLabel>{t('account')}</SectionLabel>
           <SectionCard>
-            <Row icon={User} title={t('editProfile')} subtitle="Change bio and photo" onPress={() => { onClose?.(); onShowEditProfile?.(); }} />
-            <Row icon={Wallet} title="Wallet" subtitle="Coins & transactions" onPress={() => { onClose?.(); onShowWallet?.(); }} />
-            <Row icon={Crown} title="Subscription" subtitle="Plans & billing" onPress={() => { onClose?.(); onShowSubscription?.(); }} />
+            {/* Navigate, and only navigate. These used to close first, from
+                when Settings was a modal that had to be dismissed before
+                anything else could show. As a route, "close" is a step back
+                in history -- so each row went back to wherever Settings was
+                opened from (Profile, usually) and the push to the real
+                destination was undone. */}
+            <Row icon={User} title={t('editProfile')} subtitle="Change bio and photo" onPress={() => onShowEditProfile?.()} />
+            <Row icon={Wallet} title="Wallet" subtitle="Coins & transactions" onPress={() => onShowWallet?.()} />
+            <Row icon={Crown} title="Subscription" subtitle="Plans & billing" onPress={() => onShowSubscription?.()} />
             <Row icon={Zap} title="Boost Dashboard" subtitle="Manage your boosted posts" onPress={() => setShowBoostDashboard(true)} />
             <Row icon={Lock} title={t('changePassword')} onPress={() => setShowPassModal(true)} />
           </SectionCard>
