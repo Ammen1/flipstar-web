@@ -776,79 +776,10 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
 
         {status === 'ready' && (
           <>
-            <section className="bc-section" aria-labelledby="bc-pkg-head">
-              <h2 className="bc-section-head" id="bc-pkg-head">
-                <Coins size={14} /> Packages
-              </h2>
-              <div
-                className="bc-grid"
-                role="radiogroup"
-                aria-label="Coin packages"
-                onKeyDown={onGroupKeyDown}
-              >
-                {decorated.map((pkg, i) => {
-                  const isSelected = pkg._id === selectedId;
-                  const perCoin = formatPerCoin(pkg._perCoin);
-                  const bonusLabel = pkg._bonusCoins > 0
-                    ? `, including ${formatCoins(pkg._bonusCoins)} bonus coins`
-                    : '';
-                  return (
-                    <button
-                      key={pkg._id}
-                      ref={(el) => { cardRefs.current[i] = el; }}
-                      type="button"
-                      role="radio"
-                      aria-checked={isSelected}
-                      aria-label={`${pkg._name}, ${formatCoins(pkg._totalCoins)} coins${bonusLabel}, ${formatEtb(pkg._priceEtb)} ETB`}
-                      tabIndex={selectedId == null ? (i === 0 ? 0 : -1) : (isSelected ? 0 : -1)}
-                      data-selected={isSelected}
-                      className="bc-card"
-                      style={{ animationDelay: `${Math.min(i, 8) * 45}ms` }}
-                      onClick={() => setSelectedId(pkg._id)}
-                    >
-                      {pkg._badge && (
-                        <span className="bc-badge" data-kind={pkg._badge.kind}>
-                          {pkg._badge.kind === 'best' ? <ShieldCheck size={11} /> : <Coins size={11} />}
-                          {pkg._badge.text}
-                        </span>
-                      )}
-                      {isSelected && (
-                        <span className="bc-check" aria-hidden="true"><Check size={15} strokeWidth={3} /></span>
-                      )}
-
-                      <span className="bc-coin" aria-hidden="true"><Coins size={26} /></span>
-
-                      <span className="bc-amount">{formatCoins(pkg._totalCoins)}</span>
-                      <span className="bc-amount-label">COINS</span>
-
-                      {pkg._bonusCoins > 0 && (
-                        <span className="bc-bonus">+{formatCoins(pkg._bonusCoins)} bonus included</span>
-                      )}
-
-                      <span className="bc-rule" aria-hidden="true" />
-
-                      <span className="bc-price">
-                        {formatEtb(pkg._priceEtb)} <span>ETB</span>
-                      </span>
-                      {perCoin && <span className="bc-percoin">{perCoin}</span>}
-
-                      <span className="bc-cta">
-                        <i>
-                          {isSelected
-                            ? (<><Check size={15} strokeWidth={3} /> Selected</>)
-                            : 'Select package'}
-                        </i>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-
             {customAllowed && (
               <section className="bc-section" aria-labelledby="bc-custom-head">
                 <h2 className="bc-section-head" id="bc-custom-head">
-                  <Coins size={14} /> Or enter your own amount
+                  <Coins size={14} /> Choose your amount
                 </h2>
 
                 <div
@@ -932,7 +863,7 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
                     ) : (
                       <div style={{ fontSize: 12, fontWeight: 600, opacity: 0.6 }}>
                         {formatBirr(pricing.minEtb)}–{formatBirr(pricing.maxEtb)} Birr.
-                        Bonus coins come with the packages above.
+                        Bonus coins come with the packages below.
                       </div>
                     )}
                   </div>
@@ -949,6 +880,75 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
                 </div>
               </section>
             )}
+
+            <section className="bc-section" aria-labelledby="bc-pkg-head">
+              <h2 className="bc-section-head" id="bc-pkg-head">
+                <Coins size={14} /> Or pick a package
+              </h2>
+              <div
+                className="bc-grid"
+                role="radiogroup"
+                aria-label="Coin packages"
+                onKeyDown={onGroupKeyDown}
+              >
+                {decorated.map((pkg, i) => {
+                  const isSelected = pkg._id === selectedId;
+                  const perCoin = formatPerCoin(pkg._perCoin);
+                  const bonusLabel = pkg._bonusCoins > 0
+                    ? `, including ${formatCoins(pkg._bonusCoins)} bonus coins`
+                    : '';
+                  return (
+                    <button
+                      key={pkg._id}
+                      ref={(el) => { cardRefs.current[i] = el; }}
+                      type="button"
+                      role="radio"
+                      aria-checked={isSelected}
+                      aria-label={`${pkg._name}, ${formatCoins(pkg._totalCoins)} coins${bonusLabel}, ${formatEtb(pkg._priceEtb)} ETB`}
+                      tabIndex={selectedId == null ? (i === 0 ? 0 : -1) : (isSelected ? 0 : -1)}
+                      data-selected={isSelected}
+                      className="bc-card"
+                      style={{ animationDelay: `${Math.min(i, 8) * 45}ms` }}
+                      onClick={() => setSelectedId(pkg._id)}
+                    >
+                      {pkg._badge && (
+                        <span className="bc-badge" data-kind={pkg._badge.kind}>
+                          {pkg._badge.kind === 'best' ? <ShieldCheck size={11} /> : <Coins size={11} />}
+                          {pkg._badge.text}
+                        </span>
+                      )}
+                      {isSelected && (
+                        <span className="bc-check" aria-hidden="true"><Check size={15} strokeWidth={3} /></span>
+                      )}
+
+                      <span className="bc-coin" aria-hidden="true"><Coins size={26} /></span>
+
+                      <span className="bc-amount">{formatCoins(pkg._totalCoins)}</span>
+                      <span className="bc-amount-label">COINS</span>
+
+                      {pkg._bonusCoins > 0 && (
+                        <span className="bc-bonus">+{formatCoins(pkg._bonusCoins)} bonus included</span>
+                      )}
+
+                      <span className="bc-rule" aria-hidden="true" />
+
+                      <span className="bc-price">
+                        {formatEtb(pkg._priceEtb)} <span>ETB</span>
+                      </span>
+                      {perCoin && <span className="bc-percoin">{perCoin}</span>}
+
+                      <span className="bc-cta">
+                        <i>
+                          {isSelected
+                            ? (<><Check size={15} strokeWidth={3} /> Selected</>)
+                            : 'Select package'}
+                        </i>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
 
             <section className="bc-section" aria-labelledby="bc-phone-head">
               <h2 className="bc-section-head" id="bc-phone-head">

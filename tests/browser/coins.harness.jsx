@@ -151,10 +151,15 @@ async function run() {
     await openPage();
     await enter('5');
 
-    const shown = (messageBox().innerText || '').replace(/\s+/g, ' ');
+    const shown = (messageBox().innerText || '').replace(/\s+/g, ' ').trim();
     assert(/50/.test(shown), `expected 50 coins, got "${shown}"`);
     assert(/Coins/i.test(shown), `no coin label in "${shown}"`);
-    return shown.trim();
+    // The box holds the figure and nothing else. Moving the card above the
+    // packages once spliced the whole package grid inside it, and every
+    // assertion here still passed because they were all substring checks.
+    assert(shown.length < 60, `the message box swallowed other content: "${shown}"`);
+    assert(!/PACKAGE/i.test(shown), `the packages are inside the message box: "${shown}"`);
+    return shown;
   });
 
   await test('the figure follows the amount as it changes', async () => {
