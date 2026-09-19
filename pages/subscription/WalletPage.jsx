@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import api from '../../api';
 import telebirrH5 from '../../services/TelebirrH5Service';
+import { extractErrorMessage } from '../../utils/authErrors';
 
 /**
  * Full user wallet with:
@@ -677,6 +678,7 @@ function WithdrawModal({ theme: T, balance, points, config, onClose, onSuccess }
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [receipt, setReceipt] = useState(null);
   const [showFailureModal, setShowFailureModal] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -699,20 +701,27 @@ function WithdrawModal({ theme: T, balance, points, config, onClose, onSuccess }
     fetchPhoneNumber();
   }, []);
 
+  // `feePercent` above already reads the rate from the API. The preview used
+  // a hardcoded 0.20 anyway, so changing the fee in the admin would have left
+  // it promising the old number while the receipt showed the new one.
   useEffect(() => {
     if (amount > 0) {
       const gross = amount / pointsPerBirr;
-      const platformFee = gross * 0.20; // 20% platform fee
+      const platformFee = gross * (feePercent / 100);
       const net = gross - platformFee;
       setPreview({ gross_birr: gross, platform_fee_birr: platformFee, net_birr: net });
     }
-  }, [amount, pointsPerBirr]);
+  }, [amount, pointsPerBirr, feePercent]);
 
   async function handleSubmit() {
     try {
       setSubmitting(true);
       setError('');
-      await api.request('/wallet/withdraw/', {
+      // The response carries the withdrawal itself -- reference, status,
+      // amounts, destination. It used to be discarded and replaced with the
+      // word "Success", which told the user nothing and, worse, was not true:
+      // submitting only queues a payout, and the money has not moved yet.
+      const result = await api.request('/wallet/withdraw/', {
         method: 'POST',
         body: JSON.stringify({
           point_amount: parseInt(amount),
@@ -721,9 +730,10 @@ function WithdrawModal({ theme: T, balance, points, config, onClose, onSuccess }
           payout_account_name: '',
         }),
       });
+      setReceipt((result && result.withdrawal) || null);
       setShowSuccessModal(true);
     } catch (err) {
-      setErrorMessage(err.message || 'Withdrawal failed. Please try again.');
+      setErrorMessage(extractErrorMessage(err, 'Withdrawal failed. Please try again.'));
       setShowFailureModal(true);
     } finally {
       setSubmitting(false);
@@ -732,6 +742,7 @@ function WithdrawModal({ theme: T, balance, points, config, onClose, onSuccess }
 
   function handleSuccessClose() {
     setShowSuccessModal(false);
+    setReceipt(null);
     onSuccess();
     onClose();
   }
@@ -780,21 +791,36 @@ function WithdrawModal({ theme: T, balance, points, config, onClose, onSuccess }
                 <span style={{ color: '#000000', fontSize: 14, fontWeight: 600 }}>{preview.gross_birr.toFixed(2)} ETB</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                <span style={{ color: '#000000', fontSize: 14 }}>Platform fee (20%)</span>
+                <span style={{ color: '#000000', fontSize: 14 }}>Platform fee ({feePercent}%)</span>
                 <span style={{ color: '#000000', fontSize: 14, fontWeight: 600 }}>-{preview.platform_fee_birr.toFixed(2)} ETB</span>
               </div>
-              <div style={{ borderTop: `1px solid ${T.pri}`, margin: '8px 0', paddingTop: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: '#000000', fontSize: 14, fontWeight: 700 }}>You receive</span>
-                  <span style={{ color: '#000000', fontSize: 16, fontWeight: 700 }}>{preview.net_birr.toFixed(2)} ETB</span>
+              <div style={{ borderTop: `1px solid ${T.pri}`, margin: '10px 0 0', paddingTop: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+                  <span style={{ color: '#000000', fontSize: 14, fontWeight: 800 }}>You receive</span>
+                  <span style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
+                    <strong style={{ color: '#000000', fontSize: 24, fontWeight: 900, lineHeight: 1 }}>
+                      {preview.net_birr.toFixed(2)}
+                    </strong>
+                    <span style={{ color: '#000000', fontSize: 13, fontWeight: 800 }}>ETB</span>
+                  </span>
                 </div>
               </div>
             </div>
           )}
 
           {error && (
-            <div style={{ background: '#FEE2E2', color: '#000000', padding: 10, borderRadius: 8, marginBottom: 12, fontSize: 13, fontWeight: 600, border: `1px solid ${T.pri}` }}>
-              {error}
+            <div
+              role="alert"
+              style={{
+                display: 'flex', alignItems: 'flex-start', gap: 10,
+                background: '#FEE2E2', color: '#991B1B',
+                border: '1px solid rgba(239,68,68,0.45)',
+                padding: '12px 14px', borderRadius: 12, marginBottom: 14,
+                fontSize: 13, fontWeight: 600, lineHeight: 1.45,
+              }}
+            >
+              <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span>{error}</span>
             </div>
           )}
 
@@ -854,9 +880,53 @@ function WithdrawModal({ theme: T, balance, points, config, onClose, onSuccess }
           }}>
             <CheckCircle2 size={40} color="#fff" strokeWidth={3} />
           </div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 20 }}>
-            Success
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 6 }}>
+            {receipt && receipt.status === 'completed' ? 'Paid' : 'Withdrawal requested'}
           </div>
+          <div style={{ fontSize: 13, color: '#bbb', marginBottom: 18, textAlign: 'center', maxWidth: 300, lineHeight: 1.5 }}>
+            {receipt && receipt.status === 'completed'
+              ? 'The money has been sent to your telebirr wallet.'
+              : 'Your points have been deducted and the payout is on its way. The money reaches your telebirr wallet once it is confirmed — you will get an SMS either way.'}
+          </div>
+
+          {receipt && (
+            <div style={{
+              width: 'min(340px, 90vw)', boxSizing: 'border-box',
+              background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)',
+              borderRadius: 14, padding: 16, marginBottom: 18,
+              display: 'flex', flexDirection: 'column', gap: 10,
+            }}>
+              {[
+                ['Reference', `#${receipt.id}`],
+                ['Status', receipt.status_display || receipt.status],
+                ['Points withdrawn', receipt.point_amount != null ? `${receipt.point_amount} pts` : null],
+                ['Gross', receipt.gross_birr != null ? `${Number(receipt.gross_birr).toFixed(2)} ETB` : null],
+                ['Platform fee', receipt.fee_birr != null ? `-${Number(receipt.fee_birr).toFixed(2)} ETB` : null],
+                ['Method', receipt.payout_method_display || receipt.payout_method],
+                ['Sent to', receipt.payout_account],
+                ['Requested', receipt.created_at ? new Date(receipt.created_at).toLocaleString() : null],
+                // Only once telebirr has actually confirmed it; blank before
+                // then, rather than an empty row that looks like a bug.
+                ['telebirr reference', receipt.payout_reference || null],
+              ]
+                .filter(([, value]) => value != null && value !== '')
+                .map(([label, value]) => (
+                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13 }}>
+                    <span style={{ color: '#9a9a9a', fontWeight: 600 }}>{label}</span>
+                    <span style={{ color: '#fff', fontWeight: 700, textAlign: 'right', wordBreak: 'break-word' }}>{value}</span>
+                  </div>
+                ))}
+
+              <div style={{ height: 1, background: 'rgba(255,255,255,0.12)', margin: '2px 0' }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                <span style={{ color: '#fff', fontWeight: 800, fontSize: 14 }}>You receive</span>
+                <span style={{ color: '#34D399', fontWeight: 900, fontSize: 16 }}>
+                  {receipt.net_birr != null ? `${Number(receipt.net_birr).toFixed(2)} ETB` : '—'}
+                </span>
+              </div>
+            </div>
+          )}
+
           <button
             onClick={handleSuccessClose}
             style={{
@@ -929,7 +999,7 @@ function ReinvestModal({ theme: T, points, onClose, onSuccess }) {
       });
       onSuccess();
     } catch (err) {
-      setError(err.message || 'Conversion failed');
+      setError(extractErrorMessage(err, 'Conversion failed. Please try again.'));
     } finally {
       setSubmitting(false);
     }
@@ -982,15 +1052,35 @@ function ReinvestModal({ theme: T, points, onClose, onSuccess }) {
         </div>
 
         <div style={{
-          background: SOFT_BG, border: `1px solid ${SOFT_BORDER}`, borderRadius: 12,
-          padding: 14, marginBottom: 16,
+          background: SOFT_BG, border: `1px solid ${SOFT_BORDER}`, borderRadius: 14,
+          padding: '16px 16px', marginBottom: 16,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
         }}>
-          <Row label="You will receive" value={`${amount.toLocaleString()} coins`} theme={T} bold />
+          <span style={{ fontSize: 13, fontWeight: 700, color: T.sub || '#8a8a8a' }}>
+            You will receive
+          </span>
+          <span style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+            <strong style={{ fontSize: 24, fontWeight: 900, color: ACCENT, lineHeight: 1 }}>
+              {amount.toLocaleString()}
+            </strong>
+            <span style={{ fontSize: 13, fontWeight: 800, color: ACCENT }}>coins</span>
+          </span>
         </div>
 
         {error && (
-          <div style={{ background: '#FEE2E2', color: '#991B1B', padding: 10, borderRadius: 8, marginBottom: 12, fontSize: 13 }}>
-            {error}
+          <div
+            role="alert"
+            style={{
+              display: 'flex', alignItems: 'flex-start', gap: 10,
+              background: 'rgba(239,68,68,0.10)',
+              border: '1px solid rgba(239,68,68,0.35)',
+              color: T.mode === 'dark' ? '#FCA5A5' : '#991B1B',
+              padding: '12px 14px', borderRadius: 12, marginBottom: 14,
+              fontSize: 13, fontWeight: 600, lineHeight: 1.45,
+            }}
+          >
+            <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span>{error}</span>
           </div>
         )}
 
