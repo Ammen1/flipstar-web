@@ -135,6 +135,52 @@ const CaptionWithLessMore = ({ caption, maxLength = 100 }) => {
   );
 };
 
+// ── Reels top tabs: For You / Following ───────────────────────────────────
+// The Reels page keeps exactly these two top-level tabs, with "For You"
+// active by default. Rendered by both the desktop header and the mobile
+// overlay so the two never drift apart. The Home page is untouched.
+// `gestureProps` carries the feed's stopControlGestures helpers when the bar
+// is drawn over a video (mobile); on desktop it can stay empty.
+const ReelFeedTabs = memo(function ReelFeedTabs({ activeTab, T, onSelect, gestureProps }) {
+  const tabs = [
+    { id: 'reels', label: 'For You' },
+    { id: 'following', label: 'Following' },
+  ];
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
+      {tabs.map((tab) => {
+        const isActive = String(activeTab) === tab.id;
+        return (
+          <button
+            key={tab.id}
+            data-control
+            {...gestureProps}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect?.(tab.id);
+            }}
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: '8px 0 6px',
+              cursor: 'pointer',
+              pointerEvents: 'all',
+              fontSize: 16,
+              fontWeight: 700,
+              color: isActive ? '#fff' : (T?.sub || '#999'),
+              borderBottom: isActive ? '2px solid #fff' : '2px solid transparent',
+              transition: 'color 0.15s ease, border-color 0.15s ease',
+              WebkitTapHighlightColor: 'transparent',
+            }}
+          >
+            {tab.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+});
+
 export const ReelLayout = memo(function ReelLayout({
   user,
   activeTab: propActiveTab,
@@ -1102,6 +1148,15 @@ export const ReelLayout = memo(function ReelLayout({
   // first tap computed next=false and then set `muted = !next` — i.e. true —
   // muting the video it was meant to unmute, with no way back.
   const toggleAudio = () => setAudioEnabled((v) => !v);
+
+  // The Reels top tabs ("For You"/"Following") switch the feed and snap back
+  // to the first reel, so a deep scroll on one tab never bleeds into another.
+  const switchFeedTab = (value) => {
+    if (String(value) === String(activeTab)) return;
+    setActiveTab(value);
+    const container = feedContainerRef.current || document.querySelector('.video-feed-container');
+    container?.scrollTo?.({ top: 0, behavior: 'auto' });
+  };
 
   useEffect(() => {
     Object.entries(videoRefs.current).forEach(([id, el]) => {
@@ -2104,19 +2159,21 @@ export const ReelLayout = memo(function ReelLayout({
             alignItems: 'center',
           }}
         >
-          <div
-            style={{
-              fontSize: 24,
-              fontWeight: 700,
-              color: '#000',
-            }}
-          >
-            {activeTab === 'home' && 'Home'}
-            {activeTab === 'reels' && 'Reels'}
-            {activeTab === 'following' && 'Following'}
-            {activeTab === 'inbox' && 'Messages'}
-            {activeTab === 'bookmarks' && 'Saved'}
-          </div>
+          {activeTab === 'reels' || activeTab === 'following' ? (
+            <ReelFeedTabs activeTab={activeTab} T={T} onSelect={switchFeedTab} />
+          ) : (
+            <div
+              style={{
+                fontSize: 24,
+                fontWeight: 700,
+                color: '#000',
+              }}
+            >
+              {activeTab === 'home' && 'Home'}
+              {activeTab === 'inbox' && 'Messages'}
+              {activeTab === 'bookmarks' && 'Saved'}
+            </div>
+          )}
 
           {/* Search Bar - Only on Explore Tab */}
           {activeTab === 'explore' && (
@@ -2297,7 +2354,7 @@ export const ReelLayout = memo(function ReelLayout({
                     flexShrink: isMobile ? 0 : undefined,
                   }}
                 >
-                  {/* Mobile top overlay: Bell (left) + MoreVertical (right) */}
+                  {/* Mobile top overlay: For You/Following tabs + Bell + More */}
                   {isMobile && (
                     <div
                       style={{
@@ -2315,6 +2372,13 @@ export const ReelLayout = memo(function ReelLayout({
                         pointerEvents: 'none',
                       }}
                     >
+                      <ReelFeedTabs
+                        activeTab={activeTab}
+                        T={T}
+                        onSelect={switchFeedTab}
+                        gestureProps={stopControlGestures}
+                      />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                       <button
                         data-control
                         aria-label="Notifications"
@@ -2492,6 +2556,7 @@ export const ReelLayout = memo(function ReelLayout({
                             </div>
                           </>
                         )}
+                      </div>
                       </div>
                     </div>
                   )}
