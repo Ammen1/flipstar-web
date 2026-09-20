@@ -6,6 +6,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { ProcessedImage, ProcessedVideo } from '../../components/feed/ProcessedMedia';
 import { MediaProcessingState } from '../../components/common/MediaProcessingState';
 import { isMediaReady, isVideoPost } from '../../utils/media';
+import { formatCampaignDate } from '../../utils/campaignDates';
 import { newUploadId } from '../../utils/uploadId';
 import { usePostProcessing } from '../../hooks/usePostProcessing';
 import { uploadTracker } from '../../services/uploadTracker';
@@ -32,6 +33,10 @@ export function CampaignDetailPage({ campaignId, onBack, onShowLeaderboard, onSh
   const [userEntry, setUserEntry] = useState(null);
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth <= 768);
   const [openSections, setOpenSections] = useState({ desc: true, reqs: false, timeline: false, scoring: false });
+  const [userLevel, setUserLevel] = useState(1);
+  const [userXp, setUserXp] = useState(0);
+  const [userXpForNextLevel, setUserXpForNextLevel] = useState(0);
+  const [isEligible, setIsEligible] = useState(true);
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth <= 768);
@@ -51,6 +56,15 @@ export function CampaignDetailPage({ campaignId, onBack, onShowLeaderboard, onSh
       const data = await api.request(`/campaigns/${campaignId}/`);
       setCampaign(data);
       setEntries(data.entries || []);
+      // Set user level and XP from API
+      if (data.user_level !== undefined) {
+        setUserLevel(data.user_level);
+        setUserXp(data.user_xp);
+        setUserXpForNextLevel(data.user_xp_for_next_level);
+      }
+      if (data.is_eligible !== undefined) {
+        setIsEligible(data.is_eligible);
+      }
       // Check if user has already entered
       const userHasEntered = data.entries?.some(entry => entry.user?.id === data.current_user_id);
       setUserEntry(userHasEntered ? data.entries.find(entry => entry.user?.id === data.current_user_id) : null);
@@ -61,18 +75,11 @@ export function CampaignDetailPage({ campaignId, onBack, onShowLeaderboard, onSh
     }
   };
 
-  const formatDate = (dateString) => {
-    if (!dateString) return 'N/A';
-    const date = new Date(dateString);
-    
-    // Validate date
-    if (isNaN(date.getTime())) {
-      console.warn('Invalid date:', dateString);
-      return 'N/A';
-    }
-    
-    return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-  };
+  // Stated in the campaign's own timezone, with the time. Formatting in the
+  // viewer's timezone made the same deadline read as a different day
+  // depending on the device, and dropping the time made 23:59 and 00:00
+  // indistinguishable. See utils/campaignDates.js.
+  const formatDate = (dateString) => formatCampaignDate(dateString);
 
   const getTimeRemaining = (endDate) => {
     if (!endDate) return 'N/A';
@@ -234,6 +241,22 @@ export function CampaignDetailPage({ campaignId, onBack, onShowLeaderboard, onSh
 
   const CTAButton = () => {
     if (canSubmit()) {
+      if (!isEligible) {
+        return (
+          <div style={{
+            width: '100%', padding: '12px 16px',
+            background: 'rgba(239,68,68,0.1)',
+            border: `1.5px solid #EF4444`,
+            borderRadius: 12,
+            color: '#EF4444',
+            fontSize: 14, fontWeight: 700,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+          }}>
+            <AlertCircle size={16} strokeWidth={3} />
+            You don't meet the requirements to join this campaign
+          </div>
+        );
+      }
       return (
         <button
           onClick={() => {
@@ -597,9 +620,30 @@ export function CampaignDetailPage({ campaignId, onBack, onShowLeaderboard, onSh
                   </div>
                 )}
                 {campaign.min_level > 0 && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: T.bg, borderRadius: 8 }}>
-                    <span style={{ fontSize: 11, color: T.sub, fontWeight: 600, minWidth: 110 }}>Min level</span>
-                    <span style={{ fontSize: 13, fontWeight: 800, color: '#F97316' }}>Level {campaign.min_level}</span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', background: T.bg, borderRadius: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: 11, color: T.sub, fontWeight: 600, minWidth: 110 }}>Min level</span>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: '#F97316' }}>Level {campaign.min_level}</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingLeft: '120px', flexWrap: 'wrap', gap: 8 }}>
+                      <span style={{ fontSize: 11, color: T.sub, fontWeight: 600, minWidth: 110 }}>Your level</span>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: userLevel >= campaign.min_level ? '#10B981' : '#EF4444' }}>
+                        Level {userLevel} ({userXp} XP)
+                      </span>
+                      {userLevel < campaign.min_level && (
+                        <span style={{ fontSize: 11, color: '#EF4444', fontWeight: 600 }}>
+                          Need {campaign.min_level - userLevel} more level{campaign.min_level - userLevel > 1 ? 's' : ''} ({(campaign.min_level - userLevel) * 1000 - userXp} XP)
+                        </span>
+                      )}
+                      {userLevel >= campaign.min_level && (
+                        <span style={{ fontSize: 11, color: '#10B981', fontWeight: 600 }}>
+                          ✓ Eligible
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 10, color: T.sub, paddingLeft: '120px', lineHeight: 1.5 }}>
+                      Levels are based on XP: Level = (XP ÷ 1,000) + 1. Earn XP by posting, engaging, and daily check-ins.
+                    </div>
                   </div>
                 )}
                 {campaign.min_votes_per_reel > 0 && (
@@ -722,6 +766,7 @@ export function CampaignDetailPage({ campaignId, onBack, onShowLeaderboard, onSh
             theme={T}
             campaign={campaign}
             campaignId={campaignId}
+            userLevel={userLevel}
             onClose={() => setShowSubmitModal(false)}
             onSuccess={() => {
               setShowSubmitModal(false);
@@ -901,7 +946,7 @@ function CampaignEntryCard({ entry, theme: T }) {
   );
 }
 
-function SubmitEntryModal({ theme: T, campaign, campaignId, onClose, onSuccess }) {
+function SubmitEntryModal({ theme: T, campaign, campaignId, userLevel = 0, onClose, onSuccess }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [newReelFile, setNewReelFile] = useState(null);
@@ -1276,6 +1321,9 @@ function SubmitEntryModal({ theme: T, campaign, campaignId, onClose, onSuccess }
                   {campaign.min_level > 0 && (
                     <div style={{ marginBottom: 8 }}>
                       <strong style={{ color: T.txt }}>Min Level:</strong> {campaign.min_level}
+                      <div style={{ fontSize: 11, color: T.sub, marginTop: 2 }}>
+                        Your level: {userLevel} (need {Math.max(0, campaign.min_level - userLevel)} more level{campaign.min_level - userLevel > 1 ? 's' : ''})
+                      </div>
                     </div>
                   )}
                   {campaign.min_votes_per_reel > 0 && (

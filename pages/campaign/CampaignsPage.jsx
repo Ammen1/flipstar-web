@@ -466,32 +466,47 @@ export function CampaignsPage({ onCampaignClick, onBack }) {
                         </div>
                       </div>
 
-                      {/* Stats row */}
-                      <div style={{
-                        display: 'flex',
-                        gap: 8,
-                        marginBottom: 12,
-                      }}>
-                        <div style={{ flex: 1, textAlign: 'center', padding: '6px 4px', background: T.bg, borderRadius: 8 }}>
-                          <div style={{ fontSize: 14, fontWeight: 800, color: T.txt }}>
-                            {campaign.total_entries === 0 ? 1 : campaign.total_entries}
-                          </div>
-                          <div style={{ fontSize: 9, color: T.sub, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-                            Entries
-                          </div>
-                        </div>
-                        <div style={{ flex: 1, textAlign: 'center', padding: '6px 4px', background: T.bg, borderRadius: 8 }}>
-                          <div style={{ fontSize: 14, fontWeight: 800, color: T.txt }}>
-                            {campaign.total_votes === 0 ? 1 : campaign.total_votes}
-                          </div>
-                          <div style={{ fontSize: 9, color: T.sub, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-                            Votes
-                          </div>
-                        </div>
-                      </div>
+{/* Stats row */}
+                       <div style={{
+                         display: 'flex',
+                         gap: 8,
+                         marginBottom: 12,
+                       }}>
+                         <div style={{ flex: 1, textAlign: 'center', padding: '6px 4px', background: T.bg, borderRadius: 8 }}>
+                           <div style={{ fontSize: 14, fontWeight: 800, color: T.txt }}>
+                             {campaign.total_entries === 0 ? 1 : campaign.total_entries}
+                           </div>
+                           <div style={{ fontSize: 9, color: T.sub, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                             Entries
+                           </div>
+                         </div>
+                         <div style={{ flex: 1, textAlign: 'center', padding: '6px 4px', background: T.bg, borderRadius: 8 }}>
+                           <div style={{ fontSize: 14, fontWeight: 800, color: T.txt }}>
+                             {campaign.total_votes === 0 ? 1 : campaign.total_votes}
+                           </div>
+                           <div style={{ fontSize: 9, color: T.sub, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                             Votes
+                           </div>
+                         </div>
+                       </div>
 
-                      {/* CTA */}
-                      <button
+                       {/* Eligibility indicator */}
+                       {campaign.min_level > 1 && (
+                         <div style={{
+                           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                           padding: '6px 8px', borderRadius: 8,
+                           background: campaign.user_level >= campaign.min_level ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.1)',
+                           border: `1px solid ${campaign.user_level >= campaign.min_level ? '#10B981' : '#EF4444'}`,
+                           marginBottom: 10,
+                         }}>
+                           <span style={{ fontSize: 10, fontWeight: 700, color: campaign.user_level >= campaign.min_level ? '#10B981' : '#EF4444' }}>
+                             {campaign.user_level >= campaign.min_level ? '✓ Eligible' : `Level ${campaign.user_level} / ${campaign.min_level} required`}
+                           </span>
+                         </div>
+                       )}
+
+                       {/* CTA */}
+                       <button
                         className="camp-cta"
                         style={{
                           width: '100%', padding: '10px',
