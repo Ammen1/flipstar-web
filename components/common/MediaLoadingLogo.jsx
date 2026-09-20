@@ -32,6 +32,7 @@ export function MediaLoadingLogo({ background = 'linear-gradient(135deg, #1a1a1a
       }}
     >
       <img
+        data-media-placeholder
         src={flipstarLogo}
         alt=""
         style={{

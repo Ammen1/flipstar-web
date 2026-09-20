@@ -28,7 +28,7 @@ import { build } from 'esbuild';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const TIMEOUT_MS = Number(process.env.BROWSER_TEST_TIMEOUT_MS || 240000);
-const SUITES = ['camera', 'explorer', 'media', 'reels', 'subscription', 'coins', 'faq', 'streak'];
+const SUITES = ['camera', 'explorer', 'media', 'reels', 'subscription', 'coins', 'faq', 'streak', 'feed'];
 
 // ── Real input ──────────────────────────────────────────────────────────────
 // A harness that needs a genuine tap, click or swipe -- hit-tested by the
@@ -355,10 +355,14 @@ function newMediaState() {
   // signing: how feed responses sign media -- 'none' (public objects, the
   // default), 'fresh', or 'stale' (issued two hours ago: already expired).
   // deleted: /media/ paths storage has lost (404 NoSuchKey).
+  // stalled: /media/ paths that never answer -- a request left hanging, which
+  //   is what a slow connection looks like to the page: no load event, no
+  //   error event, no intrinsic size. A 404 is a different case and is
+  //   already covered by `deleted`.
   // statuses: every /media/ answer, {path, status}.
   return {
     files: new Map(), requests: [], processing, apiLog: [],
-    signing: 'none', deleted: new Set(), statuses: [],
+    signing: 'none', deleted: new Set(), stalled: new Set(), statuses: [],
     liked: new Set(), saved: new Set(),
     // comments: per reel, newest first, as the API returns them.
     comments: new Map(), nextCommentId: 9001,
@@ -618,6 +622,12 @@ async function main() {
         res.end('<?xml version="1.0" encoding="UTF-8"?><Error><Code>AccessDenied</Code><Message>Request has expired</Message></Error>');
         return undefined;
       }
+      // Held open deliberately: the socket stays live and nothing is written,
+      // so the page sits in exactly the state a slow network leaves it in.
+      if (state && state.media.stalled.has(url.pathname)) {
+        answered('stalled');
+        return undefined;
+      }
       if (state && state.media.deleted.has(url.pathname)) {
         answered(404);
         res.writeHead(404, { 'Content-Type': 'application/xml' });
@@ -673,8 +683,11 @@ async function main() {
       // ?sign=none|fresh|stale  ?lose=/media/a.webm,/media/b.webm  ?restore=1
       if (url.searchParams.has('sign')) state.media.signing = url.searchParams.get('sign');
       (url.searchParams.get('lose') || '').split(',').filter(Boolean).forEach((p) => state.media.deleted.add(p));
+      // ?stall=/media/a.png,/media/b.webm -- requests that never answer.
+      (url.searchParams.get('stall') || '').split(',').filter(Boolean).forEach((p) => state.media.stalled.add(p));
       if (url.searchParams.get('restore') === '1') {
         state.media.deleted.clear();
+        state.media.stalled.clear();
         state.media.signing = 'none';
       }
       if (url.searchParams.get('unlike') === '1') {
@@ -810,7 +823,7 @@ async function main() {
         });
       }
     }
-    if (suite === 'media' || suite === 'reels' || suite === 'subscription') {
+    if (suite === 'media' || suite === 'reels' || suite === 'subscription' || suite === 'feed') {
       const answer = mediaApi(state.media, route, url, origin, body);
       if (answer) return json(answer[0], answer[1]);
     }

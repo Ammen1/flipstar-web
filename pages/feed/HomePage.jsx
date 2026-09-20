@@ -17,11 +17,12 @@ import { PostCaptionOverlay, captionOf } from '../../components/feed/PostCaption
 import { DesktopReelViewer } from '../../components/feed/DesktopReelViewer';
 import { dedupeById } from '../../utils/collections';
 import { MediaLoadingLogo } from '../../components/common/MediaLoadingLogo';
+import { MediaProcessingState } from '../../components/common/MediaProcessingState';
 import { canEngage } from '../../utils/engagementGate';
 import { likeCountOf, commentCountOf, shareCountOf } from '../../utils/engagement';
 import { getCampaignId, isCampaignPost as postIsCampaign, getCampaignTitle } from '../../utils/campaign';
 import { ModernCommentSection } from '../../components/messaging/ModernCommentSection';
-import { isVideoUrl, isVideoPost, isMediaReady } from '../../utils/media';
+import { isVideoUrl, isVideoPost, isMediaReady, holdsMediaFrame, MEDIA_FRAME_MIN_HEIGHT } from '../../utils/media';
 import { connectionTier, videoPreload, pickVideoSource, pickImageSource, pickImageWebp } from '../../utils/connection';
 import { useFreshMedia, useSteadySrc } from '../../hooks/useFreshMedia';
 import { cacheStillLoadable } from '../../utils/signedUrl';
@@ -919,7 +920,7 @@ const PostOptionsMenu = memo(function PostOptionsMenu({ post, currentUser, onClo
 });
 
 /* ── Post Card ── */
-const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowProfile, onRequireAuth, onNavigateToReel, onCommentAdded, onVoteAdded, onShowVideoDetail, onHashtagClick, videoObserver, onShowWallet, onShowCoinPurchase, onFollow, isFollowing, joinedCampaignIds, subscriptionStatus, onShowSubscription, onShowCampaignDetail, onShowCampaigns }) {
+export const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowProfile, onRequireAuth, onNavigateToReel, onCommentAdded, onVoteAdded, onShowVideoDetail, onHashtagClick, videoObserver, onShowWallet, onShowCoinPurchase, onFollow, isFollowing, joinedCampaignIds, subscriptionStatus, onShowSubscription, onShowCampaignDetail, onShowCampaigns }) {
   // Seed from post + any persisted local state so the heart stays filled
   // even when the cached feed's `is_liked` is stale.
   const [liked, setLiked] = useState(() => post.is_liked || readIdSet(LIKES_KEY).has(post.id));
@@ -944,6 +945,11 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
   // True once the video has decoded a frame, so the placeholder below can get
   // out of the way instead of covering the picture for the whole playback.
   const [videoReady, setVideoReady] = useState(false);
+  // True once the cheap preview has arrived. For a photo that is the blurred
+  // thumbnail; for a video it is the poster, which the <video> paints itself
+  // even with preload="none" -- so it is what ends the wait on a clip nobody
+  // has pressed play on.
+  const [previewReady, setPreviewReady] = useState(false);
   const [inlineComments, setInlineComments] = useState(post.recent_comments || []);
   const [commentCount, setCommentCount] = useState(commentCountOf(post));
   const [showAllInline, setShowAllInline] = useState(false);
@@ -1171,6 +1177,37 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
   const previewSrc = live.thumbnail
     ? mediaUrl(live.thumbnail)
     : (live.image ? mediaUrl(live.image) : null);
+
+  // Watch the preview arrive. A <video>'s poster has no load event of its own
+  // and a photo's thumbnail may be swapped out before it paints, so this is
+  // the one signal both branches can use. The fetch is the same URL the
+  // element itself asks for, so the browser serves it from cache rather than
+  // downloading it twice.
+  useEffect(() => {
+    setPreviewReady(false);
+    if (!previewSrc) return undefined;
+    let alive = true;
+    const probe = new Image();
+    probe.onload = () => { if (alive) setPreviewReady(true); };
+    probe.src = previewSrc;
+    return () => { alive = false; probe.onload = null; };
+  }, [previewSrc]);
+
+  // Whether the frame has to hold its own height, and what stands in it.
+  //
+  // The bug: an <img> with no intrinsic size computes to zero height, so a
+  // card whose picture had not arrived was an avatar, a name and a caption
+  // with nothing between them. The frame now keeps a floor until something is
+  // genuinely on screen, and gives it up afterwards so the media keeps its
+  // natural shape.
+  const mediaReady = isMediaReady(live);
+  const mediaPainted = isVideo ? (videoReady || previewReady) : (fullImageReady || previewReady);
+  const holdFrame = holdsMediaFrame({
+    ready: mediaReady,
+    source: mediaSrc,
+    failed: imgError,
+    painted: mediaPainted,
+  });
   // Same caption/description resolution the overlay uses, so the two agree on
   // whether there is anything to show.
   const hasCaption = Boolean(captionOf(post));
@@ -1721,14 +1758,23 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
 
         {/* Media — natural aspect ratio, never cropped */}
         <div
+          data-media-frame
           style={{
             position: 'relative',
             width: '100%',
             background: 'transparent',
             cursor: isVideo ? 'pointer' : 'default',
+            // Given up the moment real media is on screen, so nothing is
+            // letterboxed into a height it did not ask for.
+            ...(holdFrame ? { minHeight: MEDIA_FRAME_MIN_HEIGHT } : null),
           }}
         >
-          {mediaSrc && !imgError ? (
+          {!mediaReady ? (
+            /* Still encoding, or it failed. Every other surface already says
+               so -- the feed was alone in showing "No media" for a post that
+               was simply not finished yet. */
+            <MediaProcessingState post={live} />
+          ) : mediaSrc && !imgError ? (
             isVideo ? (
               <>
                 <video
@@ -1745,15 +1791,6 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
                   onLoadedData={() => setVideoReady(true)}
                   onError={onMediaError}
                 />
-                {/* Placeholder for videos with no poster. It is opaque and
-                    covers the whole frame, so it must be removed as soon as
-                    the video has a frame to show — otherwise the clip plays
-                    underneath it and you get sound with no picture. */}
-                {!live.image && !videoReady && (
-                  <div style={{ position: 'absolute', inset: 0, zIndex: 1 }}>
-                    <MediaLoadingLogo />
-                  </div>
-                )}
                 {/* Clickable overlay to navigate to Reels */}
                 <div
                   onClick={handleVideoClick}
@@ -1815,8 +1852,20 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
               </div>
             )
           ) : (
-            <div data-media-unavailable={imgError || undefined} style={{ width: '100%', height: 260, background: T?.cardBg || '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T?.sub || '#666', fontSize: 14 }}>
+            <div data-media-unavailable={imgError || undefined} style={{ width: '100%', height: MEDIA_FRAME_MIN_HEIGHT, background: T?.cardBg || '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T?.sub || '#666', fontSize: 14 }}>
               {imgError ? (isVideo ? 'Video unavailable' : 'Photo unavailable') : 'No media'}
+            </div>
+          )}
+
+          {/* What fills the held frame until the picture is there. Opaque and
+              covering, so it comes off the moment anything is painted --
+              otherwise a clip plays underneath it and you get sound with no
+              picture. It used to be checked against `live.image`, which is
+              null for every processed video, so it covered posters that had
+              loaded perfectly well. */}
+          {mediaReady && mediaSrc && !imgError && !mediaPainted && (
+            <div style={{ position: 'absolute', inset: 0, zIndex: 1 }}>
+              <MediaLoadingLogo />
             </div>
           )}
 

@@ -102,3 +102,34 @@ const FAILURE_TEXT = {
 export function failureText(post) {
   return FAILURE_TEXT[post?.processing_error] || 'Please try posting it again.';
 }
+
+/**
+ * How much room a post's media keeps while there is nothing to draw in it.
+ *
+ * Matches the "unavailable" and "no media" boxes, so every state where the
+ * picture is absent is the same size and the card does not resize as it moves
+ * between them.
+ */
+export const MEDIA_FRAME_MIN_HEIGHT = 260;
+
+/**
+ * Whether the media frame has to hold its own height.
+ *
+ * An <img> that has not loaded has no intrinsic size, so `width: 100%;
+ * height: auto` computes to *zero* -- which is how a Home card came to show
+ * nothing but the author's avatar and name with a caption underneath. The
+ * reported bug was not a failure to load; it was the card collapsing while it
+ * loaded, and again whenever the picture never came.
+ *
+ * Held for the whole time nothing is painted, and only released once real
+ * media is on screen, so the frame then takes the media's natural shape
+ * rather than a guessed one -- the feed does not know the dimensions (the API
+ * sends none), and reserving an invented aspect ratio would crop or letterbox
+ * every post that did not match it.
+ */
+export function holdsMediaFrame({ ready = true, source = '', failed = false, painted = false } = {}) {
+  // Nothing is ever going to paint here: processing, failed, lost, or absent.
+  if (!ready || failed || !source) return true;
+  // Something will, but has not yet.
+  return !painted;
+}

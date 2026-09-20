@@ -1488,7 +1488,7 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess, onLogin, variant
         </div>
 
 
-        {/* telebirr Receipt Modal — shown when user clicks "Subscribe via telebirr" */}
+        {/* telebirr Receipt Modal — shown when user clicks "Pay via Telebirr" */}
         {telebirrModalOpen && selectedTierForTelebirr && (
           <div
             role="dialog"
@@ -2232,7 +2232,7 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess, onLogin, variant
                 }}
               >
                 <Trophy size={18} color="#0B1207" />
-                Subscribe via telebirr
+                Pay via Telebirr
               </button>
 
               {!telebirrH5.isInSuperApp() && (
@@ -2259,9 +2259,9 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess, onLogin, variant
                     WebkitTapHighlightColor: 'transparent',
                   }}
                 >
-                  <MessageCircle size={18} color={BRAND_GREEN} />
-                  Subscribe via SMS
-                </button>
+<MessageCircle size={18} color={BRAND_GREEN} />
+                Pay via SMS
+              </button>
               )}
             </div>
           </div>

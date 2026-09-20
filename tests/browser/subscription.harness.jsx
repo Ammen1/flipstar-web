@@ -250,6 +250,70 @@ async function run() {
     return 'Daily, Weekly, Monthly';
   });
 
+  // ── the access purchase button says how you pay, not that you subscribe ──
+
+  const methodModal = () =>
+    Array.from(document.querySelectorAll('[role="dialog"]')).find(
+      (d) => d.querySelector('#sub-method-title'),
+    );
+
+  async function tapPlanCard(name) {
+    const label = await waitFor(
+      () => {
+        const box = sheet()?.querySelector('[data-flipstar-sub-card]');
+        if (!box) return null;
+        return Array.from(box.querySelectorAll('div')).find(
+          (d) => (d.innerText || '').replace(/\s+/g, ' ').trim() === name,
+        );
+      },
+      `the ${name} plan card`,
+      6000,
+    );
+    label.scrollIntoView({ block: 'center' });
+    await sleep(200);
+    await tap(label);
+  }
+
+  await test('the access purchase button says "Pay via Telebirr"', async () => {
+    await openReels();
+    await tap(await waitFor(() => railButton('comment'), 'the comment button', 15000));
+    await waitFor(sheet, 'the plans sheet', 6000);
+    await sleep(600);
+
+    await tapPlanCard('Daily');
+    const modal = await waitFor(methodModal, 'the payment-method modal', 6000);
+    await sleep(300);
+
+    const buttons = Array.from(modal.querySelectorAll('button'));
+    const telebirr = buttons.find((b) => /telebirr/i.test(b.textContent || ''));
+    assert(telebirr, `no Telebirr payment button; modal: "${(modal.innerText || '').replace(/\s+/g, ' ').slice(0, 160)}"`);
+    assert(
+      /^Pay via Telebirr$/i.test((telebirr.textContent || '').trim()),
+      `the Telebirr access button says "${telebirr.textContent.trim()}" instead of "Pay via Telebirr"`,
+    );
+    assert(
+      !/Subscribe via/i.test(modal.innerText || ''),
+      'the purchase modal still calls the payment "Subscribe via …"',
+    );
+    return 'Pay via Telebirr, not Subscribe via telebirr';
+  });
+
+  await test('the purchase modal has no mislabelled Telebirr button anywhere', async () => {
+    await openReels();
+    await tap(await waitFor(() => railButton('comment'), 'the comment button', 15000));
+    await waitFor(sheet, 'the plans sheet', 6000);
+    await sleep(600);
+
+    await tapPlanCard('Weekly');
+    const modal = await waitFor(methodModal, 'the payment-method modal', 6000);
+    await sleep(300);
+
+    const text = (modal.innerText || '').replace(/\s+/g, ' ');
+    assert(!/Subscribe via Telebirr/i.test(text), 'a "Subscribe via Telebirr" label is still shown');
+    assert(/Pay via Telebirr/i.test(text), `no "Pay via Telebirr" in: "${text.slice(0, 160)}"`);
+    return 'access purchase modal paid for, not subscribed to';
+  });
+
   // ── a way back in for somebody who already pays ──────────────────────────
 
   const loginButton = () =>
