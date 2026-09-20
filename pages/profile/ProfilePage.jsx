@@ -96,6 +96,11 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
   // /subscription/status/ was down.
   const [hasActiveSubscription, setHasActiveSubscription] = useState(null);
   const [subscriptionError, setSubscriptionError] = useState(null);
+  // The coin reward the backend grants per completed charge on this user's
+  // active plan (SubscriptionTier.charge_gift_coins). Sourced from the
+  // endpoint, never hardcoded, so what the streak panel says always matches
+  // the reward the ledger actually credits.
+  const [chargeGiftCoins, setChargeGiftCoins] = useState(null);
   const targetUserId = userId || user?.id;
   const [mounted, setMounted] = useState(false); // Prevent flash on initial load
 
@@ -114,6 +119,12 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
           const response = await api.request('/subscription/status/');
           setHasActiveSubscription(Boolean(response?.has_subscription));
           setSubscriptionError(null);
+          // The actual reward behind the "Daily Streak" panel: coins credited
+          // per completed charge on the active tier. 0 (or absent) means the
+          // plan the user is on grants no coins, which the panel must say
+          // plainly instead of inventing a figure.
+          const gift = response?.subscription?.tier?.charge_gift_coins;
+          setChargeGiftCoins(typeof gift === 'number' ? gift : 0);
         } catch (error) {
           // Leave the answer unknown and say so, rather than silently
           // downgrading a server fault into "not subscribed".
@@ -1739,10 +1750,48 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
                   })()}
                 </div>
 
-                <div style={{ textAlign: 'center', padding: '14px 16px', background: '#ECFDF5', borderRadius: 14, color: '#065F46', fontWeight: 600, fontSize: 13, lineHeight: 1.45 }}>
-                  Your coins now arrive with your subscription — every time your
-                  plan is charged, the gift is added to your balance. There is
-                  nothing to claim.
+                {/* ── Reward ─────────────────────────────────────────────── */}
+                {/* What the customer actually receives. Nothing is invented
+                    here: the streak itself stopped paying coins when the
+                    login bonus ended (the API reports bonus_available: false
+                    and the claim endpoint refuses), so the panel says so and
+                    points at the reward the backend really grants -- the
+                    per-charge gift on the active plan
+                    (api/services/subscription_gift.py). The amount shown is
+                    the tier's charge_gift_coins from /subscription/status/,
+                    so what is displayed always matches the ledger. */}
+                <div style={{ textAlign: 'left', padding: '14px 16px', background: '#ECFDF5', borderRadius: 14, color: '#065F46', fontSize: 13, lineHeight: 1.5 }}>
+                  <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 4 }}>
+                    Your reward
+                  </div>
+                  {streakData.login_streak.bonus_available ? (
+                    <div>
+                      Keep opening the app every day to keep your streak and
+                      claim your daily reward.
+                    </div>
+                  ) : hasActiveSubscription && chargeGiftCoins > 0 ? (
+                    <div>
+                      This streak no longer pays coins — the daily login bonus
+                      has ended. Your coins now come with your subscription:
+                      every time your plan is charged,{' '}
+                      <span style={{ fontWeight: 800 }}>{chargeGiftCoins} coins</span>{' '}
+                      are added to your balance automatically. There is nothing
+                      to claim.
+                    </div>
+                  ) : hasActiveSubscription ? (
+                    <div>
+                      This streak no longer pays coins — the daily login bonus
+                      has ended, and your current plan credits no coins per
+                      charge. Coins can be topped up from your wallet.
+                    </div>
+                  ) : (
+                    <div>
+                      This streak no longer pays coins — the daily login bonus
+                      has ended. Coins now come with a subscription: every time
+                      your plan is charged, its gift is added to your balance
+                      automatically. There is nothing to claim.
+                    </div>
+                  )}
                 </div>
               </>
             ) : (

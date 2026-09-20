@@ -252,6 +252,13 @@ export function SubscriptionRegisterModal({
       window.history.replaceState({}, '', window.location.pathname);
     } catch (e) {
       console.error('[SUBSCRIPTION REGISTRATION JOURNEY] Registration failed:', e);
+      // Matched on the code, not the prose: the message can be reworded or
+      // translated without this branch silently ceasing to fire. The default
+      // below would otherwise blame the OTP for a username collision.
+      if (e?.data?.code === 'USERNAME_TAKEN') {
+        setError(e.data.error || 'That username is already in use. Please choose another username.');
+        return;
+      }
       setError(extractErrorMessage(e, 'Registration failed. Check your OTP and try again.'));
     } finally {
       setLoading(false);

@@ -28,7 +28,7 @@ import { build } from 'esbuild';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const TIMEOUT_MS = Number(process.env.BROWSER_TEST_TIMEOUT_MS || 240000);
-const SUITES = ['camera', 'explorer', 'media', 'reels', 'subscription', 'coins'];
+const SUITES = ['camera', 'explorer', 'media', 'reels', 'subscription', 'coins', 'faq', 'streak'];
 
 // ── Real input ──────────────────────────────────────────────────────────────
 // A harness that needs a genuine tap, click or swipe -- hit-tested by the
@@ -711,6 +711,13 @@ async function main() {
       state.failUpload = url.searchParams.get('failUpload') === '1';
       return json(200, {});
     }
+    if (url.pathname === '/__streak/gift') {
+      // What the profile's streak panel should show as the per-charge reward:
+      // served from the subscription-status stub the way the backend serves
+      // the tier's charge_gift_coins.
+      state.streakGift = Number(url.searchParams.get('value')) || 0;
+      return json(200, {});
+    }
     if (url.pathname === '/__uploads') return json(200, state.uploads);
     if (url.pathname === '/__explorer/requests') {
       const list = state.explore.requests.slice();
@@ -807,6 +814,43 @@ async function main() {
       const answer = mediaApi(state.media, route, url, origin, body);
       if (answer) return json(answer[0], answer[1]);
     }
+    if (suite === 'streak') {
+      // The profile's streak panel and its two data sources, matching the
+      // backend contracts: /gamification/status/ serves the frozen streak
+      // with bonus_available: false, and /subscription/status/ serves the
+      // per-charge gift of the active plan (charge_gift_coins), which the
+      // harness changes through /__streak/gift.
+      if (route === '/gamification/status/') {
+        return json(200, {
+          coins: { balance: 100, earned_total: 100, spent_total: 0 },
+          login_streak: {
+            current: 5,
+            longest: 12,
+            last_login: new Date().toISOString().slice(0, 10),
+            bonus_available: false,
+            next_bonus: null,
+          },
+          gifts: { sent_today: 0, received_today: 0, sent_total: 0, received_total: 0 },
+          points: { balance: 0, earned_total: 0, withdrawn_total: 0 },
+        });
+      }
+      if (route === '/subscription/status/') {
+        const gift = state.streakGift ?? 3;
+        return json(200, {
+          has_subscription: true,
+          status: 'ACTIVE',
+          subscription: {
+            id: 'streak-plan',
+            tier: { id: 'streak-tier', name: 'Flip Daily', duration_type: 'daily', price_etb: 3, charge_gift_coins: gift },
+            status: 'active',
+            start_date: new Date().toISOString(),
+            end_date: new Date(Date.now() + 24 * 3600e3).toISOString(),
+            auto_renew: true,
+          },
+        });
+      }
+      if (route === '/profile/me/') return json(200, { user: { id: 1, username: 'e2e_author' } });
+    }
     if (route === '/posts/processing/') {
       // Posts made in this run are processing, as far as this stub knows.
       const ids = (url.searchParams.get('ids') || '').split(',').filter(Boolean).map(Number);
@@ -877,6 +921,7 @@ async function main() {
       failUpload: false,
       explore: newExploreState(),
       media: newMediaState(),
+      streakGift: 3,
     };
     const script = await bundle(name, `${origin}/api/v1`);
     html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name} e2e</title></head><body style="margin:0"><div id="root"></div><script>${script.replace(/<\/script>/gi, '<\\/script>')}</script></body></html>`;

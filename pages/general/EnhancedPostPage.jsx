@@ -13,6 +13,7 @@ import config from '../../config';
 import { useTheme } from '../../contexts/ThemeContext';
 import realtimeService from '../../services/RealtimeService';
 import { InsufficientCoinsModal } from '../../components/common/InsufficientCoinsModal';
+import { MediaLoadingLogo } from '../../components/common/MediaLoadingLogo';
 import { VIDEO_FILTERS, getFilter, isNeutralFilter, resolveFilterId } from '../../components/camera/filters/registry';
 import { availableFilters, createFilterRenderer } from '../../components/camera/filters/createRenderer';
 import { filterReducer, initialFilterState } from '../../components/camera/filters/selection';
@@ -3384,9 +3385,7 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
                   style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', background: '#000', display: 'block' }} />
             )}
             {!preview && (
-              <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(135deg,#1a1a1a,#2a2a2a)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 48 }}>🎬</span>
-              </div>
+              <MediaLoadingLogo background="linear-gradient(135deg,#1a1a1a,#2a2a2a)" />
             )}
 
             {/* 2 ── Text overlays */}

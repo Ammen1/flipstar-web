@@ -16,6 +16,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import config from '../../config';
 import telebirrH5 from '../../services/TelebirrH5Service';
+import { badgeLabel } from '../../utils/unreadCounts';
 
 export function AppShell({
   user,
@@ -302,7 +303,7 @@ export function AppShell({
                           lineHeight: 1,
                         }}
                       >
-                        {badgeCount > 99 ? '99+' : badgeCount}
+                        {badgeLabel(badgeCount)}
                       </div>
                     )}
                   </div>
@@ -603,7 +604,7 @@ export function AppShell({
                           lineHeight: 1,
                         }}
                       >
-                        {badgeCount > 99 ? '99+' : badgeCount}
+                        {badgeLabel(badgeCount)}
                       </div>
                     )}
                   </div>

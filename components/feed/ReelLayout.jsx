@@ -36,6 +36,7 @@ import GiftPage from "../../pages/gift/GiftPage";
 import { BoostModal } from '../subscription/BoostModal';
 import { getRelativeTime } from '../../utils/timeUtils';
 import { canEngage } from '../../utils/engagementGate';
+import { MediaLoadingLogo } from '../common/MediaLoadingLogo';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import realtimeService from '../../services/RealtimeService';
@@ -2984,17 +2985,8 @@ export const ReelLayout = memo(function ReelLayout({
                       </>
                     )
                   ) : (
-                    <div
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        height: '100%',
-                        color: '#fff',
-                      }}
-                    >
-                      🎬
+                    <div style={{ position: 'relative', height: '100%' }}>
+                      <MediaLoadingLogo />
                     </div>
                   )}
 

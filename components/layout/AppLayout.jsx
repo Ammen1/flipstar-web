@@ -9,6 +9,7 @@ import telebirrH5 from '../../services/TelebirrH5Service';
 import { rediscoverUploads } from '../../services/uploadTracker';
 import { UploadProgressIndicator } from '../common/UploadProgressIndicator';
 import { SubscriptionModal } from '../subscription/SubscriptionModal';
+import { readUnreadCount } from '../../utils/unreadCounts';
 
 export default function AppLayout() {
   const {
@@ -21,7 +22,7 @@ export default function AppLayout() {
   const location = useLocation();
 
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
-  const [unreadDmCount] = useState(0);
+  const [unreadDmCount, setUnreadDmCount] = useState(0);
 
   // Determine active tab from URL
   const pathToTab = {
@@ -40,18 +41,71 @@ export default function AppLayout() {
   const basePath = '/' + (location.pathname.split('/')[1] || '');
   const activeTab = pathToTab[basePath] || 'home';
 
-  // Poll unread notification count
+  // Poll unread notification and message counts.
+  //
+  // `unreadDmCount` was `useState(0)` with no setter, so the Messages badge
+  // could never show anything: a new message arrived, the server knew, and
+  // nothing asked. /messages/unread-count/ has existed since messaging was
+  // built and already honours each conversation's read marker.
+  //
+  // Polled rather than pushed. The backend does have a ChatConsumer
+  // websocket, but no part of the web client speaks websockets -- adding one
+  // for a badge would be new infrastructure to maintain for something a
+  // request already answers. Both counts ride the same 60s interval that
+  // notifications already used, so this adds one request per minute.
+  //
+  // The counts are the server's, so a reload re-derives them rather than
+  // trusting anything kept here, and re-reading a conversation cannot make
+  // the badge disagree with the ledger.
   useEffect(() => {
-    if (!authUser) { setUnreadNotifCount(0); return; }
+    if (!authUser) {
+      setUnreadNotifCount(0);
+      setUnreadDmCount(0);
+      return;
+    }
     const fetchCount = async () => {
-      try {
-        const data = await api.getUnreadNotificationCount();
-        setUnreadNotifCount(data.unread_count || 0);
-      } catch (_) {}
+      // Settled separately: a failure of one must not blank the other.
+      const [notifs, dms] = await Promise.allSettled([
+        api.getUnreadNotificationCount(),
+        api.getUnreadDmCount(),
+      ]);
+      if (notifs.status === 'fulfilled') {
+        setUnreadNotifCount(readUnreadCount(notifs.value));
+      }
+      if (dms.status === 'fulfilled') {
+        setUnreadDmCount(readUnreadCount(dms.value));
+      }
     };
     fetchCount();
     const interval = setInterval(fetchCount, 60000);
-    return () => clearInterval(interval);
+
+    // A minute is a long time to keep showing a badge for a conversation
+    // just read, or to miss one that arrived while the tab was hidden. Both
+    // are corrected the moment the tab is looked at again.
+    const onVisible = () => {
+      if (!document.hidden) fetchCount();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [authUser]);
+
+  // Reading a thread clears its badge now rather than at the next poll.
+  // MessagesPage fires `dmRead` once the server has accepted the read marker,
+  // so what lands here is a re-read of the server's count, not a guess at it.
+  useEffect(() => {
+    if (!authUser) return;
+    const refresh = () => {
+      api
+        .getUnreadDmCount()
+        .then((data) => setUnreadDmCount(readUnreadCount(data)))
+        .catch(() => {});
+    };
+    window.addEventListener('dmRead', refresh);
+    return () => window.removeEventListener('dmRead', refresh);
   }, [authUser]);
 
   // Uploads still processing that this browser has no record of -- storage

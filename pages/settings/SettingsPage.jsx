@@ -21,9 +21,9 @@ const FAQ_ITEMS = [
   { q: "How am I charged?", a: "Prepaid: fee deducted from airtime balance. Postpaid: fee added to monthly bill. Hybrid: charged from your default account. A maximum of one charge applies per 24-hour cycle. Failed charges are retried automatically if you recharge the same day." },
   { q: "How do I unsubscribe?", a: "Send 'STOP' to the FlipStar shortcode, or go to Account Settings in the app and select Unsubscribe. Your request is processed immediately and you will receive a confirmation SMS." },
   { q: "What happens to my coins and progress if I unsubscribe?", a: "Your coins and digital assets remain valid for 30 days after unsubscription. Re-subscribing within 30 days restores your unexpired coins and progress. Assets not recovered within 30 days will expire." },
-  { q: "What are coins and how do I earn them?", a: "Coins are FlipStar's digital currency. Earn them through: Daily login bonus (3 coins/day), Weekly loyalty bonus (50 coins for 7-day streak), or Purchase (1 ETB = 10 Coins via telebirr/Airtime)." },
+  { q: "What are coins and how do I earn them?", a: "Coins are FlipStar's digital currency. Subscribers earn them automatically: every time your plan is charged, the plan's gift is added to your balance (for example a daily plan is charged daily). You can also purchase coins (1 ETB = 10 Coins via telebirr/Airtime)." },
   { q: "What can I do with coins?", a: "Gift creators, boost your content visibility, unlock extended video uploads (up to 90-120 seconds), level up, and unlock premium features." },
-  { q: "Can I cash out my coins?", a: "Bonus coins (from login/loyalty) cannot be cashed out. However, Points earned by creators from gifts can be cashed out via telebirr. Minimum: 1,000 Points (80 ETB after 20% commission)." },
+  { q: "Can I cash out my coins?", a: "Coins are for in-app spending and cannot be withdrawn directly. However, Points earned by creators from gifts can be cashed out via telebirr. Minimum: 1,000 Points (80 ETB after 20% commission)." },
   { q: "What is the platform commission?", a: "A 20% commission applies to all gifting transaction payouts. For example: if a creator earns 1,000 Points, 200 Points (20%) are retained as platform commission, and the creator receives 800 Points (80 ETB) via telebirr." },
   { q: "Can I convert my Points back into Coins?", a: "Yes. The swap rate is 1 Point = 1 Coin. You can use earned Points to purchase more Coins for in-app spending instead of cashing out." },
   { q: "What is a Flip and how do I upload one?", a: "A Flip is a short video (15–120 seconds) or photo you upload to the platform. Tap the '+' button, select or record your content, add a caption and hashtags, optionally link it to a campaign, and tap 'Post'." },
@@ -759,6 +759,9 @@ export function SettingsPage({ user, onClose, onLogout, onShowWallet, onShowSubs
             </div>
           </div>
         )}
+
+        {/* FAQ Modal */}
+        <FaqModal />
       </div>
     );
   }

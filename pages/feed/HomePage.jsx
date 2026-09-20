@@ -16,6 +16,7 @@ import { InsufficientCoinsModal } from '../../components/common/InsufficientCoin
 import { PostCaptionOverlay, captionOf } from '../../components/feed/PostCaptionOverlay';
 import { DesktopReelViewer } from '../../components/feed/DesktopReelViewer';
 import { dedupeById } from '../../utils/collections';
+import { MediaLoadingLogo } from '../../components/common/MediaLoadingLogo';
 import { canEngage } from '../../utils/engagementGate';
 import { likeCountOf, commentCountOf, shareCountOf } from '../../utils/engagement';
 import { getCampaignId, isCampaignPost as postIsCampaign, getCampaignTitle } from '../../utils/campaign';
@@ -1749,13 +1750,8 @@ const PostCard = memo(function PostCard({ post, index, currentUser, T, onShowPro
                     the video has a frame to show — otherwise the clip plays
                     underneath it and you get sound with no picture. */}
                 {!live.image && !videoReady && (
-                  <div style={{
-                    position: 'absolute', inset: 0,
-                    background: 'linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    zIndex: 1
-                  }}>
-                    <div style={{ fontSize: 48, opacity: 0.5 }}>🎬</div>
+                  <div style={{ position: 'absolute', inset: 0, zIndex: 1 }}>
+                    <MediaLoadingLogo />
                   </div>
                 )}
                 {/* Clickable overlay to navigate to Reels */}

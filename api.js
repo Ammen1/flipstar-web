@@ -808,6 +808,12 @@ const api = {
   getUnreadNotificationCount: () =>
     api.request("/notifications/unread-count/", { method: "GET" }),
 
+  // Unread direct messages. The endpoint has existed since messaging was
+  // built and honours each conversation's read marker; nothing on the web
+  // ever called it, which is why the Messages badge was always empty.
+  getUnreadDmCount: () =>
+    api.request("/messages/unread-count/", { method: "GET" }),
+
   markNotificationRead: (notificationId) =>
     api.request(`/notifications/${notificationId}/read/`, { method: "POST" }),
 

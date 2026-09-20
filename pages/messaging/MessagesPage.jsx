@@ -1124,6 +1124,10 @@ function ThreadView({ conversation, onBack, user, T, priColor, onShowProfile, on
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
   const pendingRef = useRef(0); // count of in-flight sends; pauses poll-replace
+  // Newest message this thread has already told the nav about, so the
+  // 30s poll does not re-ask for the badge count every 30s on a thread
+  // where nothing has arrived.
+  const announcedRef = useRef(null);
 
   const convId = conversation.id;
   const other = conversation.other_user;
@@ -1160,8 +1164,22 @@ function ThreadView({ conversation, onBack, user, T, priColor, onShowProfile, on
         }
         return arr;
       });
-      // Mark as read (fire and forget)
-      api.request(`/messages/conversations/${convId}/read/`, { method: 'POST' }).catch(() => {});
+      // Mark as read (fire and forget). The badge in the nav is driven by a
+      // 60s poll, which would leave a count sitting over Messages for up to a
+      // minute after the thread was read -- so say so, and let the layout
+      // re-ask the server. Announced only once the server has accepted it, so
+      // the badge never disagrees with the read marker.
+      const newest = arr.length ? arr[arr.length - 1].id : null;
+      api
+        .request(`/messages/conversations/${convId}/read/`, { method: 'POST' })
+        .then(() => {
+          if (announcedRef.current === newest) return;
+          announcedRef.current = newest;
+          window.dispatchEvent(
+            new CustomEvent('dmRead', { detail: { conversationId: convId } }),
+          );
+        })
+        .catch(() => {});
     } catch (e) {
       console.error('fetchMessages error', e);
     } finally {
