@@ -256,10 +256,19 @@ async function run() {
       const el = frame() && frame().querySelector('img:not([data-media-placeholder])');
       return el && el.naturalWidth > 0 ? el : null;
     }, 'the image never loaded');
+
+    // The placeholder must get out of the way, or the picture is covered.
+    // Waited for rather than asserted outright: the load event and the
+    // re-render that lifts the placeholder are different ticks, so an
+    // immediate assertion catches the frame between them about half the time.
+    await waitFor(
+      () => frame() && !frame().querySelector('img[data-media-placeholder]'),
+      'the placeholder stayed over the picture',
+      4000,
+    );
+
     const h = frameHeight();
     assert(h > 0, 'the frame is empty');
-    // The placeholder must get out of the way, or the picture is covered.
-    assert(!frame().querySelector('img[data-media-placeholder]'), 'the placeholder stayed over the picture');
     return `${h}px, ${img.naturalWidth}x${img.naturalHeight} shown`;
   });
 

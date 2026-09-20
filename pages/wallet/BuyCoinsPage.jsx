@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   ChevronLeft, Coins, Check, X, CheckCircle, XCircle, Lock,
-  ShieldCheck, Smartphone, RefreshCw, AlertCircle, Wallet, Loader,
+  ShieldCheck, Smartphone, RefreshCw, AlertCircle, Wallet, Loader, Clock,
 } from 'lucide-react';
 import api from '../../api';
 import telebirrH5 from '../../services/TelebirrH5Service';
 import { sanitizePhoneInput, toE164, PHONE_MAX_DIGITS, INVALID_PHONE_MESSAGE } from '../../utils/phone';
 import { readPricing, quoteCoins, formatBirr } from '../../utils/coinPricing';
+import { allowedPayMethods } from '../../utils/payMethods';
+import { describePayment, SUCCESS as PAYMENT_SUCCESS, PENDING as PAYMENT_PENDING } from '../../utils/paymentStatus';
 
 /**
  * Buy Coins — dedicated full page.
@@ -20,20 +22,6 @@ import { readPricing, quoteCoins, formatBirr } from '../../utils/coinPricing';
  *   Web (USSD) -> POST /wallet/telebirrUssdPurchase/ { package_id, phone_number }
  *   Airtime    -> POST /charging/coin-purchase/      { phone_number, coins }
  */
-
-// Airtime is offered only at exactly this price. Anything above it is
-// telebirr-only. Mirrored by the API so the rule cannot be bypassed by
-// calling the endpoint directly.
-const AIRTIME_PRICE_ETB = 10;
-
-/** The methods permitted for a given price. */
-function allowedPayMethods(priceEtb, opts) {
-  const { allowsAirtime = false, inSuperApp = false } = opts || {};
-  if (inSuperApp) return ['telebirr'];
-  return Number(priceEtb) === AIRTIME_PRICE_ETB && allowsAirtime
-    ? ['telebirr', 'airtime']
-    : ['telebirr'];
-}
 
 /** The id the custom card selects under; never a real package id. */
 const CUSTOM_ID = '__custom__';
@@ -391,8 +379,14 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
   const [busy, setBusy] = useState(null);
   const [payMethod, setPayMethod] = useState(null);   // 'telebirr' | 'airtime' | null            // null | 'telebirr' | 'airtime'
   const [awaitingUssd, setAwaitingUssd] = useState(false);
-  const [initialCoinBalance, setInitialCoinBalance] = useState(null);
-  const [result, setResult] = useState(null);        // { ok, message, done }
+  // The payment being waited on, by its telebirr conversation id. Replaces
+  // `initialCoinBalance`: the page used to remember the wallet balance and
+  // treat any increase as this purchase completing, which made a gift, a
+  // daily allocation or a purchase from another device look like the payment
+  // going through.
+  const [pendingPayment, setPendingPayment] = useState(null);
+  // { tone: 'success'|'pending'|'failure', heading, message, done }
+  const [result, setResult] = useState(null);
 
   const cardRefs = useRef([]);
 
@@ -456,6 +450,18 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
     });
   }, [packages]);
 
+  // Whether airtime is on at all, as the packages report it.
+  //
+  // /charging/coin-purchase/ currently returns 403 for everyone ("Ethio
+  // Telecom SIM cards are only accessible for SMS OTP verification"), and
+  // /wallet/config/ sends no allows_airtime flag, so this is false today and
+  // the airtime option stays off the screen -- the price rule above decides
+  // nothing until the API starts advertising it again.
+  const airtimeAvailable = useMemo(
+    () => packages.some((p) => Boolean(p.allows_airtime)),
+    [packages],
+  );
+
   // A custom amount is offered only outside the SuperApp: in there, purchases
   // go through /wallet/telebirr/initiate/, which takes a package id and has no
   // amount form. Showing the card there would offer something that cannot be
@@ -480,9 +486,13 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
       _priceEtb: customQuote.amount,
       _totalCoins: customQuote.coins,
       _bonusCoins: 0,
-      allows_airtime: false,
+      // A custom amount has no package row, so there is no server flag to
+      // read. It follows whether airtime is on at all, which is what the
+      // packages' own flag says -- otherwise a 5 ETB custom purchase would be
+      // refused a method the rule allows it, purely for want of a row.
+      allows_airtime: airtimeAvailable,
     };
-  }, [customQuote]);
+  }, [customQuote, airtimeAvailable]);
 
   const selected = useMemo(
     () =>
@@ -496,10 +506,19 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
   const phoneReady = Boolean(toE164(phoneNumber));
   const canContinue = Boolean(selected) && (!needsPhone || phoneReady) && !busy && !awaitingUssd;
 
-  // ── USSD confirmation polling. Same endpoint as before; the cache is
-  //    bypassed so the balance actually refreshes while we wait. ───────────
+  // ── USSD confirmation. Ask the server about the payment. ───────────────
+  //
+  // This used to poll /wallet/ and declare success the moment the balance
+  // went up, which is not the same question. Coins arrive from gifts,
+  // allocations and other devices, and a payment that telebirr refused never
+  // moves the balance at all -- so a failure waited out the full timeout and
+  // was then reported as "we have not received a confirmation yet", which is
+  // not what happened either.
+  //
+  // Now the payment's own state decides, and there are three outcomes rather
+  // than two: a pending payment is shown as pending and grants nothing.
   useEffect(() => {
-    if (!awaitingUssd || initialCoinBalance == null) return undefined;
+    if (!awaitingUssd || !pendingPayment) return undefined;
 
     let done = false;
 
@@ -510,47 +529,77 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
       window.removeEventListener('focus', onVisible);
     }
 
+    const settle = (outcome, extra = {}) => {
+      done = true;
+      cleanup();
+      setAwaitingUssd(false);
+      setPendingPayment(null);
+      setResult({
+        tone: outcome.tone,
+        heading: outcome.heading,
+        message: outcome.message,
+        ...extra,
+      });
+    };
+
     const check = async () => {
       if (done) return;
+      let payment;
       try {
-        const wallet = await api.request('/wallet/', { skipCache: true });
-        const current = (wallet && wallet.balance && wallet.balance.total) || 0;
-        if (current > initialCoinBalance) {
-          done = true;
-          cleanup();
-          setAwaitingUssd(false);
-          setBalance(current);
-          try { window.dispatchEvent(new Event('walletBalanceChanged')); } catch (_) {}
-          setResult({
-            ok: true,
-            done: true,
-            message: `Payment successful! ${formatCoins(current - initialCoinBalance)} coins added.`,
-          });
-        }
+        payment = await api.getUssdPurchaseStatus(pendingPayment);
       } catch (error) {
-        console.error('[BuyCoinsPage] Polling error:', error);
+        // The request failed, not necessarily the payment. Keep waiting --
+        // the server is the only thing that can settle this.
+        console.error('[BuyCoinsPage] Status check failed:', error);
+        return;
       }
+
+      const outcome = describePayment(payment);
+      if (!outcome.final) return;
+
+      if (outcome.state === PAYMENT_SUCCESS) {
+        const added = payment.coins_added || 0;
+        try {
+          const wallet = await api.request('/wallet/', { skipCache: true });
+          setBalance((wallet && wallet.balance && wallet.balance.total) || 0);
+        } catch (_) { /* the purchase is confirmed either way */ }
+        try { window.dispatchEvent(new Event('walletBalanceChanged')); } catch (_) {}
+        settle(outcome, {
+          done: true,
+          message: added
+            ? `Payment successful! ${formatCoins(added)} coins added.`
+            : outcome.message,
+        });
+        return;
+      }
+
+      // FAILED or CANCELLED: the server's own wording says why -- not enough
+      // balance, wrong PIN, cancelled on the handset, refused, expired.
+      settle(outcome);
     };
 
     const onVisible = () => { if (document.visibilityState === 'visible') check(); };
 
+    check();
     const poll = setInterval(check, POLL_MS);
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', onVisible);
 
     const timeout = setTimeout(() => {
       if (done) return;
-      done = true;
-      cleanup();
-      setAwaitingUssd(false);
-      setResult({
-        ok: false,
-        message: 'We have not received a confirmation yet. If you completed the payment, your coins will be credited shortly.',
+      // Still PENDING when we stopped asking. That is what is shown: not a
+      // success, not a failure, and nothing has been added.
+      settle({
+        tone: 'pending',
+        heading: 'Confirming your payment',
+        message:
+          'telebirr has not confirmed this payment yet. Nothing has been charged or added so far. '
+          + 'If you approved it, your coins will appear here shortly.',
       });
     }, POLL_TIMEOUT_MS);
 
     return cleanup;
-  }, [awaitingUssd, initialCoinBalance]);
+  }, [awaitingUssd, pendingPayment]);
 
   const finish = useCallback(() => {
     if (onDone) onDone();
@@ -559,7 +608,7 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
 
   // Leave the success screen up briefly, then return where the user came from.
   useEffect(() => {
-    if (!result || !result.ok || !result.done) return undefined;
+    if (!result || result.tone !== 'success' || !result.done) return undefined;
     const t = setTimeout(finish, 2600);
     return () => clearTimeout(t);
   }, [result, finish]);
@@ -568,7 +617,7 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
   const handleAirtimePurchase = async () => {
     if (!selected || busy) return;
     if (!phoneReady) {
-      setResult({ ok: false, message: 'Please add your phone number first.' });
+      setResult({ tone: 'failure', heading: 'Payment not completed', message: 'Please add your phone number first.' });
       return;
     }
     setConfirmOpen(false);
@@ -582,23 +631,32 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
         }),
       });
 
+      // Airtime charging answers synchronously, so `success` here is the
+      // server's verdict on the charge itself, not an acknowledgement of a
+      // request -- unlike telebirr, where it is only the latter.
       if (response.success) {
         try { window.dispatchEvent(new Event('walletBalanceChanged')); } catch (_) {}
         setResult({
-          ok: true,
+          tone: 'success',
+          heading: 'Payment successful',
           done: true,
           message: `Payment successful! ${formatCoins(selected._totalCoins)} coins added.`,
         });
       } else if (response.error === 'insufficient_balance') {
         setResult({
-          ok: false,
+          tone: 'failure',
+          heading: 'Payment not completed',
           message: 'Your airtime balance is insufficient to complete this purchase. Please top up your airtime and try again.',
         });
       } else {
-        setResult({ ok: false, message: friendlyError(response.message || response.error, 'Purchase failed. Please try again.') });
+        setResult({
+          tone: 'failure',
+          heading: 'Payment not completed',
+          message: friendlyError(response.message || response.error, 'Purchase failed. Please try again.'),
+        });
       }
     } catch (error) {
-      setResult({ ok: false, message: 'Purchase failed. Please try again.' });
+      setResult({ tone: 'failure', heading: 'Payment not completed', message: 'Purchase failed. Please try again.' });
     } finally {
       setBusy(null);
     }
@@ -613,40 +671,59 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
       // a case to handle -- but it fails loudly here instead of sending a null
       // package id if that ever stops being true.
       if (selected._isCustom) {
-        setResult({ ok: false, message: 'Choose a package to pay inside telebirr.' });
+        setResult({ tone: 'failure', heading: 'Payment not completed', message: 'Choose a package to pay inside telebirr.' });
         return;
       }
       setBusy('telebirr');
       try {
         const r = await telebirrH5.purchasePackage(selected.id);
-        if (r.success && !r.pending) {
+        // Three outcomes, from the server's state.
+        //
+        // The old shape of this branch was `r.success && r.pending` -> "ok",
+        // and the bridge set `success` for a payment the backend had marked
+        // FAILED. That is the reported bug in its most direct form: a failed
+        // payment drawn with a green tick and the words "Payment received".
+        const outcome = describePayment(r);
+
+        if (outcome.state === PAYMENT_SUCCESS) {
           try { window.dispatchEvent(new Event('walletBalanceChanged')); } catch (_) {}
           setResult({
-            ok: true,
+            tone: 'success',
+            heading: outcome.heading,
             done: true,
             message: `Payment successful! ${r.coins_added ? `${formatCoins(r.coins_added)} ` : ''}coins added.`,
           });
-        } else if (r.success && r.pending) {
-          setResult({ ok: true, done: true, message: 'Payment received. Your coins will appear shortly.' });
-        } else if (r.error === 'PAY_TIMEOUT') {
+        } else if (outcome.state === PAYMENT_PENDING) {
+          // Not a success. Nothing has been added, and the page says so.
           setResult({
-            ok: false,
-            message: 'Payment was not completed. If you paid, your coins will be credited shortly.',
+            tone: 'pending',
+            heading: outcome.heading,
+            message: r.error === 'PAY_TIMEOUT'
+              ? 'telebirr has not confirmed this payment. If you approved it, your coins will appear shortly.'
+              : outcome.message,
           });
         } else if (r.error === 'NOT_IN_SUPERAPP') {
-          // Can only happen if the bridge disappears mid-flow; the branch above
-          // already checked. Distinct message so it is not mistaken for a
-          // provider failure.
-          setResult({ ok: false, message: 'Please open FlipStar inside the telebirr app to pay.' });
+          // Can only happen if the bridge disappears mid-flow; the branch
+          // above already checked. Distinct message so it is not mistaken
+          // for a provider failure.
+          setResult({
+            tone: 'failure',
+            heading: 'Payment not completed',
+            message: 'Please open FlipStar inside the telebirr app to pay.',
+          });
         } else {
           // Console-only so the reason is recoverable from a device inspector
           // even when the visible copy is the generic fallback.
           console.error('[BuyCoins] SuperApp purchase failed:', r);
-          setResult({ ok: false, message: friendlyError(r.error) });
+          setResult({
+            tone: 'failure',
+            heading: outcome.heading,
+            message: r.error ? friendlyError(r.error) : outcome.message,
+          });
         }
       } catch (error) {
         console.error('[BuyCoins] SuperApp purchase threw:', error);
-        setResult({ ok: false, message: 'Payment failed. Please try again.' });
+        setResult({ tone: 'failure', heading: 'Payment not completed', message: 'Payment failed. Please try again.' });
       } finally {
         setBusy(null);
       }
@@ -655,10 +732,6 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
 
     setBusy('telebirr');
     try {
-      const wallet = await api.request('/wallet/', { skipCache: true });
-      const initial = (wallet && wallet.balance && wallet.balance.total) || 0;
-      setInitialCoinBalance(initial);
-
       // The one place a custom amount differs from a package: what is asked
       // for. The server prices it and credits its own figure either way.
       const response = await api.request('/wallet/telebirrUssdPurchase/', {
@@ -670,13 +743,28 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
         ),
       });
 
-      if (response.success) {
+      // `success` here means telebirr accepted the push, not that anybody
+      // paid. The conversation id is what the payment is then asked about;
+      // without one there is nothing to poll, so that is a failure to start
+      // rather than a wait.
+      if (response.success && response.originator_conversation_id) {
+        setPendingPayment(response.originator_conversation_id);
         setAwaitingUssd(true);
+      } else if (response.success) {
+        setResult({
+          tone: 'failure',
+          heading: 'Payment not completed',
+          message: 'We could not start this payment. Please try again.',
+        });
       } else {
-        setResult({ ok: false, message: friendlyError(response.error, 'Payment request failed. Please try again.') });
+        setResult({
+          tone: 'failure',
+          heading: 'Payment not completed',
+          message: friendlyError(response.error, 'Payment request failed. Please try again.'),
+        });
       }
     } catch (error) {
-      setResult({ ok: false, message: 'Payment request failed. Please try again.' });
+      setResult({ tone: 'failure', heading: 'Payment not completed', message: 'Payment request failed. Please try again.' });
     } finally {
       setBusy(null);
     }
@@ -1142,43 +1230,59 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
       )}
 
       {/* ── Result ───────────────────────────────────────────────────── */}
-      {result && (
-        <div
-          className="bc-overlay"
-          onClick={() => (result.ok && result.done ? finish() : setResult(null))}
-          role="alertdialog"
-          aria-modal="true"
-          aria-label={result.ok ? 'Payment successful' : 'Payment not completed'}
-        >
-          <div className="bc-sheet" style={{ textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
-            <div className="bc-sheet-grab" aria-hidden="true" />
-            <div
-              style={{
-                width: 64, height: 64, borderRadius: '50%', margin: '6px auto 18px',
-                display: 'grid', placeItems: 'center',
-                background: result.ok ? 'rgba(16,185,129,.15)' : 'rgba(239,68,68,.15)',
-                color: result.ok ? '#10B981' : '#EF4444',
-              }}
-            >
-              {result.ok ? <CheckCircle size={32} /> : <XCircle size={32} />}
+      {result && (() => {
+        // Three outcomes, not two. The sheet used to be `ok` or not-ok, so a
+        // payment still being confirmed could only be drawn as one of them --
+        // and it was drawn as the successful one, tick and all.
+        const succeeded = result.tone === 'success';
+        const waiting = result.tone === 'pending';
+        const accent = succeeded ? '#10B981' : waiting ? '#E2B355' : '#EF4444';
+        const wash = succeeded
+          ? 'rgba(16,185,129,.15)'
+          : waiting
+            ? 'rgba(226,179,85,.15)'
+            : 'rgba(239,68,68,.15)';
+        const heading = result.heading || (succeeded ? 'Payment successful' : 'Payment not completed');
+        const closes = succeeded && result.done;
+
+        return (
+          <div
+            className="bc-overlay"
+            onClick={() => (closes ? finish() : setResult(null))}
+            role="alertdialog"
+            aria-modal="true"
+            aria-label={heading}
+          >
+            <div className="bc-sheet" style={{ textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+              <div className="bc-sheet-grab" aria-hidden="true" />
+              <div
+                data-payment-tone={result.tone}
+                style={{
+                  width: 64, height: 64, borderRadius: '50%', margin: '6px auto 18px',
+                  display: 'grid', placeItems: 'center',
+                  background: wash,
+                  color: accent,
+                }}
+              >
+                {succeeded ? <CheckCircle size={32} /> : waiting ? <Clock size={32} /> : <XCircle size={32} />}
+              </div>
+              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>{heading}</h2>
+              <p style={{ margin: '10px 0 20px', fontSize: 14, color: T.sub, lineHeight: 1.55 }}>
+                {result.message}
+              </p>
+              <button
+                className={succeeded ? 'bc-primary' : 'bc-ghost'}
+                type="button"
+                style={{ width: '100%' }}
+                onClick={() => (closes ? finish() : setResult(null))}
+              >
+                {closes ? 'Done' : 'Close'}
+              </button>
             </div>
-            <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>
-              {result.ok ? 'Payment successful' : 'Payment not completed'}
-            </h2>
-            <p style={{ margin: '10px 0 20px', fontSize: 14, color: T.sub, lineHeight: 1.55 }}>
-              {result.message}
-            </p>
-            <button
-              className={result.ok ? 'bc-primary' : 'bc-ghost'}
-              type="button"
-              style={{ width: '100%' }}
-              onClick={() => (result.ok && result.done ? finish() : setResult(null))}
-            >
-              {result.ok && result.done ? 'Done' : 'Close'}
-            </button>
           </div>
-        </div>
-      )}
+        );
+      })()}
+
     </div>
   );
 }

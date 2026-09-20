@@ -277,7 +277,11 @@ const api = {
     const isRealtime =
       endpoint.startsWith("/messages/") ||
       endpoint.includes("/notifications/unread") ||
-      endpoint.includes("unread-count");
+      endpoint.includes("unread-count") ||
+      // A payment's state changes under a poll; a cached one would freeze the
+      // page on PENDING for a payment that has already succeeded or failed.
+      endpoint.includes("/telebirr/ussd/status/") ||
+      endpoint.includes("/telebirr/query/");
     const cacheable = isGet && !options.skipCache && !isRealtime;
     const cacheKey = cacheable ? endpoint : null;
 
@@ -807,6 +811,15 @@ const api = {
 
   getUnreadNotificationCount: () =>
     api.request("/notifications/unread-count/", { method: "GET" }),
+
+  // The authoritative state of a USSD coin purchase: SUCCESS, FAILED,
+  // CANCELLED or PENDING. The page used to watch the wallet balance instead
+  // and call any increase a completed purchase.
+  getUssdPurchaseStatus: (originatorConversationId) =>
+    api.request(
+      `/wallet/telebirr/ussd/status/?originator_conversation_id=${encodeURIComponent(originatorConversationId)}`,
+      { method: "GET", skipCache: true },
+    ),
 
   // Unread direct messages. The endpoint has existed since messaging was
   // built and honours each conversation's read marker; nothing on the web

@@ -252,6 +252,148 @@ async function run() {
     return '390px wide, both reachable';
   });
 
+  // ── what the page says when the payment does not succeed ────────────────
+  //
+  // The reported bug is visible only here: on the server the payment was
+  // refused, and the page drew a green tick reading "Payment successful". So
+  // these drive the real sheet and read the heading off the screen.
+
+  async function startPayment() {
+    await openPage();
+    // A package card, by its price -- the custom-amount card is a .bc-card
+    // too and sits above them, and picking it leaves nothing to continue to.
+    const card = await waitFor(
+      () => Array.from(document.querySelectorAll('.bc-card')).find(
+        (c) => /100\s*COINS/i.test(c.innerText || ''),
+      ),
+      'the 100-coin package card',
+    );
+    await bringIntoView(card);
+    await tap(card);
+    await sleep(250);
+
+    // The sticky bar's own button, not the custom card's "Continue to Buy":
+    // a package was picked, so this is the one that opens the summary.
+    const cont = await waitFor(
+      () => Array.from(document.querySelectorAll('button.bc-primary')).find(
+        (b) => (b.textContent || '').trim() === 'Continue' && !b.disabled,
+      ),
+      'the Continue button for the picked package',
+    );
+    await bringIntoView(cont);
+    await tap(cont);
+    await waitFor(
+      () => Array.from(document.querySelectorAll('button')).find((b) => /with telebirr/.test(b.textContent || '')),
+      'the telebirr button',
+    );
+
+    const method = Array.from(document.querySelectorAll('button')).find(
+      (b) => (b.textContent || '').trim() === 'telebirr',
+    );
+    if (method) { await tap(method); await sleep(150); }
+
+    const pay = Array.from(document.querySelectorAll('button')).find(
+      (b) => /with telebirr/.test(b.textContent || ''),
+    );
+    await tap(pay);
+
+    // The confirm sheet animates in, and a tap that lands mid-animation does
+    // nothing at all -- which looks exactly like a page that never settles.
+    // Waiting for the request to have been made says which of the two it is,
+    // and one retry covers the animation.
+    try {
+      await waitFor(
+        () => /check your phone/i.test(pageText()) || document.querySelector('[data-payment-tone]'),
+        'the payment to start',
+        4000,
+      );
+    } catch (_) {
+      await tap(pay);
+      await waitFor(
+        () => /check your phone/i.test(pageText()) || document.querySelector('[data-payment-tone]'),
+        'the payment to start after a second tap',
+        8000,
+      );
+    }
+  }
+
+  async function payAndSettle(payment) {
+    await fetch('/__coins/payment?' + new URLSearchParams(payment));
+    await startPayment();
+    // Generous: the first poll is 3s after a cold mount of the whole router.
+    return waitFor(() => document.querySelector('[data-payment-tone]'), 'the result sheet', 30000);
+  }
+
+  const sheetText = () => {
+    const sheet = document.querySelector('[data-payment-tone]');
+    return sheet ? (sheet.closest('.bc-sheet').innerText || '').replace(/\s+/g, ' ') : '';
+  };
+
+  await test('a payment telebirr refused is not shown as successful', async () => {
+    const tone = await payAndSettle({
+      state: 'FAILED',
+      reason: 'INSUFFICIENT_BALANCE',
+      message: 'Your telebirr balance was not enough to complete this payment.',
+    });
+
+    const text = sheetText();
+    assert(tone.dataset.paymentTone === 'failure', 'drawn as ' + tone.dataset.paymentTone);
+    assert(!/payment successful/i.test(text), 'the sheet claims success: "' + text + '"');
+    assert(/balance/i.test(text), 'no reason given: "' + text + '"');
+    return text.slice(0, 60);
+  });
+
+  await test('a wrong PIN says so', async () => {
+    await payAndSettle({
+      state: 'FAILED',
+      reason: 'WRONG_PIN',
+      message: 'The PIN entered was not correct, so the payment was not completed.',
+    });
+
+    const text = sheetText();
+    assert(/pin/i.test(text), 'no mention of the PIN: "' + text + '"');
+    assert(!/payment successful/i.test(text), text);
+    return 'PIN failure shown';
+  });
+
+  await test('a cancelled payment is called cancelled', async () => {
+    const tone = await payAndSettle({
+      state: 'CANCELLED',
+      reason: 'USER_CANCELLED',
+      message: 'The payment was cancelled, so nothing was charged.',
+    });
+
+    const text = sheetText();
+    assert(tone.dataset.paymentTone === 'failure', 'drawn as ' + tone.dataset.paymentTone);
+    assert(/cancel/i.test(text), 'not described as cancelled: "' + text + '"');
+    assert(!/payment successful/i.test(text), text);
+    return 'cancellation shown';
+  });
+
+  await test('a confirmed payment is shown as successful', async () => {
+    const tone = await payAndSettle({ state: 'SUCCESS', balance: '220' });
+
+    const text = sheetText();
+    assert(tone.dataset.paymentTone === 'success', 'drawn as ' + tone.dataset.paymentTone);
+    assert(/payment successful/i.test(text), 'no success message: "' + text + '"');
+    return text.slice(0, 60);
+  });
+
+  await test('a payment nobody has confirmed claims nothing', async () => {
+    // The state that had nowhere to go: the sheet was ok-or-not-ok, and
+    // pending was drawn as ok, tick and all.
+    await fetch('/__coins/payment?state=PENDING');
+    await startPayment();
+
+    await waitFor(() => /check your phone/i.test(pageText()), 'the waiting sheet');
+    await sleep(2000);
+
+    const waiting = pageText();
+    assert(!/payment successful/i.test(waiting), 'claimed success while waiting: "' + waiting + '"');
+    assert(!document.querySelector('[data-payment-tone]'), 'settled on a verdict it does not have');
+    return 'still waiting, saying nothing it does not know';
+  });
+
   await test('no uncaught errors from the page', async () => {
     assert(!pageErrors.length, pageErrors.join('\n'));
   });

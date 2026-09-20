@@ -724,6 +724,16 @@ async function main() {
       state.failUpload = url.searchParams.get('failUpload') === '1';
       return json(200, {});
     }
+    // What the coin page's payment is doing, and what the wallet says.
+    if (url.pathname === '/__coins/payment') {
+      state.payment = {
+        state: url.searchParams.get('state') || 'PENDING',
+        reason: url.searchParams.get('reason') || null,
+        message: url.searchParams.get('message') || 'The payment was not completed.',
+      };
+      if (url.searchParams.has('balance')) state.coinBalance = Number(url.searchParams.get('balance'));
+      return json(200, state.payment);
+    }
     if (url.pathname === '/__streak/gift') {
       // What the profile's streak panel should show as the per-charge reward:
       // served from the subscription-status stub the way the backend serves
@@ -794,8 +804,33 @@ async function main() {
       if (route === '/profile/me/') {
         return json(200, { user: { id: 1, username: 'e2e_buyer' }, phone_number: '251911000111' });
       }
-      if (route === '/wallet/') return json(200, { balance: { total: 120 } });
+      if (route === '/wallet/') return json(200, { balance: { total: state.coinBalance } });
       if (route === '/subscription/status/') return json(200, { has_subscription: true, status: 'active' });
+      // The USSD push: telebirr accepting the request. A 200 here says a
+      // prompt went to the handset and nothing more -- which is the whole
+      // point of the status endpoint below.
+      if (route === '/wallet/telebirrUssdPurchase/') {
+        return json(200, {
+          success: true,
+          originator_conversation_id: 'AG_E2E_0001',
+          message: 'Request accepted for processing',
+          purchase: { amount_etb: '10.00', total_coins: 100, is_custom: false },
+        });
+      }
+      // The payment's own state, as api/services/payment_status.py shapes it.
+      // The suite moves it with /__coins/payment.
+      if (route.startsWith('/wallet/telebirr/ussd/status/')) {
+        const payment = state.payment;
+        const body = {
+          state: payment.state,
+          is_final: payment.state !== 'PENDING',
+          reason: payment.reason || null,
+          coins_added: payment.state === 'SUCCESS' ? 100 : 0,
+          originator_conversation_id: 'AG_E2E_0001',
+        };
+        if (payment.state !== 'SUCCESS') body.message = payment.message;
+        return json(200, body);
+      }
     }
     if (suite === 'subscription') {
       // Signed in, nothing paid for: the case the plans sheet exists for.
@@ -935,6 +970,9 @@ async function main() {
       explore: newExploreState(),
       media: newMediaState(),
       streakGift: 3,
+      // A payment nobody has confirmed yet, which is where every one starts.
+      payment: { state: 'PENDING', reason: null, message: 'Still confirming.' },
+      coinBalance: 120,
     };
     const script = await bundle(name, `${origin}/api/v1`);
     html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name} e2e</title></head><body style="margin:0"><div id="root"></div><script>${script.replace(/<\/script>/gi, '<\\/script>')}</script></body></html>`;

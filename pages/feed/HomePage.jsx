@@ -1178,20 +1178,25 @@ export const PostCard = memo(function PostCard({ post, index, currentUser, T, on
     ? mediaUrl(live.thumbnail)
     : (live.image ? mediaUrl(live.image) : null);
 
-  // Watch the preview arrive. A <video>'s poster has no load event of its own
-  // and a photo's thumbnail may be swapped out before it paints, so this is
-  // the one signal both branches can use. The fetch is the same URL the
+  // Watch a video's poster arrive. A <video> paints its poster even with
+  // preload="none", but gives no load event for it, so this is the only way
+  // to know the frame has something in it. The request is the same URL the
   // element itself asks for, so the browser serves it from cache rather than
-  // downloading it twice.
+  // fetching it twice.
+  //
+  // Photos do not need this: their preview and full <img> are in the DOM and
+  // report their own onLoad below, which is also exact -- a probe racing the
+  // element it is standing in for left the placeholder covering a picture
+  // that had already painted.
   useEffect(() => {
     setPreviewReady(false);
-    if (!previewSrc) return undefined;
+    if (!isVideo || !previewSrc) return undefined;
     let alive = true;
     const probe = new Image();
     probe.onload = () => { if (alive) setPreviewReady(true); };
     probe.src = previewSrc;
     return () => { alive = false; probe.onload = null; };
-  }, [previewSrc]);
+  }, [isVideo, previewSrc]);
 
   // Whether the frame has to hold its own height, and what stands in it.
   //
@@ -1824,6 +1829,10 @@ export const PostCard = memo(function PostCard({ post, index, currentUser, T, on
                     alt=""
                     aria-hidden="true"
                     decoding="async"
+                    // The frame has something in it from this moment, so the
+                    // placeholder comes off here rather than waiting for the
+                    // full file.
+                    onLoad={() => setPreviewReady(true)}
                     style={{
                       width: '100%', height: 'auto', display: 'block',
                       /* Hides thumbnail compression while the real file lands. */

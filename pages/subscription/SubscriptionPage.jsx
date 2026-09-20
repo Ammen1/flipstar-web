@@ -9,6 +9,7 @@ import { useLanguage } from '../../contexts/LanguageContext';
 import telebirrH5 from '../../services/TelebirrH5Service';
 import { isSubscriptionActive } from '../../utils/subscription';
 import { offerablePlans } from '../../utils/planOffers';
+import { describePayment, isSuccess, PENDING as PAYMENT_PENDING } from '../../utils/paymentStatus';
 import { sanitizePhoneInput, toE164, PHONE_MAX_DIGITS, INVALID_PHONE_MESSAGE, COUNTRY_CODE } from '../../utils/phone';
 
 const getFallbackTiers = () => [
@@ -708,28 +709,41 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess, onLogin, variant
         });
       } catch (e) {}
       
-      if (!purchaseResult.success) {
+      // Only a payment the backend has confirmed opens the success modal.
+      //
+      // This used to be `if (!purchaseResult.success)`, and the bridge set
+      // `success` for FAILED, CANCELLED and PENDING alike -- so a payment
+      // telebirr refused fell through to "Subscription active" with a tick.
+      // Three outcomes now, because there are three:
+      //
+      //   SUCCESS    the subscription is paid for and active
+      //   PENDING    telebirr has not confirmed it yet; say exactly that and
+      //              grant nothing -- it is not a failure and not a success
+      //   otherwise  it did not happen, with the reason if there is one
+      if (!isSuccess(purchaseResult.state)) {
+        const outcome = describePayment(purchaseResult);
         try {
           await api.request('/client-log/', {
             method: 'POST',
             body: JSON.stringify({
-              level: 'error',
-              message: '[SubscriptionPage] SuperApp one-time flow - Purchase failed',
-              context: { error: purchaseResult.error }
+              level: outcome.state === PAYMENT_PENDING ? 'info' : 'error',
+              message: '[SubscriptionPage] SuperApp one-time flow - Purchase not confirmed',
+              context: { state: outcome.state, reason: outcome.reason, error: purchaseResult.error }
             }),
           });
         } catch (e) {}
-        showToast('error', purchaseResult.error || 'Failed to purchase subscription');
+        showToast(
+          outcome.state === PAYMENT_PENDING ? 'info' : 'error',
+          purchaseResult.error || outcome.message,
+        );
         setProcessing(false);
         setProcessingTierId(null);
         return;
       }
 
-      // Payment succeeded (or is pending async webhook confirmation) - in
-      // both cases the backend either has already created/activated the
-      // subscription/account, or will shortly via the webhook. Either way,
-      // we need a valid auth token for this user before we can redirect
-      // them home. The `autoLoginResult` captured BEFORE payment is stale
+      // Payment is confirmed. Past this point the backend has activated the
+      // subscription, so what remains is getting this device a token for the
+      // account it just paid for. The `autoLoginResult` captured BEFORE payment is stale
       // for brand-new users (their account didn't exist yet), so we must
       // retry auto-login now that the SuperApp account should exist.
       try {
@@ -793,9 +807,9 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess, onLogin, variant
             }),
           });
         } catch (e) {}
-        // Payment succeeded but we still couldn't get a token. Show success
-        // (the account/subscription is confirmed server-side) and let the
-        // user reload from home, where auto-login will run again.
+        // The payment IS confirmed -- that was checked above -- and only the
+        // token is missing. Success is the truth here; the user reloads from
+        // home, where auto-login runs again.
         setSuccessModalOpen(true);
         setTimeout(() => {
           setSuccessModalOpen(false);

@@ -13,6 +13,7 @@
 //   if (r.success) { ... coins credited / pending ... }
 
 import api from '../api';
+import { PENDING, SUCCESS, readState } from '../utils/paymentStatus';
 
 // Client logger - sends logs to server for production visibility
 function logToServer(level, message, context = {}) {
@@ -325,21 +326,35 @@ async function purchasePackage(packageId) {
     return { success: false, merch_order_id: merchOrderId, error: err?.message };
   }
 
-  // Payment counter closed - confirm the real status with the backend.
+  // Payment counter closed - the backend says what actually happened.
+  //
+  // This used to answer `{success: true, pending: true}` for anything that
+  // was not an outright `is_paid`, which lumped a payment telebirr had
+  // REFUSED in with one still being confirmed -- and the page draws anything
+  // `success` as a green tick. A failure was being reported as a success.
   try {
     const confirmed = await confirmOrder(merchOrderId);
-    if (confirmed?.is_paid) {
-      return {
-        success: true,
-        pending: false,
-        coins_added: confirmed.coins_added || 0,
-        merch_order_id: merchOrderId,
-      };
-    }
-    // Not yet marked paid - async notify may still arrive shortly.
-    return { success: true, pending: true, merch_order_id: merchOrderId };
+    const state = readState(confirmed);
+    logToServer('info', '[TelebirrH5Service] Coin order state', { merchOrderId, state });
+    return {
+      state,
+      // Kept for callers that still read it, and now true only when the
+      // payment actually succeeded.
+      success: state === SUCCESS,
+      pending: state === PENDING,
+      coins_added: confirmed?.coins_added || 0,
+      message: confirmed?.message,
+      reason: confirmed?.reason || null,
+      merch_order_id: merchOrderId,
+    };
   } catch (err) {
-    return { success: true, pending: true, merch_order_id: merchOrderId };
+    // The payment may well have gone through; this request did not. That is
+    // PENDING -- unknown -- and the page says so and keeps checking.
+    logToServer('error', '[TelebirrH5Service] Coin order query failed', {
+      merchOrderId,
+      message: err?.message,
+    });
+    return { state: PENDING, success: false, pending: true, merch_order_id: merchOrderId };
   }
 }
 
@@ -403,8 +418,11 @@ export async function purchaseSubscription(planType, phoneNumber = null) {
     );
     logToServer('info', '[TelebirrH5Service] Subscription query response', { confirmed });
 
-    if (confirmed?.status === 'active') {
+    const state = readState(confirmed);
+    logToServer('info', '[TelebirrH5Service] Subscription order state', { merchOrderId, state });
+    if (state === SUCCESS) {
       return {
+        state,
         success: true,
         pending: false,
         subscription_id: confirmed.subscription_id,
@@ -413,11 +431,22 @@ export async function purchaseSubscription(planType, phoneNumber = null) {
         merch_order_id: merchOrderId,
       };
     }
-    // Not yet marked active - async notify may still arrive shortly.
-    return { success: true, pending: true, merch_order_id: merchOrderId };
+    // FAILED, CANCELLED or still PENDING. All three used to come back as
+    // `success: true, pending: true`, and SubscriptionPage opens its success
+    // modal on `success` -- so a subscription the server had marked failed
+    // was announced as bought.
+    return {
+      state,
+      success: false,
+      pending: state === PENDING,
+      message: confirmed?.message,
+      reason: confirmed?.reason || null,
+      merch_order_id: merchOrderId,
+    };
   } catch (err) {
+    // The request failed, not necessarily the payment: unknown, so pending.
     logToServer('error', '[TelebirrH5Service] Subscription query failed', { error: err?.message });
-    return { success: true, pending: true, merch_order_id: merchOrderId };
+    return { state: PENDING, success: false, pending: true, merch_order_id: merchOrderId };
   }
 }
 
