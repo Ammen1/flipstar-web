@@ -18,7 +18,7 @@
 // rule now keys on what the plan *is*.
 
 /** A plan bought on top of a subscription rather than as one. */
-export const ON_DEMAND = 'ondemand';
+export const ON_DEMAND = "ondemand";
 
 /**
  * May this plan be offered to this visitor?
@@ -30,10 +30,10 @@ export const ON_DEMAND = 'ondemand';
 export function isOfferable(tier, user, { excludeOnDemand = false } = {}) {
   if (!tier) return false;
   if (excludeOnDemand) {
-    return String(tier.duration_type || '').toLowerCase() !== ON_DEMAND;
+    return String(tier.duration_type || "").toLowerCase() !== ON_DEMAND;
   }
   if (user) return true;
-  return String(tier.duration_type || '').toLowerCase() !== ON_DEMAND;
+  return String(tier.duration_type || "").toLowerCase() !== ON_DEMAND;
 }
 
 /** The plans to show, in the order they arrived. */
