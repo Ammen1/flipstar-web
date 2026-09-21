@@ -31,7 +31,14 @@ export function canEngage(subscriptionStatus) {
  * @param onShowSubscription  opens the subscription page
  * @param action              what the button does when it is allowed
  */
-export function withSubscription(subscriptionStatus, onShowSubscription, action) {
+export function withSubscription(
+  subscriptionStatus,
+  onShowSubscription,
+  action,
+) {
+  // A missing status means the authoritative check has not answered yet (or
+  // failed). Do not turn that temporary uncertainty into a second purchase.
+  if (subscriptionStatus == null) return false;
   if (!canEngage(subscriptionStatus)) {
     onShowSubscription?.();
     return false;

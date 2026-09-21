@@ -1028,8 +1028,11 @@ const api = {
         return r;
       }),
 
-  // Saved posts
-  getSavedPosts: () => api.request("/saved/"),
+  // Saved posts. /saved/ returns SavedPost rows whose `reel` is a bare
+  // primary key, so the Saved grid got no media fields to render. /reels/saved/
+  // is the same feed shape /reels/following/ uses: full ReelSerializer objects
+  // with image/media/thumbnail and the readiness flags the grid relies on.
+  getSavedPosts: () => api.request("/reels/saved/"),
 
   toggleSavePost: (reelId) =>
     api.request("/saved/toggle/", {

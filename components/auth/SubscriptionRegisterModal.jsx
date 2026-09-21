@@ -209,27 +209,14 @@ export function SubscriptionRegisterModal({
       let res;
       let data;
       
-      if (fromTelebirr) {
-        // Use Telebirr OTP verification endpoint
-        console.log('[SUBSCRIPTION REGISTRATION JOURNEY] Using Telebirr OTP endpoint');
-        res = await api.post('/auth/verify-telebirr-subscription-otp/', {
-          phone: toE164(phone),
-          otp,
-          username: !existingUser ? username : undefined,
-          password,
-        });
-        data = res.data || res;
-      } else {
-        // Use original subscription OTP endpoint
-        console.log('[SUBSCRIPTION REGISTRATION JOURNEY] Using subscription OTP endpoint');
-        res = await api.post('/auth/login-with-subscription-otp/', {
-          phone: toE164(phone),
-          otp,
-          password,
-          username: !existingUser ? username : undefined,
-        });
-        data = res.data || res;
-      }
+      console.log('[SUBSCRIPTION REGISTRATION JOURNEY] Using subscription OTP endpoint');
+      res = await api.post('/auth/login-with-subscription-otp/', {
+        phone: toE164(phone),
+        otp,
+        password,
+        username: !existingUser ? username : undefined,
+      });
+      data = res.data || res;
       
       console.log('[SUBSCRIPTION REGISTRATION JOURNEY] Login successful:', { userId: data.user.id, username: data.user.username, is_new_user: data.is_new_user });
       api.setAuthToken(data.token);

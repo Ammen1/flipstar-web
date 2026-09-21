@@ -313,7 +313,10 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
 
   const handleRemoveFromSaved = async (postId) => {
     try {
-      await api.request(`/saved/${postId}/`, { method: 'DELETE' });
+      // postId is a reel id (the saved list is /reels/saved/, full reel
+      // objects). Unsave by reel via the toggle, not DELETE /saved/<pk>/,
+      // which expects a SavedPost id and would miss the row entirely.
+      await api.toggleSavePost(postId);
       setSuccessMsg('Removed from saved');
       setTimeout(() => setSuccessMsg(''), 2500);
       setPostMenuId(null);

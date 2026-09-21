@@ -5,6 +5,7 @@ import { describeAuthError, extractErrorMessage, formatWait } from '../../utils/
 import { useLockoutTimer } from '../../utils/useLockoutTimer';
 import { ForgotPasswordPhone } from './ForgotPasswordPhone';
 import { FaqModal, TermsModal } from './LoginFaqTermsModals';
+import { SubscriptionRegisterModal } from './SubscriptionRegisterModal';
 import { sanitizePhoneInput, toE164, PHONE_MAX_DIGITS, INVALID_PHONE_MESSAGE } from '../../utils/phone';
 
 const GOLD =
@@ -41,9 +42,11 @@ export function PhoneLoginModal({
   const [showForgot, setShowForgot] = useState(false);
   const [focusPhone, setFocusPhone] = useState(false);
   const [focusPwd, setFocusPwd] = useState(false);
-  const [activeModal, setActiveModal] = useState(null); // 'faq' | 'terms' | 'superapp-phone' | 'superapp-otp'
+  const [activeModal, setActiveModal] = useState(null); // 'faq' | 'terms' | 'superapp-phone' | 'superapp-otp' | 'superapp-register'
   const [superappPhone, setSuperappPhone] = useState("");
   const [superappOtp, setSuperappOtp] = useState("");
+  const [superappSetupOtp, setSuperappSetupOtp] = useState("");
+  const [superappExistingUser, setSuperappExistingUser] = useState(false);
   const [superappLoading, setSuperappLoading] = useState(false);
   const [superappError, setSuperappError] = useState("");
   const lockout = useLockoutTimer();
@@ -93,9 +96,9 @@ export function PhoneLoginModal({
       
       if (telebirrOtpMode) {
         // Telebirr OTP login mode
-        res = await api.post('/auth/verify-telebirr-subscription-otp/', {
+        res = await api.post('/auth/login-with-otp/', {
           phone: toE164(phone),
-          otp: password,
+          code: password,
         });
         data = res.data || res;
         api.setAuthToken(data.token);
@@ -191,12 +194,14 @@ export function PhoneLoginModal({
       // the check response and posted back here, which meant a provisioned
       // key was returned to any unauthenticated caller who knew a subscribed
       // number.
-      const otpPayload = { phone: toE164(superappPhone) };
-      const otpRes = await api.post('/auth/send-login-otp/', otpPayload);
+      const normalizedPhone = toE164(superappPhone);
+      const otpRes = await api.post('/auth/resend-subscription-otp/', { phone: normalizedPhone });
       console.log('✅ OTP sent:', otpRes.data);
 
-      // Show OTP modal
-      setActiveModal('superapp-otp');
+      setSuperappPhone(normalizedPhone);
+      setSuperappExistingUser(Boolean(checkRes.data.user_exists));
+      setSuperappSetupOtp(otpRes.data?.dev_code || "");
+      setActiveModal('superapp-register');
     } catch (e) {
       console.error('❌ SuperApp phone error:', e);
       setSuperappError(extractErrorMessage(e, "Failed to check subscription or send OTP"));
@@ -280,6 +285,16 @@ export function PhoneLoginModal({
       )}
       {activeModal === 'terms' && (
         <TermsModal onClose={() => setActiveModal(null)} />
+      )}
+      {activeModal === 'superapp-register' && (
+        <SubscriptionRegisterModal
+          prefillPhone={superappPhone}
+          prefillOtp={superappSetupOtp}
+          existingUser={superappExistingUser}
+          fromTelebirr
+          onSuccess={onSuccess}
+          onBackToLogin={() => setActiveModal('superapp-phone')}
+        />
       )}
       {activeModal === 'superapp-phone' && (
         <div onClick={() => setActiveModal(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 9999, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
