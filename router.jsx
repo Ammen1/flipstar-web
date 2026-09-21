@@ -531,12 +531,14 @@ function VideoDetailPageWrapper() {
 
 function SubscriptionPageStandalone() {
   const h = useNavHelpers();
+  const location = useLocation();
   return (
     <Lazy>
       <SubscriptionPage
         user={h.authUser}
         onBack={() => h.navigate("/")}
         onLogin={() => h.navigate("/login")}
+        subscriptionHandoff={location.state}
         onAuthSuccess={(user, token) => {
           h.setAuthUser(user);
           localStorage.setItem("authToken", token);

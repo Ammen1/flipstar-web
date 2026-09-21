@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   Crown, Zap, Calendar, Coins, Check, X, ChevronLeft,
-  Star, Trophy, Gem, MessageCircle, Info, Video, Ban, AlertCircle, Phone,
+  Star, Trophy, Gem, MessageCircle, Info, Video, Ban, AlertCircle, Phone, User, Lock,
 } from 'lucide-react';
 import api from '../../api';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -11,6 +11,7 @@ import { isSubscriptionActive } from '../../utils/subscription';
 import { offerablePlans } from '../../utils/planOffers';
 import { describePayment, isSuccess, PENDING as PAYMENT_PENDING } from '../../utils/paymentStatus';
 import { sanitizePhoneInput, toE164, PHONE_MAX_DIGITS, INVALID_PHONE_MESSAGE, COUNTRY_CODE } from '../../utils/phone';
+import { SubscriptionRegisterModal } from '../../components/auth/SubscriptionRegisterModal';
 
 const getFallbackTiers = () => [
   {
@@ -39,7 +40,14 @@ const getFallbackTiers = () => [
   },
 ];
 
-export function SubscriptionPage({ user, onBack, onAuthSuccess, onLogin, variant = 'page' }) {
+export function SubscriptionPage({
+  user,
+  onBack,
+  onAuthSuccess,
+  onLogin,
+  subscriptionHandoff,
+  variant = 'page',
+}) {
   // 'page' fills the viewport at /subscription. 'modal' is the same content
   // inside components/subscription/SubscriptionModal, which owns the height,
   // the scrolling and the close control -- so the page must not also claim a
@@ -66,6 +74,8 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess, onLogin, variant
   const [telebirrModalOpen, setTelebirrModalOpen] = useState(false);
   const [telebirrPhoneInputOpen, setTelebirrPhoneInputOpen] = useState(false);
   const [telebirrPhone, setTelebirrPhone] = useState('');
+  const [telebirrUsername, setTelebirrUsername] = useState('');
+  const [telebirrPin, setTelebirrPin] = useState('');
   // The input holds the 9-digit subscriber part only (the +251 is fixed and
   // never typed), so this must never be gated on a digit count: the guard
   // here used to demand ten digits, which the 9-digit maxLength made
@@ -102,6 +112,9 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess, onLogin, variant
   // SuperApp the page is unauthenticated and cannot read /subscriptions/,
   // so this is the only way it learns what the user already holds.
   const [existingSubscription, setExistingSubscription] = useState(null);
+  const [showFirstTimeSetup, setShowFirstTimeSetup] = useState(
+    Boolean(subscriptionHandoff?.from_telebirr && subscriptionHandoff?.phone),
+  );
   const [methodModalOpen, setMethodModalOpen] = useState(false);
   const [selectedTierForMethod, setSelectedTierForMethod] = useState(null);
   // Inline toast state — replaces native alert() popups for the on-demand flow
@@ -538,6 +551,8 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess, onLogin, variant
     } else {
       console.log('[SubscriptionPage] Not in SuperApp, opening phone input modal');
       setTelebirrPhone('');
+      setTelebirrUsername('');
+      setTelebirrPin('');
       setTelebirrPhoneInputOpen(true);
     }
   };
@@ -545,6 +560,14 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess, onLogin, variant
   const handleTelebirrPhoneSubmit = () => {
     if (!toE164(telebirrPhone)) {
       showToast('error', 'Please enter a valid phone number');
+      return;
+    }
+    if (!/^[a-zA-Z0-9_]{3,30}$/.test(telebirrUsername.trim())) {
+      showToast('error', 'Username must be 3-30 letters, numbers, or underscores');
+      return;
+    }
+    if (!/^\d{6}$/.test(telebirrPin)) {
+      showToast('error', 'PIN must be exactly 6 digits');
       return;
     }
     setTelebirrPhoneInputOpen(false);
@@ -2081,21 +2104,79 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess, onLogin, variant
               {showPhoneError ? INVALID_PHONE_MESSAGE : 'Example: 944365493'}
             </div>
 
+            <label
+              htmlFor="telebirr-username-input"
+              style={{
+                display: 'block', fontSize: 12, fontWeight: 700,
+                color: BRAND_GREEN, marginBottom: 7, letterSpacing: 0.2,
+              }}
+            >
+              Username
+            </label>
+            <div style={{ position: 'relative', marginBottom: 14 }}>
+              <User size={17} color={BRAND_GREEN} style={{
+                position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)',
+              }} />
+              <input
+                id="telebirr-username-input"
+                type="text"
+                value={telebirrUsername}
+                onChange={(e) => setTelebirrUsername(e.target.value.replace(/\s/g, '').slice(0, 30))}
+                placeholder="Choose a username"
+                autoComplete="username"
+                style={{
+                  width: '100%', padding: isMobile ? '15px 14px 15px 44px' : '14px 14px 14px 44px',
+                  background: '#101010', border: `1.5px solid ${M_BORDER}`,
+                  borderRadius: 12, fontSize: 16, color: '#fff', outline: 'none', boxSizing: 'border-box',
+                }}
+              />
+            </div>
+
+            <label
+              htmlFor="telebirr-pin-input"
+              style={{
+                display: 'block', fontSize: 12, fontWeight: 700,
+                color: BRAND_GREEN, marginBottom: 7, letterSpacing: 0.2,
+              }}
+            >
+              PIN
+            </label>
+            <div style={{ position: 'relative', marginBottom: 16 }}>
+              <Lock size={17} color={BRAND_GREEN} style={{
+                position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)',
+              }} />
+              <input
+                id="telebirr-pin-input"
+                type="password"
+                inputMode="numeric"
+                value={telebirrPin}
+                onChange={(e) => setTelebirrPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="6-digit PIN"
+                maxLength={6}
+                autoComplete="new-password"
+                style={{
+                  width: '100%', padding: isMobile ? '15px 14px 15px 44px' : '14px 14px 14px 44px',
+                  background: '#101010', border: `1.5px solid ${M_BORDER}`,
+                  borderRadius: 12, fontSize: 16, color: '#fff', outline: 'none', boxSizing: 'border-box',
+                }}
+              />
+            </div>
+
             <button
               onClick={handleTelebirrPhoneSubmit}
-              disabled={!telebirrPhoneValid}
+              disabled={!telebirrPhoneValid || !telebirrUsername.trim() || !/^\d{6}$/.test(telebirrPin)}
               style={{
                 width: '100%',
                 minHeight: 52,
                 padding: isMobile ? '15px' : '14px',
-                background: telebirrPhoneValid ? BRAND_GREEN : '#2A3320',
+                background: telebirrPhoneValid && telebirrUsername.trim() && /^\d{6}$/.test(telebirrPin) ? BRAND_GREEN : '#2A3320',
                 border: 'none',
                 borderRadius: 13,
-                color: telebirrPhoneValid ? '#0B1207' : '#5F6B4F',
+                color: telebirrPhoneValid && telebirrUsername.trim() && /^\d{6}$/.test(telebirrPin) ? '#0B1207' : '#5F6B4F',
                 fontSize: 16,
                 fontWeight: 800,
-                cursor: telebirrPhoneValid ? 'pointer' : 'not-allowed',
-                boxShadow: telebirrPhoneValid ? '0 6px 20px rgba(143,196,65,0.28)' : 'none',
+                cursor: telebirrPhoneValid && telebirrUsername.trim() && /^\d{6}$/.test(telebirrPin) ? 'pointer' : 'not-allowed',
+                boxShadow: telebirrPhoneValid && telebirrUsername.trim() && /^\d{6}$/.test(telebirrPin) ? '0 6px 20px rgba(143,196,65,0.28)' : 'none',
                 transition: 'background .15s ease, color .15s ease',
                 WebkitTapHighlightColor: 'transparent',
               }}
@@ -2280,6 +2361,23 @@ export function SubscriptionPage({ user, onBack, onAuthSuccess, onLogin, variant
             </div>
           </div>
         </div>
+      )}
+
+      {showFirstTimeSetup && subscriptionHandoff?.phone && (
+        <SubscriptionRegisterModal
+          prefillPhone={subscriptionHandoff.phone}
+          prefillOtp=""
+          existingUser={Boolean(subscriptionHandoff.existing_user)}
+          fromTelebirr
+          onSuccess={(account, isNewUser) => {
+            setShowFirstTimeSetup(false);
+            onAuthSuccess?.(account, isNewUser);
+          }}
+          onBackToLogin={() => {
+            setShowFirstTimeSetup(false);
+            onLogin?.();
+          }}
+        />
       )}
 
       {toast && (

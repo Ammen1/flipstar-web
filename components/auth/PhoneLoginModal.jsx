@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Phone, Lock, Eye, EyeOff, Loader, X, ChevronLeft } from 'lucide-react';
+import { Phone, User, Lock, Eye, EyeOff, Loader, X, ChevronLeft } from 'lucide-react';
 import api from '../../api';
 import { describeAuthError, extractErrorMessage, formatWait } from '../../utils/authErrors';
 import { useLockoutTimer } from '../../utils/useLockoutTimer';
@@ -85,7 +85,7 @@ export function PhoneLoginModal({
       setError('Please fill in all fields');
       return;
     }
-    if (!toE164(phone)) {
+    if (telebirrOtpMode && !toE164(phone)) {
       setError(INVALID_PHONE_MESSAGE);
       return;
     }
@@ -103,13 +103,15 @@ export function PhoneLoginModal({
         data = res.data || res;
         api.setAuthToken(data.token);
       } else {
-        // Normal login mode
-        res = await api.post('/auth/login-with-phone/', {
-          // toE164 owns the country code, so the field never carries one and
-          // the value can never come out as +251+251...
-          phone: toE164(phone),
-          password,
-        });
+        // Normal login accepts either the account username or the registered
+        // phone number. Username login is used from the subscription page;
+        // phone login remains available for existing SMS subscribers.
+        res = toE164(phone)
+          ? await api.post('/auth/login-with-phone/', {
+              phone: toE164(phone),
+              password,
+            })
+          : await api.login(phone.trim(), password);
         data = res.data || res;
         api.setAuthToken(data.token);
       }
@@ -489,7 +491,7 @@ export function PhoneLoginModal({
                 </div>
               )}
 
-              {/* Phone */}
+              {/* Username or phone */}
               <div style={{ marginBottom: isMobile ? 10 : 16 }}>
                 <label
                   style={{
@@ -501,7 +503,7 @@ export function PhoneLoginModal({
                     letterSpacing: 0.5,
                   }}
                 >
-                  Phone Number
+                  {telebirrOtpMode ? 'Phone Number' : 'Username or Phone'}
                 </label>
                 <div style={{ position: 'relative' }}>
                   <div
@@ -514,18 +516,24 @@ export function PhoneLoginModal({
                       display: 'flex',
                     }}
                   >
-                    <Phone size={17} />
-                    <span style={{ fontSize: 14, fontWeight: 700, marginLeft: 6 }}>+251</span>
+                    {toE164(phone) || telebirrOtpMode ? <Phone size={17} /> : <User size={17} />}
+                    {toE164(phone) || telebirrOtpMode ? (
+                      <span style={{ fontSize: 14, fontWeight: 700, marginLeft: 6 }}>+251</span>
+                    ) : null}
                   </div>
                   <input
-                    type="tel"
+                    type={telebirrOtpMode ? 'tel' : 'text'}
                     value={phone}
-                    onChange={(e) => setPhone(sanitizePhoneInput(e.target.value))}
-                    placeholder="9XXXXXXXX"
-                    inputMode="numeric"
-                    maxLength={PHONE_MAX_DIGITS}
-                    aria-label="Ethiopian phone number without country code"
-                    style={{ ...inp(focusPhone), paddingLeft: 74 }}
+                    onChange={(e) => setPhone(
+                      telebirrOtpMode
+                        ? sanitizePhoneInput(e.target.value)
+                        : e.target.value.trimStart(),
+                    )}
+                    placeholder={telebirrOtpMode ? '9XXXXXXXX' : 'Username or 9XXXXXXXX'}
+                    inputMode={telebirrOtpMode ? 'numeric' : 'text'}
+                    maxLength={telebirrOtpMode ? PHONE_MAX_DIGITS : 150}
+                    aria-label={telebirrOtpMode ? 'Ethiopian phone number without country code' : 'Username or phone number'}
+                    style={{ ...inp(focusPhone), paddingLeft: toE164(phone) || telebirrOtpMode ? 74 : 46 }}
                     onFocus={() => setFocusPhone(true)}
                     onBlur={() => setFocusPhone(false)}
                     autoComplete="tel"
