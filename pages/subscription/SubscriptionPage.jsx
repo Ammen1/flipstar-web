@@ -1,42 +1,68 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from "react";
 import {
-  Crown, Zap, Calendar, Coins, Check, X, ChevronLeft,
-  Star, Trophy, Gem, MessageCircle, Info, Video, Ban, AlertCircle, Phone, User, Lock,
-} from 'lucide-react';
-import api from '../../api';
-import { useTheme } from '../../contexts/ThemeContext';
-import { useLanguage } from '../../contexts/LanguageContext';
-import telebirrH5 from '../../services/TelebirrH5Service';
-import { isSubscriptionActive } from '../../utils/subscription';
-import { offerablePlans } from '../../utils/planOffers';
-import { describePayment, isSuccess, PENDING as PAYMENT_PENDING } from '../../utils/paymentStatus';
-import { sanitizePhoneInput, toE164, PHONE_MAX_DIGITS, INVALID_PHONE_MESSAGE, COUNTRY_CODE } from '../../utils/phone';
-import { SubscriptionRegisterModal } from '../../components/auth/SubscriptionRegisterModal';
+  Crown,
+  Zap,
+  Calendar,
+  Coins,
+  Check,
+  X,
+  ChevronLeft,
+  Star,
+  Trophy,
+  Gem,
+  MessageCircle,
+  Info,
+  Video,
+  Ban,
+  AlertCircle,
+  Phone,
+  User,
+  Lock,
+} from "lucide-react";
+import api from "../../api";
+import { useTheme } from "../../contexts/ThemeContext";
+import { useLanguage } from "../../contexts/LanguageContext";
+import telebirrH5 from "../../services/TelebirrH5Service";
+import { isSubscriptionActive } from "../../utils/subscription";
+import { offerablePlans } from "../../utils/planOffers";
+import {
+  describePayment,
+  isSuccess,
+  PENDING as PAYMENT_PENDING,
+} from "../../utils/paymentStatus";
+import {
+  sanitizePhoneInput,
+  toE164,
+  PHONE_MAX_DIGITS,
+  INVALID_PHONE_MESSAGE,
+  COUNTRY_CODE,
+} from "../../utils/phone";
+import { SubscriptionRegisterModal } from "../../components/auth/SubscriptionRegisterModal";
 
 const getFallbackTiers = () => [
   {
-    id: 'd9701042-090a-49f9-bd43-39fa1b68d1d6',
-    name: 'Daily',
-    duration_type: 'daily',
+    id: "d9701042-090a-49f9-bd43-39fa1b68d1d6",
+    name: "Daily",
+    duration_type: "daily",
     price_etb: 3,
     price_coins: null,
-    description: 'Access for 24 hours'
+    description: "Access for 24 hours",
   },
   {
-    id: 'a5a1f1f0-f315-4f7f-9093-221f8b3f04d0',
-    name: 'Weekly',
-    duration_type: 'weekly',
+    id: "a5a1f1f0-f315-4f7f-9093-221f8b3f04d0",
+    name: "Weekly",
+    duration_type: "weekly",
     price_etb: 20,
     price_coins: null,
-    description: 'Access for 7 days'
+    description: "Access for 7 days",
   },
   {
-    id: 'monthly-tier-id-placeholder',
-    name: 'Monthly',
-    duration_type: 'monthly',
+    id: "monthly-tier-id-placeholder",
+    name: "Monthly",
+    duration_type: "monthly",
     price_etb: 70,
     price_coins: null,
-    description: 'Access for 30 days'
+    description: "Access for 30 days",
   },
 ];
 
@@ -46,23 +72,23 @@ export function SubscriptionPage({
   onAuthSuccess,
   onLogin,
   subscriptionHandoff,
-  variant = 'page',
+  variant = "page",
 }) {
   // 'page' fills the viewport at /subscription. 'modal' is the same content
   // inside components/subscription/SubscriptionModal, which owns the height,
   // the scrolling and the close control -- so the page must not also claim a
   // viewport height, or it would scroll inside a sheet that already scrolls.
-  const asModal = variant === 'modal';
+  const asModal = variant === "modal";
   const { colors: T } = useTheme();
   const { t } = useLanguage();
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 480);
-  
+
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 480);
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
-  
+
   const [tiers, setTiers] = useState(getFallbackTiers());
   const [currentSubscription, setCurrentSubscription] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -73,9 +99,9 @@ export function SubscriptionPage({
   const [pendingTier, setPendingTier] = useState(null);
   const [telebirrModalOpen, setTelebirrModalOpen] = useState(false);
   const [telebirrPhoneInputOpen, setTelebirrPhoneInputOpen] = useState(false);
-  const [telebirrPhone, setTelebirrPhone] = useState('');
-  const [telebirrUsername, setTelebirrUsername] = useState('');
-  const [telebirrPin, setTelebirrPin] = useState('');
+  const [telebirrPhone, setTelebirrPhone] = useState("");
+  const [telebirrUsername, setTelebirrUsername] = useState("");
+  const [telebirrPin, setTelebirrPin] = useState("");
   // The input holds the 9-digit subscriber part only (the +251 is fixed and
   // never typed), so this must never be gated on a digit count: the guard
   // here used to demand ten digits, which the 9-digit maxLength made
@@ -85,13 +111,13 @@ export function SubscriptionPage({
   // a literal '.00', which doubled up on an already-decimal price.
   const fmtEtb = (v) => {
     const n = Number(v);
-    return Number.isFinite(n) ? n.toFixed(2) : String(v ?? '');
+    return Number.isFinite(n) ? n.toFixed(2) : String(v ?? "");
   };
   // Receipts show the full number that will be charged, not the 9 digits
   // typed into the field.
   const displayPhone = (nine) => {
     const e164 = toE164(nine);
-    return e164 ? `${COUNTRY_CODE} ${nine}` : (nine || 'N/A');
+    return e164 ? `${COUNTRY_CODE} ${nine}` : nine || "N/A";
   };
   const telebirrPhoneValid = Boolean(toE164(telebirrPhone));
   // Only complain once something has been typed -- an empty field on open
@@ -107,7 +133,8 @@ export function SubscriptionPage({
   const [termsModalOpen, setTermsModalOpen] = useState(false);
   const [reconciling, setReconciling] = useState(false);
   const [reconcileAttempt, setReconcileAttempt] = useState(0);
-  const [activeSubscriptionModalOpen, setActiveSubscriptionModalOpen] = useState(false);
+  const [activeSubscriptionModalOpen, setActiveSubscriptionModalOpen] =
+    useState(false);
   // Filled from the server's ALREADY_SUBSCRIBED refusal. In the telebirr
   // SuperApp the page is unauthenticated and cannot read /subscriptions/,
   // so this is the only way it learns what the user already holds.
@@ -141,19 +168,24 @@ export function SubscriptionPage({
     // /subscription with NO auth token, causing it to show plan cards instead
     // of the now-active subscription. Detect this and silently re-authenticate.
     const reAuthIfSessionLost = async () => {
-      const hasToken = !!localStorage.getItem('authToken');
+      const hasToken = !!localStorage.getItem("authToken");
       if (telebirrH5.isInSuperApp() && !hasToken) {
         setLoading(true);
         try {
           const autoLoginResult = await telebirrH5.autoLogin();
           if (autoLoginResult.success && autoLoginResult.token) {
             api.setAuthToken(autoLoginResult.token);
-            localStorage.setItem('authToken', autoLoginResult.token);
-            if (autoLoginResult.user) localStorage.setItem('user', JSON.stringify(autoLoginResult.user));
-            if (onAuthSuccess) onAuthSuccess(autoLoginResult.user, autoLoginResult.token);
+            localStorage.setItem("authToken", autoLoginResult.token);
+            if (autoLoginResult.user)
+              localStorage.setItem(
+                "user",
+                JSON.stringify(autoLoginResult.user),
+              );
+            if (onAuthSuccess)
+              onAuthSuccess(autoLoginResult.user, autoLoginResult.token);
           }
         } catch (e) {
-          console.error('[SubscriptionPage] Re-auth on reload failed:', e);
+          console.error("[SubscriptionPage] Re-auth on reload failed:", e);
         } finally {
           setLoading(false);
         }
@@ -437,15 +469,20 @@ export function SubscriptionPage({
       loadSubscriptionData(true);
     };
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible' && !successModalOpen && !cancelModalOpen && !processing) {
+      if (
+        document.visibilityState === "visible" &&
+        !successModalOpen &&
+        !cancelModalOpen &&
+        !processing
+      ) {
         loadSubscriptionData(true);
       }
     };
-    window.addEventListener('focus', handleFocus);
-    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibility);
     return () => {
-      window.removeEventListener('focus', handleFocus);
-      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [user, successModalOpen, cancelModalOpen, processing]);
 
@@ -453,14 +490,14 @@ export function SubscriptionPage({
     try {
       // Fetch both in parallel but don't block UI
       const [tiersData, subscriptionData] = await Promise.all([
-        api.request('/subscriptions/tiers/active/').catch(() => []),
-        api.request('/subscriptions/', { skipCache }).catch(() => null),
+        api.request("/subscriptions/tiers/active/").catch(() => []),
+        api.request("/subscriptions/", { skipCache }).catch(() => null),
       ]);
-      
+
       const inSuperApp = telebirrH5.isInSuperApp();
-      console.log('[SubscriptionPage] isInSuperApp:', inSuperApp);
-      console.log('[SubscriptionPage] Raw tiers from API:', tiersData);
-      
+      console.log("[SubscriptionPage] isInSuperApp:", inSuperApp);
+      console.log("[SubscriptionPage] Raw tiers from API:", tiersData);
+
       // Only update tiers if API returns valid data
       if (Array.isArray(tiersData) && tiersData.length > 0) {
         // On-demand is not a way to start: it has no duration and tops up an
@@ -469,8 +506,8 @@ export function SubscriptionPage({
         // with no user (api/views/subscription.py); this applies the same rule
         // to the cached and offline paths, and changes nothing once signed in.
         let filteredTiers = offerablePlans(tiersData, user);
-        console.log('[SubscriptionPage] Plans offered:', filteredTiers);
-        
+        console.log("[SubscriptionPage] Plans offered:", filteredTiers);
+
         // Don't filter out daily tier in SuperApp - show it with mandate details
         setTiers(filteredTiers);
       }
@@ -478,10 +515,12 @@ export function SubscriptionPage({
 
       // Don't redirect - show cancel card for all active subscriptions
       if (isSubscriptionActive(subscriptionData)) {
-        console.log('[SubscriptionPage] User has active subscription, showing cancel card');
+        console.log(
+          "[SubscriptionPage] User has active subscription, showing cancel card",
+        );
       }
     } catch (error) {
-      console.error('Error loading subscription data:', error);
+      console.error("Error loading subscription data:", error);
       // Same rule when the API could not be reached.
       let fallbackTiers = offerablePlans(getFallbackTiers(), user);
       // Don't filter out daily tier in SuperApp - show it with mandate details
@@ -495,7 +534,7 @@ export function SubscriptionPage({
       count++;
       setPollCount(count);
       try {
-        const sub = await api.request('/subscriptions/', { skipCache: true });
+        const sub = await api.request("/subscriptions/", { skipCache: true });
         if (isSubscriptionActive(sub)) {
           clearInterval(pollRef.current);
           setCurrentSubscription(sub);
@@ -518,56 +557,73 @@ export function SubscriptionPage({
 
   const handleSubscribe = async (tier) => {
     // For regular subscriptions, use SMS
-    const tierCode = tier.duration_type === 'daily' ? '1' :
-                     tier.duration_type === 'weekly' ? '2' :
-                     tier.duration_type === 'monthly' ? '3' : '4';
-    const shortCode = tier.short_code || '9286';
+    const tierCode =
+      tier.duration_type === "daily"
+        ? "1"
+        : tier.duration_type === "weekly"
+          ? "2"
+          : tier.duration_type === "monthly"
+            ? "3"
+            : "4";
+    const shortCode = tier.short_code || "9286";
     const smsUrl = `sms:${shortCode}?body=${encodeURIComponent(tierCode)}`;
     window.location.href = smsUrl;
   };
 
   const handleTelebirrSubscribe = async (tier) => {
-    console.log('[SubscriptionPage] handleTelebirrSubscribe called with tier:', tier);
-    console.log('[SubscriptionPage] processing:', processing);
-    console.log('[SubscriptionPage] currentSubscription:', currentSubscription);
-    console.log('[SubscriptionPage] isInSuperApp:', telebirrH5.isInSuperApp());
+    console.log(
+      "[SubscriptionPage] handleTelebirrSubscribe called with tier:",
+      tier,
+    );
+    console.log("[SubscriptionPage] processing:", processing);
+    console.log("[SubscriptionPage] currentSubscription:", currentSubscription);
+    console.log("[SubscriptionPage] isInSuperApp:", telebirrH5.isInSuperApp());
 
     if (processing) return;
 
     // Check if user already has active subscription (cross-platform ban)
     if (isSubscriptionActive(currentSubscription)) {
-      console.log('[SubscriptionPage] User has active subscription, showing modal');
+      console.log(
+        "[SubscriptionPage] User has active subscription, showing modal",
+      );
       setActiveSubscriptionModalOpen(true);
       return;
     }
 
     setSelectedTierForTelebirr(tier);
-    console.log('[SubscriptionPage] Selected tier for Telebirr:', tier);
+    console.log("[SubscriptionPage] Selected tier for Telebirr:", tier);
 
     // Directly proceed based on platform - no confirmation popup
     if (telebirrH5.isInSuperApp()) {
-      console.log('[SubscriptionPage] In SuperApp, calling handleSuperAppProceed');
+      console.log(
+        "[SubscriptionPage] In SuperApp, calling handleSuperAppProceed",
+      );
       handleSuperAppProceed(tier);
     } else {
-      console.log('[SubscriptionPage] Not in SuperApp, opening phone input modal');
-      setTelebirrPhone('');
-      setTelebirrUsername('');
-      setTelebirrPin('');
+      console.log(
+        "[SubscriptionPage] Not in SuperApp, opening phone input modal",
+      );
+      setTelebirrPhone("");
+      setTelebirrUsername("");
+      setTelebirrPin("");
       setTelebirrPhoneInputOpen(true);
     }
   };
 
   const handleTelebirrPhoneSubmit = () => {
     if (!toE164(telebirrPhone)) {
-      showToast('error', 'Please enter a valid phone number');
+      showToast("error", "Please enter a valid phone number");
       return;
     }
     if (!/^[a-zA-Z0-9_]{3,30}$/.test(telebirrUsername.trim())) {
-      showToast('error', 'Username must be 3-30 letters, numbers, or underscores');
+      showToast(
+        "error",
+        "Username must be 3-30 letters, numbers, or underscores",
+      );
       return;
     }
     if (!/^\d{6}$/.test(telebirrPin)) {
-      showToast('error', 'PIN must be exactly 6 digits');
+      showToast("error", "PIN must be exactly 6 digits");
       return;
     }
     setTelebirrPhoneInputOpen(false);
@@ -583,12 +639,13 @@ export function SubscriptionPage({
 
     // Log to server for production visibility
     try {
-      await api.request('/client-log/', {
-        method: 'POST',
+      await api.request("/client-log/", {
+        method: "POST",
         body: JSON.stringify({
-          level: 'info',
-          message: '[SubscriptionPage] ========== SUPERAPP ONE-TIME SUBSCRIPTION START ==========',
-          context: { selectedTier: tier }
+          level: "info",
+          message:
+            "[SubscriptionPage] ========== SUPERAPP ONE-TIME SUBSCRIPTION START ==========",
+          context: { selectedTier: tier },
         }),
       });
     } catch (e) {}
@@ -598,38 +655,50 @@ export function SubscriptionPage({
 
     try {
       // Get phone number from SuperApp (auto-login)
-      let phoneNumber = '';
+      let phoneNumber = "";
       try {
-        await api.request('/client-log/', {
-          method: 'POST',
+        await api.request("/client-log/", {
+          method: "POST",
           body: JSON.stringify({
-            level: 'info',
-            message: '[SubscriptionPage] SuperApp one-time flow - Getting phone number',
+            level: "info",
+            message:
+              "[SubscriptionPage] SuperApp one-time flow - Getting phone number",
           }),
         });
       } catch (e) {}
-      
+
       const autoLoginResult = await telebirrH5.autoLogin();
 
       try {
-        await api.request('/client-log/', {
-          method: 'POST',
+        await api.request("/client-log/", {
+          method: "POST",
           body: JSON.stringify({
-            level: 'info',
-            message: '[SubscriptionPage] SuperApp one-time flow - Auto-login result',
-            context: { success: autoLoginResult.success, hasUser: !!autoLoginResult.user, requiresSubscription: autoLoginResult.requiresSubscription }
+            level: "info",
+            message:
+              "[SubscriptionPage] SuperApp one-time flow - Auto-login result",
+            context: {
+              success: autoLoginResult.success,
+              hasUser: !!autoLoginResult.user,
+              requiresSubscription: autoLoginResult.requiresSubscription,
+            },
           }),
         });
       } catch (e) {}
 
       if (autoLoginResult.success && autoLoginResult.user) {
-        phoneNumber = autoLoginResult.telebirr_info?.identifier || autoLoginResult.user.phone_number || autoLoginResult.user.phoneNumber || '';
+        phoneNumber =
+          autoLoginResult.telebirr_info?.identifier ||
+          autoLoginResult.user.phone_number ||
+          autoLoginResult.user.phoneNumber ||
+          "";
         // Apply auth token so the authenticated initiate call succeeds and
         // re-check for an existing active subscription (ban multiple subs on SuperApp).
         if (autoLoginResult.token) {
           api.setAuthToken(autoLoginResult.token);
           try {
-            const freshSub = await api.request('/subscriptions/', { skipCache: true });
+            const freshSub = await api.request("/subscriptions/", {
+              skipCache: true,
+            });
             if (isSubscriptionActive(freshSub)) {
               setCurrentSubscription(freshSub);
               setActiveSubscriptionModalOpen(true);
@@ -640,67 +709,76 @@ export function SubscriptionPage({
           } catch (e) {}
         }
         try {
-          await api.request('/client-log/', {
-            method: 'POST',
+          await api.request("/client-log/", {
+            method: "POST",
             body: JSON.stringify({
-              level: 'info',
-              message: '[SubscriptionPage] SuperApp one-time flow - Got phone from logged in user',
-              context: { phoneNumber }
+              level: "info",
+              message:
+                "[SubscriptionPage] SuperApp one-time flow - Got phone from logged in user",
+              context: { phoneNumber },
             }),
           });
         } catch (e) {}
-      } else if (autoLoginResult.requiresSubscription && autoLoginResult.phoneNumber) {
+      } else if (
+        autoLoginResult.requiresSubscription &&
+        autoLoginResult.phoneNumber
+      ) {
         // User doesn't exist yet, but we got phone number from error response
         phoneNumber = autoLoginResult.phoneNumber;
         try {
-          await api.request('/client-log/', {
-            method: 'POST',
+          await api.request("/client-log/", {
+            method: "POST",
             body: JSON.stringify({
-              level: 'info',
-              message: '[SubscriptionPage] SuperApp one-time flow - Got phone from new user',
-              context: { phoneNumber }
+              level: "info",
+              message:
+                "[SubscriptionPage] SuperApp one-time flow - Got phone from new user",
+              context: { phoneNumber },
             }),
           });
         } catch (e) {}
       } else {
         // Fallback to profile if auto-login fails
         try {
-          const profile = await api.request('/profile/me/');
-          phoneNumber = profile?.phone_number || user?.profile?.phone_number || '';
-          await api.request('/client-log/', {
-            method: 'POST',
+          const profile = await api.request("/profile/me/");
+          phoneNumber =
+            profile?.phone_number || user?.profile?.phone_number || "";
+          await api.request("/client-log/", {
+            method: "POST",
             body: JSON.stringify({
-              level: 'info',
-              message: '[SubscriptionPage] SuperApp one-time flow - Got phone from profile fallback',
-              context: { phoneNumber }
+              level: "info",
+              message:
+                "[SubscriptionPage] SuperApp one-time flow - Got phone from profile fallback",
+              context: { phoneNumber },
             }),
           });
         } catch (e) {
-          await api.request('/client-log/', {
-            method: 'POST',
+          await api.request("/client-log/", {
+            method: "POST",
             body: JSON.stringify({
-              level: 'error',
-              message: '[SubscriptionPage] SuperApp one-time flow - Failed to get phone from profile',
-              context: { error: e.message }
+              level: "error",
+              message:
+                "[SubscriptionPage] SuperApp one-time flow - Failed to get phone from profile",
+              context: { error: e.message },
             }),
           });
         }
       }
 
       if (!phoneNumber) {
-        showToast('error', 'Could not get phone number. Please try again.');
+        showToast("error", "Could not get phone number. Please try again.");
         setProcessing(false);
         setProcessingTierId(null);
         return;
       }
 
       try {
-        await api.request('/client-log/', {
-          method: 'POST',
+        await api.request("/client-log/", {
+          method: "POST",
           body: JSON.stringify({
-            level: 'info',
-            message: '[SubscriptionPage] SuperApp one-time flow - Step 1: Purchasing one-time subscription',
-            context: { planType: tier.duration_type }
+            level: "info",
+            message:
+              "[SubscriptionPage] SuperApp one-time flow - Step 1: Purchasing one-time subscription",
+            context: { planType: tier.duration_type },
           }),
         });
       } catch (e) {}
@@ -709,29 +787,44 @@ export function SubscriptionPage({
       // For new users, pass phone number instead of requiring auth token
       const currentToken = api.getToken();
       try {
-        await api.request('/client-log/', {
-          method: 'POST',
+        await api.request("/client-log/", {
+          method: "POST",
           body: JSON.stringify({
-            level: 'info',
-            message: '[SubscriptionPage] SuperApp one-time flow - Token check before purchase',
-            context: { hasToken: !!currentToken, tokenPreview: currentToken ? currentToken.substring(0, 10) + '...' : 'None', phoneNumber }
+            level: "info",
+            message:
+              "[SubscriptionPage] SuperApp one-time flow - Token check before purchase",
+            context: {
+              hasToken: !!currentToken,
+              tokenPreview: currentToken
+                ? currentToken.substring(0, 10) + "..."
+                : "None",
+              phoneNumber,
+            },
           }),
         });
       } catch (e) {}
 
-      const purchaseResult = await telebirrH5.purchaseSubscription(tier.duration_type, phoneNumber);
+      const purchaseResult = await telebirrH5.purchaseSubscription(
+        tier.duration_type,
+        phoneNumber,
+      );
 
       try {
-        await api.request('/client-log/', {
-          method: 'POST',
+        await api.request("/client-log/", {
+          method: "POST",
           body: JSON.stringify({
-            level: 'info',
-            message: '[SubscriptionPage] SuperApp one-time flow - Purchase result',
-            context: { success: purchaseResult.success, pending: purchaseResult.pending, error: purchaseResult.error }
+            level: "info",
+            message:
+              "[SubscriptionPage] SuperApp one-time flow - Purchase result",
+            context: {
+              success: purchaseResult.success,
+              pending: purchaseResult.pending,
+              error: purchaseResult.error,
+            },
           }),
         });
       } catch (e) {}
-      
+
       // Only a payment the backend has confirmed opens the success modal.
       //
       // This used to be `if (!purchaseResult.success)`, and the bridge set
@@ -746,17 +839,22 @@ export function SubscriptionPage({
       if (!isSuccess(purchaseResult.state)) {
         const outcome = describePayment(purchaseResult);
         try {
-          await api.request('/client-log/', {
-            method: 'POST',
+          await api.request("/client-log/", {
+            method: "POST",
             body: JSON.stringify({
-              level: outcome.state === PAYMENT_PENDING ? 'info' : 'error',
-              message: '[SubscriptionPage] SuperApp one-time flow - Purchase not confirmed',
-              context: { state: outcome.state, reason: outcome.reason, error: purchaseResult.error }
+              level: outcome.state === PAYMENT_PENDING ? "info" : "error",
+              message:
+                "[SubscriptionPage] SuperApp one-time flow - Purchase not confirmed",
+              context: {
+                state: outcome.state,
+                reason: outcome.reason,
+                error: purchaseResult.error,
+              },
             }),
           });
         } catch (e) {}
         showToast(
-          outcome.state === PAYMENT_PENDING ? 'info' : 'error',
+          outcome.state === PAYMENT_PENDING ? "info" : "error",
           purchaseResult.error || outcome.message,
         );
         setProcessing(false);
@@ -770,12 +868,16 @@ export function SubscriptionPage({
       // for brand-new users (their account didn't exist yet), so we must
       // retry auto-login now that the SuperApp account should exist.
       try {
-        await api.request('/client-log/', {
-          method: 'POST',
+        await api.request("/client-log/", {
+          method: "POST",
           body: JSON.stringify({
-            level: 'info',
-            message: '[SubscriptionPage] SuperApp one-time flow - Payment result, resolving auth token',
-            context: { pending: purchaseResult.pending, hadPriorToken: !!autoLoginResult.token }
+            level: "info",
+            message:
+              "[SubscriptionPage] SuperApp one-time flow - Payment result, resolving auth token",
+            context: {
+              pending: purchaseResult.pending,
+              hadPriorToken: !!autoLoginResult.token,
+            },
           }),
         });
       } catch (e) {}
@@ -789,10 +891,10 @@ export function SubscriptionPage({
         // synchronous payment/query flow.
         for (let attempt = 1; attempt <= 5; attempt++) {
           try {
-            await api.request('/client-log/', {
-              method: 'POST',
+            await api.request("/client-log/", {
+              method: "POST",
               body: JSON.stringify({
-                level: 'info',
+                level: "info",
                 message: `[SubscriptionPage] SuperApp one-time flow - Retry auto-login attempt ${attempt}`,
               }),
             });
@@ -811,9 +913,11 @@ export function SubscriptionPage({
 
       if (finalAuthResult.success && finalAuthResult.token) {
         api.setAuthToken(finalAuthResult.token);
-        localStorage.setItem('authToken', finalAuthResult.token);
-        if (finalAuthResult.user) localStorage.setItem('user', JSON.stringify(finalAuthResult.user));
-        if (onAuthSuccess) onAuthSuccess(finalAuthResult.user, finalAuthResult.token);
+        localStorage.setItem("authToken", finalAuthResult.token);
+        if (finalAuthResult.user)
+          localStorage.setItem("user", JSON.stringify(finalAuthResult.user));
+        if (onAuthSuccess)
+          onAuthSuccess(finalAuthResult.user, finalAuthResult.token);
         setSuccessModalOpen(true);
         setTimeout(() => {
           setSuccessModalOpen(false);
@@ -821,12 +925,13 @@ export function SubscriptionPage({
         }, 2500);
       } else {
         try {
-          await api.request('/client-log/', {
-            method: 'POST',
+          await api.request("/client-log/", {
+            method: "POST",
             body: JSON.stringify({
-              level: 'error',
-              message: '[SubscriptionPage] SuperApp one-time flow - Auto-login retries exhausted after successful payment',
-              context: { phoneNumber }
+              level: "error",
+              message:
+                "[SubscriptionPage] SuperApp one-time flow - Auto-login retries exhausted after successful payment",
+              context: { phoneNumber },
             }),
           });
         } catch (e) {}
@@ -841,16 +946,16 @@ export function SubscriptionPage({
       }
     } catch (error) {
       try {
-        await api.request('/client-log/', {
-          method: 'POST',
+        await api.request("/client-log/", {
+          method: "POST",
           body: JSON.stringify({
-            level: 'error',
-            message: '[SubscriptionPage] SuperApp one-time flow - Exception',
-            context: { error: error.message, stack: error.stack }
+            level: "error",
+            message: "[SubscriptionPage] SuperApp one-time flow - Exception",
+            context: { error: error.message, stack: error.stack },
           }),
         });
       } catch (e) {}
-      showToast('error', 'Failed to process subscription');
+      showToast("error", "Failed to process subscription");
     } finally {
       setProcessing(false);
       setProcessingTierId(null);
@@ -864,11 +969,20 @@ export function SubscriptionPage({
   // ============================================================================
   const handleTelebirrProceed = async () => {
     const clog = (level, message, data) => {
-      console[level === 'error' ? 'error' : 'log'](`[SubscriptionPage][USSD] ${message}`, data || '');
-      api.request('/client-log/', {
-        method: 'POST',
-        body: JSON.stringify({ level, message: `[SubscriptionPage][USSD] ${message}`, data }),
-      }).catch(() => {});
+      console[level === "error" ? "error" : "log"](
+        `[SubscriptionPage][USSD] ${message}`,
+        data || "",
+      );
+      api
+        .request("/client-log/", {
+          method: "POST",
+          body: JSON.stringify({
+            level,
+            message: `[SubscriptionPage][USSD] ${message}`,
+            data,
+          }),
+        })
+        .catch(() => {});
     };
 
     setProcessing(true);
@@ -876,35 +990,51 @@ export function SubscriptionPage({
     setTelebirrModalOpen(false);
 
     const isAuthed = api.hasToken();
-    clog('info', 'USSD proceed clicked', { tierId: selectedTierForTelebirr.id, isAuthed, telebirrPhone });
+    clog("info", "USSD proceed clicked", {
+      tierId: selectedTierForTelebirr.id,
+      isAuthed,
+      telebirrPhone,
+    });
 
     try {
       const requestBody = {
         tier_id: selectedTierForTelebirr.id,
       };
-      
+
       // Add phone number if user is not authenticated
       if (!isAuthed) {
         if (!toE164(telebirrPhone)) {
-          clog('error', 'Invalid phone number entered', { telebirrPhone });
-          showToast('error', 'Please enter a valid phone number');
+          clog("error", "Invalid phone number entered", { telebirrPhone });
+          showToast("error", "Please enter a valid phone number");
           setProcessing(false);
           setProcessingTierId(null);
           return;
         }
         requestBody.phone_number = telebirrPhone;
       }
-      
-      clog('info', 'Calling /subscription/telebirr/ussd/initiate/', requestBody);
-      const response = await api.request('/subscription/telebirr/ussd/initiate/', {
-        method: 'POST',
-        body: JSON.stringify(requestBody),
-      });
-      clog('info', 'Initiate response received', response);
+
+      clog(
+        "info",
+        "Calling /subscription/telebirr/ussd/initiate/",
+        requestBody,
+      );
+      const response = await api.request(
+        "/subscription/telebirr/ussd/initiate/",
+        {
+          method: "POST",
+          body: JSON.stringify(requestBody),
+        },
+      );
+      clog("info", "Initiate response received", response);
 
       if (response.success && response.originator_conversation_id) {
         const originatorId = response.originator_conversation_id;
-        clog('info', 'USSD push accepted, starting status poll', { originatorId, isAuthed, POLL_INTERVAL, MAX_POLLS });
+        clog("info", "USSD push accepted, starting status poll", {
+          originatorId,
+          isAuthed,
+          POLL_INTERVAL,
+          MAX_POLLS,
+        });
 
         // Poll payment/subscription status until the webhook activates it.
         // NOTE: For anonymous (phone-only) users we CANNOT poll the
@@ -919,14 +1049,23 @@ export function SubscriptionPage({
           try {
             let payment;
             if (isAuthed) {
-              payment = await api.request('/subscriptions/', { skipCache: true });
-              clog('info', `Poll #${count} (authenticated /subscriptions/)`, payment);
+              payment = await api.request("/subscriptions/", {
+                skipCache: true,
+              });
+              clog(
+                "info",
+                `Poll #${count} (authenticated /subscriptions/)`,
+                payment,
+              );
               if (isSubscriptionActive(payment)) {
                 clearInterval(pollRef.current);
                 setProcessing(false);
                 setProcessingTierId(null);
                 setCurrentSubscription(payment);
-                clog('info', 'Subscription active, user already logged in - showing success');
+                clog(
+                  "info",
+                  "Subscription active, user already logged in - showing success",
+                );
                 setSuccessModalOpen(true);
                 setTimeout(() => {
                   setSuccessModalOpen(false);
@@ -936,56 +1075,78 @@ export function SubscriptionPage({
             } else {
               payment = await api.request(
                 `/subscription/telebirr/ussd/status/?originator_conversation_id=${encodeURIComponent(originatorId)}`,
-                { skipCache: true }
+                { skipCache: true },
               );
-              clog('info', `Poll #${count} (public ussd/status)`, payment);
+              clog("info", `Poll #${count} (public ussd/status)`, payment);
 
-              if (payment && payment.status === 'failed') {
+              if (payment && payment.status === "failed") {
                 clearInterval(pollRef.current);
                 setProcessing(false);
                 setProcessingTierId(null);
-                clog('error', 'Payment failed per webhook', payment);
-                showToast('error', 'Payment failed. Please try again.');
+                clog("error", "Payment failed per webhook", payment);
+                showToast("error", "Payment failed. Please try again.");
                 return;
               }
 
-              if (payment && payment.status === 'completed' && payment.subscription_status === 'active') {
+              if (
+                payment &&
+                payment.status === "completed" &&
+                payment.subscription_status === "active"
+              ) {
                 clearInterval(pollRef.current);
                 setProcessing(false);
                 setProcessingTierId(null);
-                clog('info', 'Payment completed + subscription active - redirecting to login/register', payment);
+                clog(
+                  "info",
+                  "Payment completed + subscription active - redirecting to login/register",
+                  payment,
+                );
 
                 const phone = payment.phone_number || telebirrPhone;
                 if (phone) {
                   const is_new_user = payment.is_new_user;
-                  clog('info', 'Redirecting based on is_new_user from status endpoint', { phone, is_new_user });
+                  clog(
+                    "info",
+                    "Redirecting based on is_new_user from status endpoint",
+                    { phone, is_new_user },
+                  );
                   if (is_new_user) {
                     window.location.href = `/?subscription_tp=true&phone=${phone}&from_telebirr=true`;
                   } else {
                     window.location.href = `/?login=true&phone=${phone}&telebirr_otp_mode=true`;
                   }
                 } else {
-                  clog('error', 'No phone number available for redirect, falling back to login');
-                  window.location.href = '/?login=true';
+                  clog(
+                    "error",
+                    "No phone number available for redirect, falling back to login",
+                  );
+                  window.location.href = "/?login=true";
                 }
               }
             }
           } catch (e) {
-            clog('error', `Poll #${count} threw an exception`, { error: e.message });
+            clog("error", `Poll #${count} threw an exception`, {
+              error: e.message,
+            });
           }
           if (count >= MAX_POLLS) {
             clearInterval(pollRef.current);
             setProcessing(false);
             setProcessingTierId(null);
-            clog('error', 'Polling exhausted MAX_POLLS without activation', { count });
-            showToast('info', 'Payment is taking longer than expected. Please check your subscription status.');
+            clog("error", "Polling exhausted MAX_POLLS without activation", {
+              count,
+            });
+            showToast(
+              "info",
+              "Payment is taking longer than expected. Please check your subscription status.",
+            );
           }
         }, POLL_INTERVAL);
       } else {
-        clog('error', 'Initiate failed', response);
+        clog("error", "Initiate failed", response);
         setProcessing(false);
         setProcessingTierId(null);
-        showToast('error', response.error || 'Failed to initiate USSD payment');
+        showToast("error", response.error || "Failed to initiate USSD payment");
       }
     } catch (error) {
       setProcessing(false);
@@ -995,15 +1156,18 @@ export function SubscriptionPage({
       // Show what they already have rather than a failure -- nothing went
       // wrong, and telling them it did invites another attempt.
       const body = error?.data || error?.response?.data || error || {};
-      if (body.code === 'ALREADY_SUBSCRIBED' || error?.status === 409) {
-        clog('info', 'Server refused a duplicate subscription', body);
+      if (body.code === "ALREADY_SUBSCRIBED" || error?.status === 409) {
+        clog("info", "Server refused a duplicate subscription", body);
         setExistingSubscription(body.subscription || null);
         setActiveSubscriptionModalOpen(true);
         return;
       }
 
-      clog('error', 'Exception during USSD initiate', { error: error.message, stack: error.stack });
-      showToast('error', 'Failed to process telebirr subscription');
+      clog("error", "Exception during USSD initiate", {
+        error: error.message,
+        stack: error.stack,
+      });
+      showToast("error", "Failed to process telebirr subscription");
     }
   };
 
@@ -1051,106 +1215,115 @@ export function SubscriptionPage({
   //   }
   // };
 
-
   const handlePayment = async () => {
     if (!selectedTier) return;
 
     setProcessing(true);
     try {
-      const response = await api.request('/subscriptions/subscribe/', {
-        method: 'POST',
+      const response = await api.request("/subscriptions/subscribe/", {
+        method: "POST",
         body: JSON.stringify({
           tier_id: selectedTier.id,
           payment_method: paymentMethod,
         }),
       });
 
-      if (response.status === 'success' || response.status === 'pending') {
+      if (response.status === "success" || response.status === "pending") {
         if (response.payment_url) {
           // Redirect to payment URL for telebirr
-          window.open(response.payment_url, '_blank');
+          window.open(response.payment_url, "_blank");
         }
-        alert(response.message || 'Subscription initiated successfully');
+        alert(response.message || "Subscription initiated successfully");
         setShowPaymentModal(false);
         loadSubscriptionData();
       } else {
-        alert(response.error || 'Failed to subscribe');
+        alert(response.error || "Failed to subscribe");
       }
     } catch (error) {
-      console.error('Subscription error:', error);
-      alert('Failed to process subscription');
+      console.error("Subscription error:", error);
+      alert("Failed to process subscription");
     } finally {
       setProcessing(false);
     }
   };
 
   const handleUnsubscribe = async () => {
-    if (confirm('Are you sure you want to cancel your subscription?')) {
+    if (confirm("Are you sure you want to cancel your subscription?")) {
       try {
-        await api.request('/subscriptions/unsubscribe/', {
-          method: 'POST',
+        await api.request("/subscriptions/unsubscribe/", {
+          method: "POST",
         });
-        alert('Subscription cancelled successfully');
+        alert("Subscription cancelled successfully");
         loadSubscriptionData();
       } catch (error) {
-        alert('Failed to cancel subscription');
+        alert("Failed to cancel subscription");
       }
     }
   };
 
   const handleCancelTelebirrSubscription = async () => {
     if (!currentSubscription?.mandate_id) {
-      showToast('error', 'No telebirr mandate found');
+      showToast("error", "No telebirr mandate found");
       return;
     }
 
-    if (confirm('Are you sure you want to cancel your telebirr subscription?')) {
+    if (
+      confirm("Are you sure you want to cancel your telebirr subscription?")
+    ) {
       setProcessing(true);
       try {
-        const response = await api.request('/direct-debit/cancel/', {
-          method: 'POST',
+        const response = await api.request("/direct-debit/cancel/", {
+          method: "POST",
           body: JSON.stringify({
             mandate_id: currentSubscription.mandate_id,
           }),
         });
 
         if (response.success) {
-          showToast('success', 'telebirr subscription cancelled successfully');
+          showToast("success", "telebirr subscription cancelled successfully");
           loadSubscriptionData();
         } else {
-          showToast('error', response.error || 'Failed to cancel telebirr subscription');
+          showToast(
+            "error",
+            response.error || "Failed to cancel telebirr subscription",
+          );
         }
       } catch (error) {
-        console.error('Cancel telebirr subscription error:', error);
-        showToast('error', 'Failed to cancel telebirr subscription');
+        console.error("Cancel telebirr subscription error:", error);
+        showToast("error", "Failed to cancel telebirr subscription");
       } finally {
         setProcessing(false);
       }
     }
   };
 
-
   // ── Mobile-app design tokens (mirrors mobile-app/src/screens/SubscriptionScreen.js) ──
-  const M_BG     = '#0B0B0C';
-  const M_CARD   = '#161616';
-  const M_BORDER = '#242424';
-  const BRAND_GREEN = '#8fc441';
-  const PLAN_COLORS = { daily: BRAND_GREEN, weekly: BRAND_GREEN, monthly: BRAND_GREEN };
-  const PLAN_ICON   = { daily: Zap,       weekly: Star,      monthly: Trophy };
+  const M_BG = "#0B0B0C";
+  const M_CARD = "#161616";
+  const M_BORDER = "#242424";
+  const BRAND_GREEN = "#8fc441";
+  const PLAN_COLORS = {
+    daily: BRAND_GREEN,
+    weekly: BRAND_GREEN,
+    monthly: BRAND_GREEN,
+  };
+  const PLAN_ICON = { daily: Zap, weekly: Star, monthly: Trophy };
   const BENEFITS = [
-    { icon: Video,  text: 'HD Videos' },
-    { icon: Ban,    text: 'No Ads' },
-    { icon: Star,   text: 'Exclusive Content' },
-    { icon: Trophy, text: 'Campaign Priority' },
+    { icon: Video, text: "HD Videos" },
+    { icon: Ban, text: "No Ads" },
+    { icon: Star, text: "Exclusive Content" },
+    { icon: Trophy, text: "Campaign Priority" },
   ];
 
-  const getTierColor = (durationType) => PLAN_COLORS[durationType] || BRAND_GREEN;
-  const getTierIcon  = (durationType) => PLAN_ICON[durationType] || Crown;
+  const getTierColor = (durationType) =>
+    PLAN_COLORS[durationType] || BRAND_GREEN;
+  const getTierIcon = (durationType) => PLAN_ICON[durationType] || Crown;
 
   // How many days a plan covers, for comparing plans of different lengths on
   // the only basis that makes them comparable: what a day costs.
   const DAYS_IN = { daily: 1, weekly: 7, monthly: 30 };
-  const daysCovered = (tier) => tier?.duration_days || DAYS_IN[tier?.duration_type] || 0;
+  const daysCovered = (tier) =>
+    tier?.duration_days || DAYS_IN[tier?.duration_type] || 0;
   const pricePerDay = (tier) => {
     const days = daysCovered(tier);
     const price = Number(tier?.price_etb);
@@ -1173,7 +1346,15 @@ export function SubscriptionPage({
 
   if (loading) {
     return (
-      <div style={{ padding: 40, textAlign: 'center', color: '#666', background: M_BG, minHeight: '100vh' }}>
+      <div
+        style={{
+          padding: 40,
+          textAlign: "center",
+          color: "#666",
+          background: M_BG,
+          minHeight: "100vh",
+        }}
+      >
         Loading subscription data…
       </div>
     );
@@ -1183,37 +1364,59 @@ export function SubscriptionPage({
   const hasAnySubscription = isActive;
 
   return (
-    <div style={{
-      ...(asModal
-        ? {}
-        : isMobile
-          ? { height: '100dvh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }
-          : { minHeight: '100vh' }),
-      background: M_BG,
-      color: '#fff',
-    }}>
+    <div
+      style={{
+        ...(asModal
+          ? {}
+          : isMobile
+            ? {
+                height: "100dvh",
+                overflow: "hidden",
+                display: "flex",
+                flexDirection: "column",
+              }
+            : { minHeight: "100vh" }),
+        background: M_BG,
+        color: "#fff",
+      }}
+    >
       {/* Reconciliation Progress Overlay */}
       {reconciling && (
-        <div style={{
-          position: 'fixed',
-          top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.85)',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000,
-          padding: 20,
-        }}>
-          <div style={{
-            width: 48, height: 48,
-            border: '3px solid #10B981',
-            borderTop: '3px solid transparent',
-            borderRadius: '50%',
-            animation: 'spin 1s linear infinite',
-            marginBottom: 20,
-          }} />
-          <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 8, color: '#fff' }}>
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0,0,0,0.85)",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: 20,
+          }}
+        >
+          <div
+            style={{
+              width: 48,
+              height: 48,
+              border: "3px solid #10B981",
+              borderTop: "3px solid transparent",
+              borderRadius: "50%",
+              animation: "spin 1s linear infinite",
+              marginBottom: 20,
+            }}
+          />
+          <div
+            style={{
+              fontSize: 18,
+              fontWeight: 600,
+              marginBottom: 8,
+              color: "#fff",
+            }}
+          >
             processing
           </div>
           <style>{`
@@ -1226,22 +1429,29 @@ export function SubscriptionPage({
       )}
 
       {/* Header. Hidden in the sheet, which has its own close button. */}
-      <div style={{
-        padding: isMobile ? '4px 12px' : '12px 16px',
-        display: asModal ? 'none' : 'flex',
-        alignItems: 'center',
-        position: isMobile ? 'relative' : 'sticky',
-        top: 0,
-        zIndex: 10,
-      }}>
+      <div
+        style={{
+          padding: isMobile ? "4px 12px" : "12px 16px",
+          display: asModal ? "none" : "flex",
+          alignItems: "center",
+          position: isMobile ? "relative" : "sticky",
+          top: 0,
+          zIndex: 10,
+        }}
+      >
         <button
           onClick={onBack}
           style={{
-            width: 36, height: 36, borderRadius: 18,
-            background: '#1a1a1a',
-            border: 'none', cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#fff',
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            background: "#1a1a1a",
+            border: "none",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#fff",
           }}
           aria-label="Back"
         >
@@ -1249,44 +1459,73 @@ export function SubscriptionPage({
         </button>
       </div>
 
-      <div style={{ maxWidth: '100%', margin: '0 auto', paddingBottom: isMobile ? 4 : 32, ...(isMobile ? { flex: 1 } : {}) }}>
+      <div
+        style={{
+          maxWidth: "100%",
+          margin: "0 auto",
+          paddingBottom: isMobile ? 4 : 32,
+          ...(isMobile ? { flex: 1 } : {}),
+        }}
+      >
         {/* Hero */}
-        <div style={{
-          display: 'flex', flexDirection: 'column', alignItems: 'center',
-          padding: asModal ? '10px 20px 16px' : (isMobile ? '6px 16px' : '32px 24px'),
-          // A wash of brand colour behind the crest, so the sheet opens on
-          // something with a bit of life rather than a flat dark panel.
-          background: asModal
-            ? `radial-gradient(120% 90% at 50% 0%, ${BRAND_GREEN}1F 0%, transparent 70%)`
-            : 'transparent',
-        }}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            padding: asModal
+              ? "10px 20px 16px"
+              : isMobile
+                ? "6px 16px"
+                : "32px 24px",
+            // A wash of brand colour behind the crest, so the sheet opens on
+            // something with a bit of life rather than a flat dark panel.
+            background: asModal
+              ? `radial-gradient(120% 90% at 50% 0%, ${BRAND_GREEN}1F 0%, transparent 70%)`
+              : "transparent",
+          }}
+        >
           {asModal && (
-            <div style={{
-              width: 52, height: 52, borderRadius: 18,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              marginBottom: 10,
-              background: `linear-gradient(145deg, ${BRAND_GREEN}, #6ea32e)`,
-              boxShadow: `0 10px 26px ${BRAND_GREEN}44`,
-            }}>
+            <div
+              style={{
+                width: 52,
+                height: 52,
+                borderRadius: 18,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                marginBottom: 10,
+                background: `linear-gradient(145deg, ${BRAND_GREEN}, #6ea32e)`,
+                boxShadow: `0 10px 26px ${BRAND_GREEN}44`,
+              }}
+            >
               <Crown size={26} color="#0B0B0C" />
             </div>
           )}
-          <div style={{
-            fontSize: asModal ? 22 : (isMobile ? 17 : 32),
-            fontWeight: 900,
-            marginBottom: asModal ? 4 : (isMobile ? 2 : 8),
-            color: '#fff',
-            letterSpacing: -0.3,
-          }}>FlipStar Premium</div>
-          <div style={{
-            fontSize: asModal ? 13 : (isMobile ? 11 : 16),
-            color: asModal ? '#9a9a9a' : BRAND_GREEN,
-            textAlign: 'center', fontWeight: 600,
-            maxWidth: 300, lineHeight: 1.45,
-          }}>
+          <div
+            style={{
+              fontSize: asModal ? 22 : isMobile ? 17 : 32,
+              fontWeight: 900,
+              marginBottom: asModal ? 4 : isMobile ? 2 : 8,
+              color: "#fff",
+              letterSpacing: -0.3,
+            }}
+          >
+            FlipStar Premium
+          </div>
+          <div
+            style={{
+              fontSize: asModal ? 13 : isMobile ? 11 : 16,
+              color: asModal ? "#9a9a9a" : BRAND_GREEN,
+              textAlign: "center",
+              fontWeight: 600,
+              maxWidth: 300,
+              lineHeight: 1.45,
+            }}
+          >
             {asModal
-              ? 'Like, comment, share and send gifts — pick a plan to join in.'
-              : 'Unlock the full experience'}
+              ? "Like, comment, share and send gifts — pick a plan to join in."
+              : "Unlock the full experience"}
           </div>
 
           {/* A way in for somebody who already pays.
@@ -1301,26 +1540,32 @@ export function SubscriptionPage({
               in to, and a signed-in non-subscriber is being asked to pick a
               plan, not to prove who they are. */}
           {!user && onLogin && (
-            <div style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              gap: 6, flexWrap: 'wrap',
-              marginTop: asModal ? 12 : 16,
-              fontSize: asModal ? 13 : (isMobile ? 11 : 14),
-              color: '#8a8a8a', fontWeight: 600,
-            }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+                flexWrap: "wrap",
+                marginTop: asModal ? 12 : 16,
+                fontSize: asModal ? 13 : isMobile ? 11 : 14,
+                color: "#8a8a8a",
+                fontWeight: 600,
+              }}
+            >
               <span>Already subscribed?</span>
               <button
                 type="button"
                 onClick={onLogin}
                 style={{
-                  background: 'none',
-                  border: 'none',
-                  padding: '6px 4px',
+                  background: "none",
+                  border: "none",
+                  padding: "6px 4px",
                   color: BRAND_GREEN,
-                  fontSize: 'inherit',
+                  fontSize: "inherit",
                   fontWeight: 800,
-                  cursor: 'pointer',
-                  textDecoration: 'underline',
+                  cursor: "pointer",
+                  textDecoration: "underline",
                   textUnderlineOffset: 3,
                 }}
               >
@@ -1329,29 +1574,83 @@ export function SubscriptionPage({
             </div>
           )}
           {isActive && (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, marginTop: 14 }}>
-              <div style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-                background: '#0D2D1A', padding: '7px 14px', borderRadius: 20,
-                border: '1px solid #10B98140',
-              }}>
-                <span style={{ width: 7, height: 7, borderRadius: 4, background: '#10B981' }} />
-                <span style={{ color: '#10B981', fontSize: 13, fontWeight: 600 }}>
-                  Active · {currentSubscription?.tier?.name || 'Premium'}
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 8,
+                marginTop: 14,
+              }}
+            >
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  background: "#0D2D1A",
+                  padding: "7px 14px",
+                  borderRadius: 20,
+                  border: "1px solid #10B98140",
+                }}
+              >
+                <span
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: 4,
+                    background: "#10B981",
+                  }}
+                />
+                <span
+                  style={{ color: "#10B981", fontSize: 13, fontWeight: 600 }}
+                >
+                  Active · {currentSubscription?.tier?.name || "Premium"}
                 </span>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, fontSize: 12, color: '#aaa' }}>
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 4,
+                  fontSize: 12,
+                  color: "#aaa",
+                }}
+              >
                 <div>
-                  <span style={{ color: '#888' }}>Start:</span> {currentSubscription?.start_date ? new Date(currentSubscription.start_date).toLocaleString('en-US', {
-                    year: 'numeric', month: 'short', day: 'numeric',
-                    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
-                  }) : 'N/A'}
+                  <span style={{ color: "#888" }}>Start:</span>{" "}
+                  {currentSubscription?.start_date
+                    ? new Date(currentSubscription.start_date).toLocaleString(
+                        "en-US",
+                        {
+                          year: "numeric",
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          second: "2-digit",
+                          hour12: true,
+                        },
+                      )
+                    : "N/A"}
                 </div>
                 <div>
-                  <span style={{ color: '#888' }}>End:</span> {currentSubscription?.end_date ? new Date(currentSubscription.end_date).toLocaleString('en-US', {
-                    year: 'numeric', month: 'short', day: 'numeric',
-                    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
-                  }) : 'N/A'}
+                  <span style={{ color: "#888" }}>End:</span>{" "}
+                  {currentSubscription?.end_date
+                    ? new Date(currentSubscription.end_date).toLocaleString(
+                        "en-US",
+                        {
+                          year: "numeric",
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          second: "2-digit",
+                          hour12: true,
+                        },
+                      )
+                    : "N/A"}
                 </div>
               </div>
             </div>
@@ -1359,13 +1658,24 @@ export function SubscriptionPage({
         </div>
 
         {/* Section label */}
-        <div style={{
-          fontSize: isMobile ? 10 : 13, fontWeight: 700, color: '#555',
-          padding: '0 16px', marginBottom: isMobile ? 4 : 12,
-          letterSpacing: 1, textTransform: 'uppercase',
-        }}>
-          {isActive && telebirrH5.isInSuperApp() && currentSubscription?.payment_method === 'telebirr' ? 'Current Subscription' :
-           isActive ? 'Add On-Demand Access' : 'Choose a plan'}
+        <div
+          style={{
+            fontSize: isMobile ? 10 : 13,
+            fontWeight: 700,
+            color: "#555",
+            padding: "0 16px",
+            marginBottom: isMobile ? 4 : 12,
+            letterSpacing: 1,
+            textTransform: "uppercase",
+          }}
+        >
+          {isActive &&
+          telebirrH5.isInSuperApp() &&
+          currentSubscription?.payment_method === "telebirr"
+            ? "Current Subscription"
+            : isActive
+              ? "Add On-Demand Access"
+              : "Choose a plan"}
         </div>
 
         {/* Plan cards - horizontal on desktop, stack on mobile.
@@ -1378,152 +1688,278 @@ export function SubscriptionPage({
             loadSubscriptionData() after cancel keep this in sync.
             Hide plan cards for ANY active subscription (cross-platform ban). */}
         {!isActive && (
-          <div style={{ position: 'relative', width: '100%', maxWidth: '1200px', margin: '0 auto' }}>
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(300px, 1fr))',
-              gap: isMobile ? 6 : 20,
-              padding: '0 16px',
-            }}>
-          {tiers.map((tier) => {
-              const TierIcon = getTierIcon(tier.duration_type);
-              const color = BRAND_GREEN;
-              const isCurrent = isActive && currentSubscription?.tier?.id === tier.id;
-              const isProcessingThis = processing && processingTierId === tier.id;
-              const hasSubscription = isActive;
-              // The longest plan on offer is the best value per day, so it is
-              // the one to point at. Derived from the plans themselves rather
-              // than hard-coded to 'monthly', which would silently stop being
-              // true the moment the tiers change.
-              const isBest = tier.id === bestValueTierId;
-              const perDay = pricePerDay(tier);
+          <div
+            style={{
+              position: "relative",
+              width: "100%",
+              maxWidth: "1200px",
+              margin: "0 auto",
+            }}
+          >
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: isMobile
+                  ? "1fr"
+                  : "repeat(auto-fit, minmax(300px, 1fr))",
+                gap: isMobile ? 6 : 20,
+                padding: "0 16px",
+              }}
+            >
+              {tiers.map((tier) => {
+                const TierIcon = getTierIcon(tier.duration_type);
+                const color = BRAND_GREEN;
+                const isCurrent =
+                  isActive && currentSubscription?.tier?.id === tier.id;
+                const isProcessingThis =
+                  processing && processingTierId === tier.id;
+                const hasSubscription = isActive;
+                // The longest plan on offer is the best value per day, so it is
+                // the one to point at. Derived from the plans themselves rather
+                // than hard-coded to 'monthly', which would silently stop being
+                // true the moment the tiers change.
+                const isBest = tier.id === bestValueTierId;
+                const perDay = pricePerDay(tier);
 
-              return (
-                <div
-                  key={tier.id}
-                  onClick={() => {
-                    if (hasSubscription && !isCurrent) {
-                      setActiveSubscriptionModalOpen(true);
-                    } else if (!isCurrent && !hasSubscription && !isProcessingThis) {
-                      setSelectedTierForMethod(tier);
-                      setMethodModalOpen(true);
-                    }
-                  }}
-                  style={{
-                    background: isCurrent
-                      ? BRAND_GREEN + '10'
-                      : isBest
-                        ? `linear-gradient(160deg, ${BRAND_GREEN}14 0%, ${M_CARD} 55%)`
-                        : M_CARD,
-                    borderRadius: asModal ? 16 : (isMobile ? 14 : 24),
-                    padding: asModal ? 14 : (isMobile ? 10 : 24),
-                    border: `${isBest || isCurrent ? 2 : 1}px solid ${
-                      isCurrent ? BRAND_GREEN : isBest ? BRAND_GREEN + '66' : M_BORDER
-                    }`,
-                    position: 'relative',
-                    transition: 'transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease',
-                    cursor: isCurrent || hasSubscription || isProcessingThis ? 'default' : 'pointer',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (isCurrent || hasSubscription || isProcessingThis) return;
-                    e.currentTarget.style.transform = 'translateY(-3px)';
-                    e.currentTarget.style.borderColor = BRAND_GREEN;
-                    e.currentTarget.style.boxShadow = `0 12px 30px ${BRAND_GREEN}33`;
-                  }}
-                  onMouseOut={(e) => {
-                    if (isCurrent || hasSubscription || isProcessingThis) return;
-                    e.currentTarget.style.transform = 'translateY(0)';
-                    e.currentTarget.style.borderColor = isBest ? BRAND_GREEN + '66' : M_BORDER;
-                    e.currentTarget.style.boxShadow = 'none';
-                  }}
-                >
-                {isBest && !isCurrent && (
-                  <div style={{
-                    position: 'absolute', top: -9, right: 14,
-                    background: `linear-gradient(135deg, ${BRAND_GREEN}, #6ea32e)`,
-                    padding: '3px 10px', borderRadius: 20,
-                    color: '#0B0B0C', fontSize: 10, fontWeight: 800,
-                    letterSpacing: 0.3,
-                    boxShadow: `0 4px 12px ${BRAND_GREEN}55`,
-                  }}>
-                    BEST VALUE
-                  </div>
-                )}
-
-                {isCurrent && (
-                  <div style={{
-                    position: 'absolute', top: -10, right: 14,
-                    background: BRAND_GREEN,
-                    padding: isMobile ? '3px 8px' : '6px 16px', borderRadius: 20,
-                    color: '#000', fontSize: isMobile ? 9 : 12, fontWeight: 800,
-                    boxShadow: '0 4px 12px rgba(143,196,65,0.3)',
-                  }}>
-                    Current Plan
-                  </div>
-                )}
-
-                {/* Top: icon + name/desc + price */}
-                <div style={{ display: 'flex', alignItems: 'center', marginBottom: isMobile ? 8 : 20 }}>
-                  <div style={{
-                    width: isMobile ? 34 : 60, height: isMobile ? 34 : 60, borderRadius: isMobile ? 10 : 20,
-                    background: BRAND_GREEN,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    flexShrink: 0,
-                    boxShadow: '0 8px 24px rgba(143,196,65,0.2)',
-                  }}>
-                    <TierIcon size={isMobile ? 16 : 28} color="#fff" />
-                  </div>
-                  <div style={{ flex: 1, marginLeft: isMobile ? 10 : 16, minWidth: 0 }}>
-                    <div style={{ fontSize: isMobile ? 12 : 18, fontWeight: 800, color: '#fff', marginBottom: 2 }}>
-                      {tier.name}
-                    </div>
-                    <div style={{ fontSize: isMobile ? 9 : 13, color: '#666', fontWeight: 500 }}>
-                      {tier.description}
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
-                    <div style={{ fontSize: isMobile ? 20 : 32, fontWeight: 900, color: BRAND_GREEN, lineHeight: isMobile ? '22px' : '34px' }}>
-                      {tier.price_etb}
-                    </div>
-                    <div style={{ fontSize: isMobile ? 9 : 13, color: BRAND_GREEN, fontWeight: 600 }}>ETB</div>
-                    {perDay != null && (
-                      <div style={{
-                        fontSize: asModal ? 10 : (isMobile ? 9 : 12),
-                        color: '#7a7a7a', fontWeight: 600, marginTop: 2, whiteSpace: 'nowrap',
-                      }}>
-                        {perDay} ETB/day
+                return (
+                  <div
+                    key={tier.id}
+                    onClick={() => {
+                      if (hasSubscription && !isCurrent) {
+                        setActiveSubscriptionModalOpen(true);
+                      } else if (
+                        !isCurrent &&
+                        !hasSubscription &&
+                        !isProcessingThis
+                      ) {
+                        setSelectedTierForMethod(tier);
+                        setMethodModalOpen(true);
+                      }
+                    }}
+                    style={{
+                      background: isCurrent
+                        ? BRAND_GREEN + "10"
+                        : isBest
+                          ? `linear-gradient(160deg, ${BRAND_GREEN}14 0%, ${M_CARD} 55%)`
+                          : M_CARD,
+                      borderRadius: asModal ? 16 : isMobile ? 14 : 24,
+                      padding: asModal ? 14 : isMobile ? 10 : 24,
+                      border: `${isBest || isCurrent ? 2 : 1}px solid ${
+                        isCurrent
+                          ? BRAND_GREEN
+                          : isBest
+                            ? BRAND_GREEN + "66"
+                            : M_BORDER
+                      }`,
+                      position: "relative",
+                      transition:
+                        "transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease",
+                      cursor:
+                        isCurrent || hasSubscription || isProcessingThis
+                          ? "default"
+                          : "pointer",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (isCurrent || hasSubscription || isProcessingThis)
+                        return;
+                      e.currentTarget.style.transform = "translateY(-3px)";
+                      e.currentTarget.style.borderColor = BRAND_GREEN;
+                      e.currentTarget.style.boxShadow = `0 12px 30px ${BRAND_GREEN}33`;
+                    }}
+                    onMouseOut={(e) => {
+                      if (isCurrent || hasSubscription || isProcessingThis)
+                        return;
+                      e.currentTarget.style.transform = "translateY(0)";
+                      e.currentTarget.style.borderColor = isBest
+                        ? BRAND_GREEN + "66"
+                        : M_BORDER;
+                      e.currentTarget.style.boxShadow = "none";
+                    }}
+                  >
+                    {isBest && !isCurrent && (
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: -9,
+                          right: 14,
+                          background: `linear-gradient(135deg, ${BRAND_GREEN}, #6ea32e)`,
+                          padding: "3px 10px",
+                          borderRadius: 20,
+                          color: "#0B0B0C",
+                          fontSize: 10,
+                          fontWeight: 800,
+                          letterSpacing: 0.3,
+                          boxShadow: `0 4px 12px ${BRAND_GREEN}55`,
+                        }}
+                      >
+                        BEST VALUE
                       </div>
                     )}
+
+                    {isCurrent && (
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: -10,
+                          right: 14,
+                          background: BRAND_GREEN,
+                          padding: isMobile ? "3px 8px" : "6px 16px",
+                          borderRadius: 20,
+                          color: "#000",
+                          fontSize: isMobile ? 9 : 12,
+                          fontWeight: 800,
+                          boxShadow: "0 4px 12px rgba(143,196,65,0.3)",
+                        }}
+                      >
+                        Current Plan
+                      </div>
+                    )}
+
+                    {/* Top: icon + name/desc + price */}
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        marginBottom: isMobile ? 8 : 20,
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: isMobile ? 34 : 60,
+                          height: isMobile ? 34 : 60,
+                          borderRadius: isMobile ? 10 : 20,
+                          background: BRAND_GREEN,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          flexShrink: 0,
+                          boxShadow: "0 8px 24px rgba(143,196,65,0.2)",
+                        }}
+                      >
+                        <TierIcon size={isMobile ? 16 : 28} color="#fff" />
+                      </div>
+                      <div
+                        style={{
+                          flex: 1,
+                          marginLeft: isMobile ? 10 : 16,
+                          minWidth: 0,
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: isMobile ? 12 : 18,
+                            fontWeight: 800,
+                            color: "#fff",
+                            marginBottom: 2,
+                          }}
+                        >
+                          {tier.name}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: isMobile ? 9 : 13,
+                            color: "#666",
+                            fontWeight: 500,
+                          }}
+                        >
+                          {tier.description}
+                        </div>
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "flex-end",
+                          flexShrink: 0,
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: isMobile ? 20 : 32,
+                            fontWeight: 900,
+                            color: BRAND_GREEN,
+                            lineHeight: isMobile ? "22px" : "34px",
+                          }}
+                        >
+                          {tier.price_etb}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: isMobile ? 9 : 13,
+                            color: BRAND_GREEN,
+                            fontWeight: 600,
+                          }}
+                        >
+                          ETB
+                        </div>
+                        {perDay != null && (
+                          <div
+                            style={{
+                              fontSize: asModal ? 10 : isMobile ? 9 : 12,
+                              color: "#7a7a7a",
+                              fontWeight: 600,
+                              marginTop: 2,
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {perDay} ETB/day
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-            );
-          })}
+                );
+              })}
+            </div>
           </div>
-        </div>
         )}
 
         {/* Payment info */}
-        <div style={{
-          display: 'flex', gap: isMobile ? 6 : 12, alignItems: 'flex-start',
-          margin: isMobile ? '2px 16px 0' : '4px 16px 0',
-          background: BRAND_GREEN + '10', borderRadius: isMobile ? 10 : 16, padding: isMobile ? 8 : 16,
-          border: `1px solid ${BRAND_GREEN}30`,
-        }}>
-          <Info size={isMobile ? 14 : 20} color={BRAND_GREEN} style={{ flexShrink: 0, marginTop: 2 }} />
-          <div style={{ flex: 1, fontSize: isMobile ? 9 : 13, color: '#ccc', lineHeight: isMobile ? 1.3 : 1.6 }}>
+        <div
+          style={{
+            display: "flex",
+            gap: isMobile ? 6 : 12,
+            alignItems: "flex-start",
+            margin: isMobile ? "2px 16px 0" : "4px 16px 0",
+            background: BRAND_GREEN + "10",
+            borderRadius: isMobile ? 10 : 16,
+            padding: isMobile ? 8 : 16,
+            border: `1px solid ${BRAND_GREEN}30`,
+          }}
+        >
+          <Info
+            size={isMobile ? 14 : 20}
+            color={BRAND_GREEN}
+            style={{ flexShrink: 0, marginTop: 2 }}
+          />
+          <div
+            style={{
+              flex: 1,
+              fontSize: isMobile ? 9 : 13,
+              color: "#ccc",
+              lineHeight: isMobile ? 1.3 : 1.6,
+            }}
+          >
             <div style={{ marginBottom: 8 }}>
-              <strong style={{ color: BRAND_GREEN, fontWeight: 700 }}>telebirr:</strong> One-tap subscription via telebirr app. One-time payment.
+              <strong style={{ color: BRAND_GREEN, fontWeight: 700 }}>
+                telebirr:
+              </strong>{" "}
+              One-tap subscription via telebirr app. One-time payment.
             </div>
             <div>
-              <strong style={{ color: BRAND_GREEN, fontWeight: 700 }}>SMS:</strong> Send SMS to <span style={{ color: BRAND_GREEN, fontWeight: 800 }}>9286</span> with code{' '}
-              <span style={{ color: '#fff', fontWeight: 700 }}>1</span> (Daily),{' '}
-              <span style={{ color: '#fff' }}>2</span> (Weekly),{' '}
-              <span style={{ color: '#fff' }}>3</span> (Monthly) via ethio telecom.
+              <strong style={{ color: BRAND_GREEN, fontWeight: 700 }}>
+                SMS:
+              </strong>{" "}
+              Send SMS to{" "}
+              <span style={{ color: BRAND_GREEN, fontWeight: 800 }}>9286</span>{" "}
+              with code{" "}
+              <span style={{ color: "#fff", fontWeight: 700 }}>1</span> (Daily),{" "}
+              <span style={{ color: "#fff" }}>2</span> (Weekly),{" "}
+              <span style={{ color: "#fff" }}>3</span> (Monthly) via ethio
+              telecom.
             </div>
           </div>
         </div>
-
 
         {/* telebirr Receipt Modal — shown when user clicks "Pay via Telebirr" */}
         {telebirrModalOpen && selectedTierForTelebirr && (
@@ -1531,18 +1967,24 @@ export function SubscriptionPage({
             role="dialog"
             aria-modal="true"
             aria-labelledby="sub-receipt-title"
-            onClick={(e) => { if (e.target === e.currentTarget && !processing) setTelebirrModalOpen(false); }}
+            onClick={(e) => {
+              if (e.target === e.currentTarget && !processing)
+                setTelebirrModalOpen(false);
+            }}
             style={{
-              position: 'fixed',
-              top: 0, left: 0, right: 0, bottom: 0,
-              background: 'rgba(0, 0, 0, 0.78)',
-              backdropFilter: 'blur(3px)',
-              display: 'flex',
-              alignItems: isMobile ? 'flex-end' : 'center',
-              justifyContent: 'center',
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: "rgba(0, 0, 0, 0.78)",
+              backdropFilter: "blur(3px)",
+              display: "flex",
+              alignItems: isMobile ? "flex-end" : "center",
+              justifyContent: "center",
               zIndex: 1000,
               padding: isMobile ? 0 : 24,
-              overflow: 'auto',
+              overflow: "auto",
             }}
           >
             <div
@@ -1550,32 +1992,50 @@ export function SubscriptionPage({
               style={{
                 background: M_CARD,
                 border: `1px solid ${M_BORDER}`,
-                borderRadius: isMobile ? '22px 22px 0 0' : 22,
-                padding: isMobile ? '18px 20px' : '22px 24px',
-                paddingBottom: isMobile ? 'calc(20px + env(safe-area-inset-bottom))' : 22,
-                width: '100%',
-                maxWidth: isMobile ? '100%' : 400,
-                boxSizing: 'border-box',
-                boxShadow: '0 -12px 40px rgba(0,0,0,0.55)',
+                borderRadius: isMobile ? "22px 22px 0 0" : 22,
+                padding: isMobile ? "18px 20px" : "22px 24px",
+                paddingBottom: isMobile
+                  ? "calc(20px + env(safe-area-inset-bottom))"
+                  : 22,
+                width: "100%",
+                maxWidth: isMobile ? "100%" : 400,
+                boxSizing: "border-box",
+                boxShadow: "0 -12px 40px rgba(0,0,0,0.55)",
               }}
             >
               {isMobile && (
-                <div style={{
-                  width: 38, height: 4, borderRadius: 4,
-                  background: '#3A3A3A', margin: '0 auto 14px',
-                }} />
+                <div
+                  style={{
+                    width: 38,
+                    height: 4,
+                    borderRadius: 4,
+                    background: "#3A3A3A",
+                    margin: "0 auto 14px",
+                  }}
+                />
               )}
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 2 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  marginBottom: 2,
+                }}
+              >
                 <button
                   onClick={() => setTelebirrModalOpen(false)}
                   aria-label="Close"
                   disabled={processing}
                   style={{
-                    background: '#202020', border: `1px solid ${M_BORDER}`,
-                    borderRadius: 10, cursor: processing ? 'not-allowed' : 'pointer',
-                    color: '#B5B5B5', width: 32, height: 32,
-                    display: 'grid', placeItems: 'center',
+                    background: "#202020",
+                    border: `1px solid ${M_BORDER}`,
+                    borderRadius: 10,
+                    cursor: processing ? "not-allowed" : "pointer",
+                    color: "#B5B5B5",
+                    width: 32,
+                    height: 32,
+                    display: "grid",
+                    placeItems: "center",
                   }}
                 >
                   <X size={17} />
@@ -1583,54 +2043,105 @@ export function SubscriptionPage({
               </div>
 
               {/* Hero: what is about to be charged. */}
-              <div style={{ textAlign: 'center', marginBottom: 18 }}>
-                <div id="sub-receipt-title" style={{ fontSize: 13.5, color: '#8A8A8A' }}>
+              <div style={{ textAlign: "center", marginBottom: 18 }}>
+                <div
+                  id="sub-receipt-title"
+                  style={{ fontSize: 13.5, color: "#8A8A8A" }}
+                >
                   Subscribe to FlipStar {selectedTierForTelebirr.name}
                 </div>
-                <div style={{
-                  fontSize: isMobile ? 36 : 34, fontWeight: 900,
-                  color: '#fff', letterSpacing: -1, marginTop: 4, lineHeight: 1.1,
-                }}>
+                <div
+                  style={{
+                    fontSize: isMobile ? 36 : 34,
+                    fontWeight: 900,
+                    color: "#fff",
+                    letterSpacing: -1,
+                    marginTop: 4,
+                    lineHeight: 1.1,
+                  }}
+                >
                   {fmtEtb(selectedTierForTelebirr.price_etb)}
-                  <span style={{
-                    fontSize: 14, fontWeight: 700, marginLeft: 5, color: BRAND_GREEN,
-                  }}>
+                  <span
+                    style={{
+                      fontSize: 14,
+                      fontWeight: 700,
+                      marginLeft: 5,
+                      color: BRAND_GREEN,
+                    }}
+                  >
                     ETB
                   </span>
                 </div>
               </div>
 
-              <div style={{
-                background: '#101010', border: `1px solid ${M_BORDER}`,
-                borderRadius: 14, padding: '4px 14px', marginBottom: 18,
-              }}>
+              <div
+                style={{
+                  background: "#101010",
+                  border: `1px solid ${M_BORDER}`,
+                  borderRadius: 14,
+                  padding: "4px 14px",
+                  marginBottom: 18,
+                }}
+              >
                 {[
-                  ['Plan', selectedTierForTelebirr.name],
+                  ["Plan", selectedTierForTelebirr.name],
                   [
-                    selectedTierForTelebirr.duration_type === 'daily' ? 'Daily Amount' :
-                    selectedTierForTelebirr.duration_type === 'weekly' ? 'Weekly Amount' :
-                    selectedTierForTelebirr.duration_type === 'monthly' ? 'Monthly Amount' : 'Amount',
+                    selectedTierForTelebirr.duration_type === "daily"
+                      ? "Daily Amount"
+                      : selectedTierForTelebirr.duration_type === "weekly"
+                        ? "Weekly Amount"
+                        : selectedTierForTelebirr.duration_type === "monthly"
+                          ? "Monthly Amount"
+                          : "Amount",
                     `${fmtEtb(selectedTierForTelebirr.price_etb)} ETB`,
                   ],
-                  ['Date', new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })],
+                  [
+                    "Date",
+                    new Date().toLocaleDateString("en-GB", {
+                      day: "2-digit",
+                      month: "short",
+                      year: "numeric",
+                    }),
+                  ],
                   // The full MSISDN, not the bare 9 digits: this is the
                   // confirmation screen, so show the number that gets charged.
-                  ['Phone Number', displayPhone(telebirrPhone)],
+                  ["Phone Number", displayPhone(telebirrPhone)],
                 ].map(([label, value], i, rows) => (
                   <div
                     key={label}
                     style={{
-                      display: 'flex', justifyContent: 'space-between',
-                      alignItems: 'center', gap: 12, padding: '13px 0',
-                      borderBottom: i === rows.length - 1 ? 'none' : `1px solid ${M_BORDER}`,
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 12,
+                      padding: "13px 0",
+                      borderBottom:
+                        i === rows.length - 1
+                          ? "none"
+                          : `1px solid ${M_BORDER}`,
                     }}
                   >
-                    <span style={{ fontSize: 13.5, color: '#8A8A8A', flexShrink: 0 }}>{label}</span>
-                    <span style={{
-                      fontSize: 13.5, color: '#fff', fontWeight: 700,
-                      textAlign: 'right', minWidth: 0,
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    }}>
+                    <span
+                      style={{
+                        fontSize: 13.5,
+                        color: "#8A8A8A",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {label}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 13.5,
+                        color: "#fff",
+                        fontWeight: 700,
+                        textAlign: "right",
+                        minWidth: 0,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
                       {value}
                     </span>
                   </div>
@@ -1641,27 +2152,34 @@ export function SubscriptionPage({
                 onClick={handleTelebirrProceed}
                 disabled={processing}
                 style={{
-                  width: '100%',
+                  width: "100%",
                   minHeight: 52,
                   padding: isMobile ? 15 : 14,
-                  background: processing ? '#2A3320' : BRAND_GREEN,
-                  border: 'none',
+                  background: processing ? "#2A3320" : BRAND_GREEN,
+                  border: "none",
                   borderRadius: 13,
-                  color: processing ? '#5F6B4F' : '#0B1207',
+                  color: processing ? "#5F6B4F" : "#0B1207",
                   fontSize: 16,
                   fontWeight: 800,
-                  cursor: processing ? 'wait' : 'pointer',
-                  boxShadow: processing ? 'none' : '0 6px 20px rgba(143,196,65,0.28)',
-                  transition: 'background .15s ease, color .15s ease',
-                  WebkitTapHighlightColor: 'transparent',
+                  cursor: processing ? "wait" : "pointer",
+                  boxShadow: processing
+                    ? "none"
+                    : "0 6px 20px rgba(143,196,65,0.28)",
+                  transition: "background .15s ease, color .15s ease",
+                  WebkitTapHighlightColor: "transparent",
                 }}
               >
-                {processing ? 'Processing…' : 'Proceed'}
+                {processing ? "Processing…" : "Proceed"}
               </button>
 
-              <div style={{
-                fontSize: 11.5, color: '#6F6F6F', textAlign: 'center', marginTop: 12,
-              }}>
+              <div
+                style={{
+                  fontSize: 11.5,
+                  color: "#6F6F6F",
+                  textAlign: "center",
+                  marginTop: 12,
+                }}
+              >
                 You'll get a telebirr prompt to approve this payment.
               </div>
             </div>
@@ -1670,34 +2188,50 @@ export function SubscriptionPage({
 
         {/* Terms and Conditions Modal */}
         {termsModalOpen && (
-          <div style={{
-            position: 'fixed',
-            top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(0, 0, 0, 0.85)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            zIndex: 1002,
-          }}>
-            <div style={{
-              background: '#1A1A1A',
-              borderRadius: 24,
-              padding: 32,
-              width: '90%',
-              maxWidth: 500,
-              maxHeight: '80vh',
-              overflowY: 'auto',
-              boxShadow: '0 24px 64px rgba(0,0,0,0.7)',
-            }}>
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: "rgba(0, 0, 0, 0.85)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1002,
+            }}
+          >
+            <div
+              style={{
+                background: "#1A1A1A",
+                borderRadius: 24,
+                padding: 32,
+                width: "90%",
+                maxWidth: 500,
+                maxHeight: "80vh",
+                overflowY: "auto",
+                boxShadow: "0 24px 64px rgba(0,0,0,0.7)",
+              }}
+            >
               {/* Header */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                <div style={{ fontSize: 20, fontWeight: 700, color: '#fff' }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: 20,
+                }}
+              >
+                <div style={{ fontSize: 20, fontWeight: 700, color: "#fff" }}>
                   Terms and Conditions
                 </div>
                 <button
                   onClick={() => setTermsModalOpen(false)}
                   style={{
-                    background: 'transparent',
-                    border: 'none',
-                    cursor: 'pointer',
+                    background: "transparent",
+                    border: "none",
+                    cursor: "pointer",
                     padding: 4,
                   }}
                 >
@@ -1706,53 +2240,80 @@ export function SubscriptionPage({
               </div>
 
               {/* Content */}
-              <div style={{ fontSize: 13, color: '#999', lineHeight: 1.6, marginBottom: 24 }}>
+              <div
+                style={{
+                  fontSize: 13,
+                  color: "#999",
+                  lineHeight: 1.6,
+                  marginBottom: 24,
+                }}
+              >
                 <div style={{ marginBottom: 16 }}>
-                  <strong style={{ color: '#fff' }}>1. Subscription Terms</strong>
+                  <strong style={{ color: "#fff" }}>
+                    1. Subscription Terms
+                  </strong>
                   <p style={{ marginTop: 8 }}>
-                    By subscribing to FlipStar, you agree to be charged the subscription fee according to your selected plan (Daily, Weekly, or Monthly).
+                    By subscribing to FlipStar, you agree to be charged the
+                    subscription fee according to your selected plan (Daily,
+                    Weekly, or Monthly).
                   </p>
                 </div>
 
                 <div style={{ marginBottom: 16 }}>
-                  <strong style={{ color: '#fff' }}>2. Auto-Renewal</strong>
+                  <strong style={{ color: "#fff" }}>2. Auto-Renewal</strong>
                   <p style={{ marginTop: 8 }}>
-                    Your subscription will automatically renew at the end of each billing cycle unless you cancel it. You can cancel at any time through the app settings or by sending "STOP" to the FlipStar shortcode.
+                    Your subscription will automatically renew at the end of
+                    each billing cycle unless you cancel it. You can cancel at
+                    any time through the app settings or by sending "STOP" to
+                    the FlipStar shortcode.
                   </p>
                 </div>
 
                 <div style={{ marginBottom: 16 }}>
-                  <strong style={{ color: '#fff' }}>3. Refund Policy</strong>
+                  <strong style={{ color: "#fff" }}>3. Refund Policy</strong>
                   <p style={{ marginTop: 8 }}>
-                    Subscription fees are non-refundable. Once charged, the fee applies to the current billing cycle and cannot be refunded.
+                    Subscription fees are non-refundable. Once charged, the fee
+                    applies to the current billing cycle and cannot be refunded.
                   </p>
                 </div>
 
                 <div style={{ marginBottom: 16 }}>
-                  <strong style={{ color: '#fff' }}>4. Service Availability</strong>
+                  <strong style={{ color: "#fff" }}>
+                    4. Service Availability
+                  </strong>
                   <p style={{ marginTop: 8 }}>
-                    FlipStar service requires an active Ethio Telecom mobile subscription. Service may be suspended if your mobile account becomes inactive or has insufficient balance.
+                    FlipStar service requires an active Ethio Telecom mobile
+                    subscription. Service may be suspended if your mobile
+                    account becomes inactive or has insufficient balance.
                   </p>
                 </div>
 
                 <div style={{ marginBottom: 16 }}>
-                  <strong style={{ color: '#fff' }}>5. User Responsibilities</strong>
+                  <strong style={{ color: "#fff" }}>
+                    5. User Responsibilities
+                  </strong>
                   <p style={{ marginTop: 8 }}>
-                    You agree to use FlipStar in accordance with our community guidelines and Ethiopian laws. Prohibited content includes hate speech, violence, harassment, and illegal activities.
+                    You agree to use FlipStar in accordance with our community
+                    guidelines and Ethiopian laws. Prohibited content includes
+                    hate speech, violence, harassment, and illegal activities.
                   </p>
                 </div>
 
                 <div style={{ marginBottom: 16 }}>
-                  <strong style={{ color: '#fff' }}>6. Privacy</strong>
+                  <strong style={{ color: "#fff" }}>6. Privacy</strong>
                   <p style={{ marginTop: 8 }}>
-                    Your personal information, including phone number, will be used for subscription management and service delivery. We do not share your data with third parties without your consent.
+                    Your personal information, including phone number, will be
+                    used for subscription management and service delivery. We do
+                    not share your data with third parties without your consent.
                   </p>
                 </div>
 
                 <div style={{ marginBottom: 16 }}>
-                  <strong style={{ color: '#fff' }}>7. Modifications</strong>
+                  <strong style={{ color: "#fff" }}>7. Modifications</strong>
                   <p style={{ marginTop: 8 }}>
-                    Ethio Telecom reserves the right to modify these terms, subscription plans, and pricing. Changes will be communicated through the app and SMS notifications.
+                    Ethio Telecom reserves the right to modify these terms,
+                    subscription plans, and pricing. Changes will be
+                    communicated through the app and SMS notifications.
                   </p>
                 </div>
               </div>
@@ -1761,16 +2322,16 @@ export function SubscriptionPage({
               <button
                 onClick={() => setTermsModalOpen(false)}
                 style={{
-                  width: '100%',
-                  padding: '16px',
+                  width: "100%",
+                  padding: "16px",
                   background: BRAND_GREEN,
-                  border: 'none',
+                  border: "none",
                   borderRadius: 12,
-                  color: '#000',
+                  color: "#000",
                   fontSize: 16,
                   fontWeight: 700,
-                  cursor: 'pointer',
-                  boxShadow: '0 4px 16px rgba(143,196,65,0.3)',
+                  cursor: "pointer",
+                  boxShadow: "0 4px 16px rgba(143,196,65,0.3)",
                 }}
               >
                 Close
@@ -1783,76 +2344,82 @@ export function SubscriptionPage({
         {activeSubscriptionModalOpen && (
           <div
             style={{
-              position: 'fixed',
+              position: "fixed",
               inset: 0,
-              background: 'rgba(0,0,0,0.85)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
+              background: "rgba(0,0,0,0.85)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
               zIndex: 9999,
-              animation: 'fadeIn 0.3s ease',
+              animation: "fadeIn 0.3s ease",
             }}
           >
             <div
               style={{
-                background: '#1A1A1A',
+                background: "#1A1A1A",
                 borderRadius: 16,
                 padding: 32,
                 maxWidth: 400,
-                width: '90%',
-                textAlign: 'center',
-                border: '1px solid #333',
-                boxShadow: '0 24px 64px rgba(0,0,0,0.7)',
-                animation: 'scaleIn 0.3s ease',
+                width: "90%",
+                textAlign: "center",
+                border: "1px solid #333",
+                boxShadow: "0 24px 64px rgba(0,0,0,0.7)",
+                animation: "scaleIn 0.3s ease",
               }}
             >
-              <div style={{
-                width: 64,
-                height: 64,
-                borderRadius: '50%',
-                background: '#F59E0B',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                margin: '0 auto 20px',
-              }}>
+              <div
+                style={{
+                  width: 64,
+                  height: 64,
+                  borderRadius: "50%",
+                  background: "#F59E0B",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  margin: "0 auto 20px",
+                }}
+              >
                 <AlertCircle size={32} color="#000" />
               </div>
-              <h3 style={{
-                color: '#fff',
-                fontSize: 20,
-                fontWeight: 700,
-                marginBottom: 12,
-              }}>
+              <h3
+                style={{
+                  color: "#fff",
+                  fontSize: 20,
+                  fontWeight: 700,
+                  marginBottom: 12,
+                }}
+              >
                 Active Subscription
               </h3>
-              <p style={{
-                color: '#999',
-                fontSize: 15,
-                lineHeight: 1.6,
-                marginBottom: 24,
-              }}>
+              <p
+                style={{
+                  color: "#999",
+                  fontSize: 15,
+                  lineHeight: 1.6,
+                  marginBottom: 24,
+                }}
+              >
                 {existingSubscription?.tier_name
                   ? `Your ${existingSubscription.tier_name} subscription is still active${
                       existingSubscription.end_date
-                        ? ` until ${new Date(existingSubscription.end_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`
-                        : ''
+                        ? ` until ${new Date(existingSubscription.end_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}`
+                        : ""
                     }. You have not been charged again.`
-                  : 'You have an active subscription. Please wait for it to expire before subscribing again.'}
+                  : "You have an active subscription. Please wait for it to expire before subscribing again."}
               </p>
               <button
                 onClick={() => setActiveSubscriptionModalOpen(false)}
                 style={{
-                  width: '100%',
-                  padding: '14px',
-                  background: '#8fc441',
-                  border: 'none',
+                  width: "100%",
+                  padding: "14px",
+                  background: "#8fc441",
+                  border: "none",
                   borderRadius: 12,
-                  color: '#000',
+                  color: "#000",
                   fontSize: 15,
                   fontWeight: 600,
-                  cursor: 'pointer',
-                  boxShadow: '0 4px 16px rgba(143,196,65,0.3)',
+                  cursor: "pointer",
+                  boxShadow: "0 4px 16px rgba(143,196,65,0.3)",
                 }}
               >
                 OK
@@ -1861,54 +2428,75 @@ export function SubscriptionPage({
           </div>
         )}
 
-
         {/* Success Modal */}
         {successModalOpen && (
           <div
             style={{
-              position: 'fixed',
+              position: "fixed",
               inset: 0,
-              background: 'rgba(0,0,0,0.85)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
+              background: "rgba(0,0,0,0.85)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
               zIndex: 9999,
-              animation: 'fadeIn 0.3s ease',
+              animation: "fadeIn 0.3s ease",
             }}
           >
             <div
               style={{
-                background: '#1A1A1A',
+                background: "#1A1A1A",
                 borderRadius: 16,
                 padding: 32,
                 maxWidth: 320,
-                width: '90%',
-                textAlign: 'center',
-                border: '1px solid #333',
-                boxShadow: '0 24px 64px rgba(0,0,0,0.7)',
-                animation: 'scaleIn 0.3s ease',
+                width: "90%",
+                textAlign: "center",
+                border: "1px solid #333",
+                boxShadow: "0 24px 64px rgba(0,0,0,0.7)",
+                animation: "scaleIn 0.3s ease",
               }}
             >
               <div
                 style={{
                   width: 64,
                   height: 64,
-                  borderRadius: '50%',
-                  background: '#10B981',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  margin: '0 auto 20px',
+                  borderRadius: "50%",
+                  background: "#10B981",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  margin: "0 auto 20px",
                 }}
               >
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  width="32"
+                  height="32"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="#fff"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <polyline points="20 6 9 17 4 12"></polyline>
                 </svg>
               </div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: '#fff', marginBottom: 8 }}>
+              <div
+                style={{
+                  fontSize: 20,
+                  fontWeight: 700,
+                  color: "#fff",
+                  marginBottom: 8,
+                }}
+              >
                 Successfully Subscribed!
               </div>
-              <div style={{ fontSize: isMobile ? 13 : 14, color: '#999', lineHeight: 1.5 }}>
+              <div
+                style={{
+                  fontSize: isMobile ? 13 : 14,
+                  color: "#999",
+                  lineHeight: 1.5,
+                }}
+              >
                 Your subscription is now active.
               </div>
             </div>
@@ -1924,16 +2512,21 @@ export function SubscriptionPage({
           role="dialog"
           aria-modal="true"
           aria-labelledby="sub-phone-title"
-          onClick={(e) => { if (e.target === e.currentTarget) setTelebirrPhoneInputOpen(false); }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setTelebirrPhoneInputOpen(false);
+          }}
           style={{
-            position: 'fixed',
-            top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(0, 0, 0, 0.78)',
-            backdropFilter: 'blur(3px)',
-            display: 'flex',
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0, 0, 0, 0.78)",
+            backdropFilter: "blur(3px)",
+            display: "flex",
             // Bottom sheet on a phone, centred card on a wider screen.
-            alignItems: isMobile ? 'flex-end' : 'center',
-            justifyContent: 'center',
+            alignItems: isMobile ? "flex-end" : "center",
+            justifyContent: "center",
             zIndex: 1100,
             padding: isMobile ? 0 : 24,
           }}
@@ -1943,37 +2536,52 @@ export function SubscriptionPage({
             style={{
               background: M_CARD,
               border: `1px solid ${M_BORDER}`,
-              borderRadius: isMobile ? '22px 22px 0 0' : 22,
-              padding: isMobile ? '18px 20px' : '22px 24px',
+              borderRadius: isMobile ? "22px 22px 0 0" : 22,
+              padding: isMobile ? "18px 20px" : "22px 24px",
               paddingBottom: isMobile
-                ? 'calc(20px + env(safe-area-inset-bottom))'
+                ? "calc(20px + env(safe-area-inset-bottom))"
                 : 22,
-              width: '100%',
-              maxWidth: isMobile ? '100%' : 400,
-              boxSizing: 'border-box',
-              boxShadow: '0 -12px 40px rgba(0,0,0,0.55)',
+              width: "100%",
+              maxWidth: isMobile ? "100%" : 400,
+              boxSizing: "border-box",
+              boxShadow: "0 -12px 40px rgba(0,0,0,0.55)",
             }}
           >
             {/* Grab handle — reads as a sheet you can dismiss. */}
             {isMobile && (
-              <div style={{
-                width: 38, height: 4, borderRadius: 4,
-                background: '#3A3A3A', margin: '0 auto 14px',
-              }} />
+              <div
+                style={{
+                  width: 38,
+                  height: 4,
+                  borderRadius: 4,
+                  background: "#3A3A3A",
+                  margin: "0 auto 14px",
+                }}
+              />
             )}
 
-            <div style={{
-              display: 'flex', alignItems: 'flex-start',
-              justifyContent: 'space-between', gap: 12, marginBottom: 16,
-            }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: 12,
+                marginBottom: 16,
+              }}
+            >
               <div style={{ minWidth: 0 }}>
-                <div id="sub-phone-title" style={{
-                  fontSize: isMobile ? 18 : 17, fontWeight: 800,
-                  color: '#fff', letterSpacing: -0.2,
-                }}>
+                <div
+                  id="sub-phone-title"
+                  style={{
+                    fontSize: isMobile ? 18 : 17,
+                    fontWeight: 800,
+                    color: "#fff",
+                    letterSpacing: -0.2,
+                  }}
+                >
                   Enter Phone Number
                 </div>
-                <div style={{ fontSize: 13, color: '#8A8A8A', marginTop: 3 }}>
+                <div style={{ fontSize: 13, color: "#8A8A8A", marginTop: 3 }}>
                   We'll send a Telebirr prompt to confirm.
                 </div>
               </div>
@@ -1981,10 +2589,16 @@ export function SubscriptionPage({
                 onClick={() => setTelebirrPhoneInputOpen(false)}
                 aria-label="Close"
                 style={{
-                  background: '#202020', border: `1px solid ${M_BORDER}`,
-                  borderRadius: 10, cursor: 'pointer', color: '#B5B5B5',
-                  width: 32, height: 32, flexShrink: 0,
-                  display: 'grid', placeItems: 'center',
+                  background: "#202020",
+                  border: `1px solid ${M_BORDER}`,
+                  borderRadius: 10,
+                  cursor: "pointer",
+                  color: "#B5B5B5",
+                  width: 32,
+                  height: 32,
+                  flexShrink: 0,
+                  display: "grid",
+                  placeItems: "center",
                 }}
               >
                 <X size={17} />
@@ -1994,41 +2608,81 @@ export function SubscriptionPage({
             {/* What they are paying for — mirrors the plan card they tapped,
                 so the amount is never a surprise at the Telebirr prompt. */}
             {(() => {
-              const PlanIcon = getTierIcon(selectedTierForTelebirr.duration_type);
+              const PlanIcon = getTierIcon(
+                selectedTierForTelebirr.duration_type,
+              );
               return (
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  background: '#101010', border: `1px solid ${M_BORDER}`,
-                  borderRadius: 14, padding: '12px 14px', marginBottom: 16,
-                }}>
-                  <div style={{
-                    width: 36, height: 36, borderRadius: 10, flexShrink: 0,
-                    background: BRAND_GREEN + '1F',
-                    display: 'grid', placeItems: 'center',
-                  }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    background: "#101010",
+                    border: `1px solid ${M_BORDER}`,
+                    borderRadius: 14,
+                    padding: "12px 14px",
+                    marginBottom: 16,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 10,
+                      flexShrink: 0,
+                      background: BRAND_GREEN + "1F",
+                      display: "grid",
+                      placeItems: "center",
+                    }}
+                  >
                     <PlanIcon size={18} color={BRAND_GREEN} />
                   </div>
                   <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{
-                      fontSize: 14.5, fontWeight: 700, color: '#fff',
-                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                    }}>
+                    <div
+                      style={{
+                        fontSize: 14.5,
+                        fontWeight: 700,
+                        color: "#fff",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
                       {selectedTierForTelebirr.name}
                     </div>
                     {selectedTierForTelebirr.description && (
-                      <div style={{
-                        fontSize: 12, color: '#7E7E7E', marginTop: 1,
-                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                      }}>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: "#7E7E7E",
+                          marginTop: 1,
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
                         {selectedTierForTelebirr.description}
                       </div>
                     )}
                   </div>
-                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                    <span style={{ fontSize: 19, fontWeight: 800, color: BRAND_GREEN }}>
+                  <div style={{ textAlign: "right", flexShrink: 0 }}>
+                    <span
+                      style={{
+                        fontSize: 19,
+                        fontWeight: 800,
+                        color: BRAND_GREEN,
+                      }}
+                    >
                       {selectedTierForTelebirr.price_etb}
                     </span>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: BRAND_GREEN, marginLeft: 3 }}>
+                    <span
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 700,
+                        color: BRAND_GREEN,
+                        marginLeft: 3,
+                      }}
+                    >
                       ETB
                     </span>
                   </div>
@@ -2039,23 +2693,38 @@ export function SubscriptionPage({
             <label
               htmlFor="sub-phone-input"
               style={{
-                display: 'block', fontSize: 12, fontWeight: 700,
-                color: BRAND_GREEN, marginBottom: 7, letterSpacing: 0.2,
+                display: "block",
+                fontSize: 12,
+                fontWeight: 700,
+                color: BRAND_GREEN,
+                marginBottom: 7,
+                letterSpacing: 0.2,
               }}
             >
               Phone Number
             </label>
-            <div style={{ position: 'relative', marginBottom: 8 }}>
+            <div style={{ position: "relative", marginBottom: 8 }}>
               {/* Fixed country code. It is not part of the value, so the
                   number can never come out as +251+251... */}
-              <div style={{
-                position: 'absolute', left: 13, top: '50%',
-                transform: 'translateY(-50%)', display: 'flex',
-                alignItems: 'center', gap: 6, pointerEvents: 'none',
-                color: BRAND_GREEN,
-              }}>
+              <div
+                style={{
+                  position: "absolute",
+                  left: 13,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  pointerEvents: "none",
+                  color: BRAND_GREEN,
+                }}
+              >
                 <Phone size={17} />
-                <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: 0.2 }}>+251</span>
+                <span
+                  style={{ fontSize: 14, fontWeight: 700, letterSpacing: 0.2 }}
+                >
+                  +251
+                </span>
               </div>
               <input
                 id="sub-phone-input"
@@ -2067,67 +2736,101 @@ export function SubscriptionPage({
                 aria-label="Ethiopian phone number without country code"
                 aria-invalid={showPhoneError}
                 value={telebirrPhone}
-                onChange={(e) => setTelebirrPhone(sanitizePhoneInput(e.target.value))}
+                onChange={(e) =>
+                  setTelebirrPhone(sanitizePhoneInput(e.target.value))
+                }
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && telebirrPhoneValid) handleTelebirrPhoneSubmit();
+                  if (e.key === "Enter" && telebirrPhoneValid)
+                    handleTelebirrPhoneSubmit();
                 }}
                 style={{
-                  width: '100%',
-                  padding: isMobile ? '15px 14px' : '14px',
+                  width: "100%",
+                  padding: isMobile ? "15px 14px" : "14px",
                   paddingLeft: 76,
-                  background: '#101010',
-                  border: `1.5px solid ${showPhoneError ? '#E5484D' : M_BORDER}`,
+                  background: "#101010",
+                  border: `1.5px solid ${showPhoneError ? "#E5484D" : M_BORDER}`,
                   borderRadius: 12,
                   fontSize: 16.5,
                   fontWeight: 600,
                   letterSpacing: 0.6,
-                  color: '#fff',
-                  outline: 'none',
-                  boxSizing: 'border-box',
-                  transition: 'border-color .15s ease',
+                  color: "#fff",
+                  outline: "none",
+                  boxSizing: "border-box",
+                  transition: "border-color .15s ease",
                 }}
                 onFocus={(e) => {
-                  e.target.style.borderColor = showPhoneError ? '#E5484D' : BRAND_GREEN;
+                  e.target.style.borderColor = showPhoneError
+                    ? "#E5484D"
+                    : BRAND_GREEN;
                 }}
                 onBlur={(e) => {
-                  e.target.style.borderColor = showPhoneError ? '#E5484D' : M_BORDER;
+                  e.target.style.borderColor = showPhoneError
+                    ? "#E5484D"
+                    : M_BORDER;
                 }}
               />
             </div>
 
             {/* Only nag once they have actually typed something. */}
-            <div style={{
-              fontSize: 12, lineHeight: 1.45, marginBottom: 16,
-              color: showPhoneError ? '#E5484D' : '#6F6F6F',
-              minHeight: 17,
-            }}>
-              {showPhoneError ? INVALID_PHONE_MESSAGE : 'Example: 944365493'}
+            <div
+              style={{
+                fontSize: 12,
+                lineHeight: 1.45,
+                marginBottom: 16,
+                color: showPhoneError ? "#E5484D" : "#6F6F6F",
+                minHeight: 17,
+              }}
+            >
+              {showPhoneError ? INVALID_PHONE_MESSAGE : "Example: 944365493"}
             </div>
 
             <label
               htmlFor="telebirr-username-input"
               style={{
-                display: 'block', fontSize: 12, fontWeight: 700,
-                color: BRAND_GREEN, marginBottom: 7, letterSpacing: 0.2,
+                display: "block",
+                fontSize: 12,
+                fontWeight: 700,
+                color: BRAND_GREEN,
+                marginBottom: 7,
+                letterSpacing: 0.2,
               }}
             >
               Username
             </label>
-            <div style={{ position: 'relative', marginBottom: 14 }}>
-              <User size={17} color={BRAND_GREEN} style={{
-                position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)',
-              }} />
+            <div style={{ position: "relative", marginBottom: 14 }}>
+              <User
+                size={17}
+                color={BRAND_GREEN}
+                style={{
+                  position: "absolute",
+                  left: 13,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                }}
+              />
               <input
                 id="telebirr-username-input"
                 type="text"
                 value={telebirrUsername}
-                onChange={(e) => setTelebirrUsername(e.target.value.replace(/\s/g, '').slice(0, 30))}
+                onChange={(e) =>
+                  setTelebirrUsername(
+                    e.target.value.replace(/\s/g, "").slice(0, 30),
+                  )
+                }
                 placeholder="Choose a username"
                 autoComplete="username"
                 style={{
-                  width: '100%', padding: isMobile ? '15px 14px 15px 44px' : '14px 14px 14px 44px',
-                  background: '#101010', border: `1.5px solid ${M_BORDER}`,
-                  borderRadius: 12, fontSize: 16, color: '#fff', outline: 'none', boxSizing: 'border-box',
+                  width: "100%",
+                  padding: isMobile
+                    ? "15px 14px 15px 44px"
+                    : "14px 14px 14px 44px",
+                  background: "#101010",
+                  border: `1.5px solid ${M_BORDER}`,
+                  borderRadius: 12,
+                  fontSize: 16,
+                  color: "#fff",
+                  outline: "none",
+                  boxSizing: "border-box",
                 }}
               />
             </div>
@@ -2135,50 +2838,95 @@ export function SubscriptionPage({
             <label
               htmlFor="telebirr-pin-input"
               style={{
-                display: 'block', fontSize: 12, fontWeight: 700,
-                color: BRAND_GREEN, marginBottom: 7, letterSpacing: 0.2,
+                display: "block",
+                fontSize: 12,
+                fontWeight: 700,
+                color: BRAND_GREEN,
+                marginBottom: 7,
+                letterSpacing: 0.2,
               }}
             >
               PIN
             </label>
-            <div style={{ position: 'relative', marginBottom: 16 }}>
-              <Lock size={17} color={BRAND_GREEN} style={{
-                position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)',
-              }} />
+            <div style={{ position: "relative", marginBottom: 16 }}>
+              <Lock
+                size={17}
+                color={BRAND_GREEN}
+                style={{
+                  position: "absolute",
+                  left: 13,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                }}
+              />
               <input
                 id="telebirr-pin-input"
                 type="password"
                 inputMode="numeric"
                 value={telebirrPin}
-                onChange={(e) => setTelebirrPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                onChange={(e) =>
+                  setTelebirrPin(e.target.value.replace(/\D/g, "").slice(0, 6))
+                }
                 placeholder="6-digit PIN"
                 maxLength={6}
                 autoComplete="new-password"
                 style={{
-                  width: '100%', padding: isMobile ? '15px 14px 15px 44px' : '14px 14px 14px 44px',
-                  background: '#101010', border: `1.5px solid ${M_BORDER}`,
-                  borderRadius: 12, fontSize: 16, color: '#fff', outline: 'none', boxSizing: 'border-box',
+                  width: "100%",
+                  padding: isMobile
+                    ? "15px 14px 15px 44px"
+                    : "14px 14px 14px 44px",
+                  background: "#101010",
+                  border: `1.5px solid ${M_BORDER}`,
+                  borderRadius: 12,
+                  fontSize: 16,
+                  color: "#fff",
+                  outline: "none",
+                  boxSizing: "border-box",
                 }}
               />
             </div>
 
             <button
               onClick={handleTelebirrPhoneSubmit}
-              disabled={!telebirrPhoneValid || !telebirrUsername.trim() || !/^\d{6}$/.test(telebirrPin)}
+              disabled={
+                !telebirrPhoneValid ||
+                !telebirrUsername.trim() ||
+                !/^\d{6}$/.test(telebirrPin)
+              }
               style={{
-                width: '100%',
+                width: "100%",
                 minHeight: 52,
-                padding: isMobile ? '15px' : '14px',
-                background: telebirrPhoneValid && telebirrUsername.trim() && /^\d{6}$/.test(telebirrPin) ? BRAND_GREEN : '#2A3320',
-                border: 'none',
+                padding: isMobile ? "15px" : "14px",
+                background:
+                  telebirrPhoneValid &&
+                  telebirrUsername.trim() &&
+                  /^\d{6}$/.test(telebirrPin)
+                    ? BRAND_GREEN
+                    : "#2A3320",
+                border: "none",
                 borderRadius: 13,
-                color: telebirrPhoneValid && telebirrUsername.trim() && /^\d{6}$/.test(telebirrPin) ? '#0B1207' : '#5F6B4F',
+                color:
+                  telebirrPhoneValid &&
+                  telebirrUsername.trim() &&
+                  /^\d{6}$/.test(telebirrPin)
+                    ? "#0B1207"
+                    : "#5F6B4F",
                 fontSize: 16,
                 fontWeight: 800,
-                cursor: telebirrPhoneValid && telebirrUsername.trim() && /^\d{6}$/.test(telebirrPin) ? 'pointer' : 'not-allowed',
-                boxShadow: telebirrPhoneValid && telebirrUsername.trim() && /^\d{6}$/.test(telebirrPin) ? '0 6px 20px rgba(143,196,65,0.28)' : 'none',
-                transition: 'background .15s ease, color .15s ease',
-                WebkitTapHighlightColor: 'transparent',
+                cursor:
+                  telebirrPhoneValid &&
+                  telebirrUsername.trim() &&
+                  /^\d{6}$/.test(telebirrPin)
+                    ? "pointer"
+                    : "not-allowed",
+                boxShadow:
+                  telebirrPhoneValid &&
+                  telebirrUsername.trim() &&
+                  /^\d{6}$/.test(telebirrPin)
+                    ? "0 6px 20px rgba(143,196,65,0.28)"
+                    : "none",
+                transition: "background .15s ease, color .15s ease",
+                WebkitTapHighlightColor: "transparent",
               }}
             >
               Continue
@@ -2193,15 +2941,20 @@ export function SubscriptionPage({
           role="dialog"
           aria-modal="true"
           aria-labelledby="sub-method-title"
-          onClick={(e) => { if (e.target === e.currentTarget) setMethodModalOpen(false); }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setMethodModalOpen(false);
+          }}
           style={{
-            position: 'fixed',
-            top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(0, 0, 0, 0.78)',
-            backdropFilter: 'blur(3px)',
-            display: 'flex',
-            alignItems: isMobile ? 'flex-end' : 'center',
-            justifyContent: 'center',
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0, 0, 0, 0.78)",
+            backdropFilter: "blur(3px)",
+            display: "flex",
+            alignItems: isMobile ? "flex-end" : "center",
+            justifyContent: "center",
             zIndex: 1000,
             padding: isMobile ? 0 : 24,
           }}
@@ -2211,34 +2964,51 @@ export function SubscriptionPage({
             style={{
               background: M_CARD,
               border: `1px solid ${M_BORDER}`,
-              borderRadius: isMobile ? '22px 22px 0 0' : 22,
-              padding: isMobile ? '18px 20px' : '22px 24px',
-              paddingBottom: isMobile ? 'calc(20px + env(safe-area-inset-bottom))' : 22,
-              width: '100%',
-              maxWidth: isMobile ? '100%' : 400,
-              boxSizing: 'border-box',
-              boxShadow: '0 -12px 40px rgba(0,0,0,0.55)',
+              borderRadius: isMobile ? "22px 22px 0 0" : 22,
+              padding: isMobile ? "18px 20px" : "22px 24px",
+              paddingBottom: isMobile
+                ? "calc(20px + env(safe-area-inset-bottom))"
+                : 22,
+              width: "100%",
+              maxWidth: isMobile ? "100%" : 400,
+              boxSizing: "border-box",
+              boxShadow: "0 -12px 40px rgba(0,0,0,0.55)",
             }}
           >
             {isMobile && (
-              <div style={{
-                width: 38, height: 4, borderRadius: 4,
-                background: '#3A3A3A', margin: '0 auto 14px',
-              }} />
+              <div
+                style={{
+                  width: 38,
+                  height: 4,
+                  borderRadius: 4,
+                  background: "#3A3A3A",
+                  margin: "0 auto 14px",
+                }}
+              />
             )}
 
-            <div style={{
-              display: 'flex', alignItems: 'flex-start',
-              justifyContent: 'space-between', gap: 12, marginBottom: 16,
-            }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: 12,
+                marginBottom: 16,
+              }}
+            >
               <div style={{ minWidth: 0 }}>
-                <div id="sub-method-title" style={{
-                  fontSize: isMobile ? 18 : 17, fontWeight: 800,
-                  color: '#fff', letterSpacing: -0.2,
-                }}>
+                <div
+                  id="sub-method-title"
+                  style={{
+                    fontSize: isMobile ? 18 : 17,
+                    fontWeight: 800,
+                    color: "#fff",
+                    letterSpacing: -0.2,
+                  }}
+                >
                   Choose Payment Method
                 </div>
-                <div style={{ fontSize: 13, color: '#8A8A8A', marginTop: 3 }}>
+                <div style={{ fontSize: 13, color: "#8A8A8A", marginTop: 3 }}>
                   How would you like to pay?
                 </div>
               </div>
@@ -2246,10 +3016,16 @@ export function SubscriptionPage({
                 onClick={() => setMethodModalOpen(false)}
                 aria-label="Close"
                 style={{
-                  background: '#202020', border: `1px solid ${M_BORDER}`,
-                  borderRadius: 10, cursor: 'pointer', color: '#B5B5B5',
-                  width: 32, height: 32, flexShrink: 0,
-                  display: 'grid', placeItems: 'center',
+                  background: "#202020",
+                  border: `1px solid ${M_BORDER}`,
+                  borderRadius: 10,
+                  cursor: "pointer",
+                  color: "#B5B5B5",
+                  width: 32,
+                  height: 32,
+                  flexShrink: 0,
+                  display: "grid",
+                  placeItems: "center",
                 }}
               >
                 <X size={17} />
@@ -2261,39 +3037,77 @@ export function SubscriptionPage({
             {(() => {
               const PlanIcon = getTierIcon(selectedTierForMethod.duration_type);
               return (
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  background: '#101010', border: `1px solid ${M_BORDER}`,
-                  borderRadius: 14, padding: '12px 14px', marginBottom: 18,
-                }}>
-                  <div style={{
-                    width: 36, height: 36, borderRadius: 10, flexShrink: 0,
-                    background: BRAND_GREEN + '1F',
-                    display: 'grid', placeItems: 'center',
-                  }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    background: "#101010",
+                    border: `1px solid ${M_BORDER}`,
+                    borderRadius: 14,
+                    padding: "12px 14px",
+                    marginBottom: 18,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 10,
+                      flexShrink: 0,
+                      background: BRAND_GREEN + "1F",
+                      display: "grid",
+                      placeItems: "center",
+                    }}
+                  >
                     <PlanIcon size={18} color={BRAND_GREEN} />
                   </div>
                   <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{
-                      fontSize: 14.5, fontWeight: 700, color: '#fff',
-                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                    }}>
+                    <div
+                      style={{
+                        fontSize: 14.5,
+                        fontWeight: 700,
+                        color: "#fff",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
                       {selectedTierForMethod.name}
                     </div>
                     {selectedTierForMethod.description && (
-                      <div style={{
-                        fontSize: 12, color: '#7E7E7E', marginTop: 1,
-                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                      }}>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: "#7E7E7E",
+                          marginTop: 1,
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
                         {selectedTierForMethod.description}
                       </div>
                     )}
                   </div>
-                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                    <span style={{ fontSize: 19, fontWeight: 800, color: BRAND_GREEN }}>
+                  <div style={{ textAlign: "right", flexShrink: 0 }}>
+                    <span
+                      style={{
+                        fontSize: 19,
+                        fontWeight: 800,
+                        color: BRAND_GREEN,
+                      }}
+                    >
                       {selectedTierForMethod.price_etb}
                     </span>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: BRAND_GREEN, marginLeft: 3 }}>
+                    <span
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 700,
+                        color: BRAND_GREEN,
+                        marginLeft: 3,
+                      }}
+                    >
                       ETB
                     </span>
                   </div>
@@ -2301,29 +3115,29 @@ export function SubscriptionPage({
               );
             })()}
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <button
                 onClick={() => {
                   setMethodModalOpen(false);
                   handleTelebirrSubscribe(selectedTierForMethod);
                 }}
                 style={{
-                  width: '100%',
+                  width: "100%",
                   minHeight: 52,
                   padding: isMobile ? 15 : 14,
                   background: BRAND_GREEN,
-                  border: 'none',
+                  border: "none",
                   borderRadius: 13,
-                  color: '#0B1207',
+                  color: "#0B1207",
                   fontSize: 15.5,
                   fontWeight: 800,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                   gap: 9,
-                  boxShadow: '0 6px 20px rgba(143,196,65,0.28)',
-                  WebkitTapHighlightColor: 'transparent',
+                  boxShadow: "0 6px 20px rgba(143,196,65,0.28)",
+                  WebkitTapHighlightColor: "transparent",
                 }}
               >
                 <Trophy size={18} color="#0B1207" />
@@ -2337,26 +3151,26 @@ export function SubscriptionPage({
                     handleSubscribe(selectedTierForMethod);
                   }}
                   style={{
-                    width: '100%',
+                    width: "100%",
                     minHeight: 52,
                     padding: isMobile ? 15 : 14,
-                    background: 'transparent',
+                    background: "transparent",
                     border: `1.5px solid ${M_BORDER}`,
                     borderRadius: 13,
-                    color: '#E4E4E4',
+                    color: "#E4E4E4",
                     fontSize: 15.5,
                     fontWeight: 700,
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
                     gap: 9,
-                    WebkitTapHighlightColor: 'transparent',
+                    WebkitTapHighlightColor: "transparent",
                   }}
                 >
-<MessageCircle size={18} color={BRAND_GREEN} />
-                Pay via SMS
-              </button>
+                  <MessageCircle size={18} color={BRAND_GREEN} />
+                  Pay via SMS
+                </button>
               )}
             </div>
           </div>
@@ -2385,24 +3199,25 @@ export function SubscriptionPage({
           role="status"
           aria-live="polite"
           style={{
-            position: 'fixed',
-            left: '50%',
+            position: "fixed",
+            left: "50%",
             bottom: 32,
-            transform: 'translateX(-50%)',
-            background: toast.type === 'success'
-              ? '#10B981'
-              : toast.type === 'error'
-              ? '#EF4444'
-              : 'rgba(20,20,20,0.92)',
-            color: '#fff',
-            padding: '12px 18px',
+            transform: "translateX(-50%)",
+            background:
+              toast.type === "success"
+                ? "#10B981"
+                : toast.type === "error"
+                  ? "#EF4444"
+                  : "rgba(20,20,20,0.92)",
+            color: "#fff",
+            padding: "12px 18px",
             borderRadius: 999,
             fontSize: 14,
             fontWeight: 600,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
+            boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
             zIndex: 10001,
-            maxWidth: '90vw',
-            textAlign: 'center',
+            maxWidth: "90vw",
+            textAlign: "center",
           }}
         >
           {toast.text}
@@ -2411,5 +3226,3 @@ export function SubscriptionPage({
     </div>
   );
 }
-
-
