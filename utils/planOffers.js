@@ -25,15 +25,19 @@ export const ON_DEMAND = 'ondemand';
  *
  * @param tier  a plan from /subscriptions/tiers/active/, or the offline list
  * @param user  the signed-in account, or null/undefined for a visitor
+ * @param options  channel-specific offer rules
  */
-export function isOfferable(tier, user) {
+export function isOfferable(tier, user, { excludeOnDemand = false } = {}) {
   if (!tier) return false;
+  if (excludeOnDemand) {
+    return String(tier.duration_type || '').toLowerCase() !== ON_DEMAND;
+  }
   if (user) return true;
   return String(tier.duration_type || '').toLowerCase() !== ON_DEMAND;
 }
 
 /** The plans to show, in the order they arrived. */
-export function offerablePlans(tiers, user) {
+export function offerablePlans(tiers, user, options) {
   if (!Array.isArray(tiers)) return [];
-  return tiers.filter((tier) => isOfferable(tier, user));
+  return tiers.filter((tier) => isOfferable(tier, user, options));
 }
