@@ -2714,8 +2714,17 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
               style={{ background: 'rgba(255,255,255,0.12)', borderRadius: '50%', width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <ArrowLeft size={20} color={T.txt} />
             </button>
-            <span style={{ fontSize: 18, fontWeight: 800, color: T.txt }}>Post</span>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span
+              style={{
+                fontSize: 18, fontWeight: 800, color: T.txt,
+                // Gives way first: the actions are what a narrow screen must
+                // keep, and the Post button used to be cut off at the edge.
+                minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}
+            >
+              Post
+            </span>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
               <button className="ep-btn" onClick={() => setShowPreview(true)}
                 style={{ background: 'rgba(218,155,42,0.2)', borderRadius: 20, padding: '8px 14px', color: T.txt, fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <Eye size={15} /> Preview
@@ -2724,19 +2733,6 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
                 style={{ background: 'rgba(218,155,42,0.2)', borderRadius: 20, padding: '8px', color: T.txt, display: 'flex', alignItems: 'center' }}>
                 <Bookmark size={17} />
               </button>
-              {costLabel(plannedCost) && (
-                <span
-                  data-post-cost
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 5,
-                    fontSize: 13, fontWeight: 700, color: T.sub || '#b5b5b5',
-                    marginRight: 2, whiteSpace: 'nowrap',
-                  }}
-                >
-                  <Coins size={14} color={T.pri} aria-hidden="true" />
-                  {costLabel(plannedCost)}
-                </span>
-              )}
               <button className="ep-btn" onClick={handlePost} disabled={isUploading}
                 style={{
                   background: isUploading ? 'rgba(218,155,42,0.4)' : T.pri,
@@ -2744,6 +2740,9 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
                   fontSize: 15, fontWeight: 800, color: '#fff',
                   opacity: isUploading ? 0.7 : 1,
                 }}>
+                {/* Just "Post". The price is on the card below, where it can
+                    be read -- and the label is what the rest of the app and
+                    its tests find this button by. */}
                 {isUploading ? 'Posting...' : 'Post'}
               </button>
             </div>
@@ -2905,6 +2904,41 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
                 </div>
               )}
             </div>
+
+            {/* What this post costs. In the body rather than the top bar:
+                the bar holds five controls on a 360px screen and this was
+                what pushed the Post button off the edge. */}
+            {plannedCost > 0 && (
+              <div
+                data-post-cost
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  background: '#000', borderRadius: 16, padding: '14px 16px',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                }}
+              >
+                <div
+                  aria-hidden="true"
+                  style={{
+                    width: 38, height: 38, borderRadius: 12, flexShrink: 0,
+                    display: 'grid', placeItems: 'center',
+                    background: 'rgba(143,196,65,0.14)',
+                  }}
+                >
+                  <Coins size={18} color={T.pri} />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: T.txt }}>
+                    {costLabel(plannedCost)}
+                  </div>
+                  <div style={{ fontSize: 12, color: T.sub || 'rgba(255,255,255,0.6)', marginTop: 2 }}>
+                    {isVideoFile
+                      ? `Videos ${FREE_LIMIT} seconds and longer cost more`
+                      : 'Charged once, when your post is published'}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Sound section */}
             <div style={{ background: '#000', borderRadius: 16, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.2)' }}>

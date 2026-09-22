@@ -879,6 +879,80 @@ async function run() {
     }
   });
 
+  // ── the details screen at phone width ──────────────────────────────────
+  //
+  // The post cost was added to the top bar, which already carried Back, the
+  // title, Preview and Save. On a 360px screen that pushed the Post button
+  // off the right edge -- it read "Postin" with the rest cut off. These
+  // measure the laid-out boxes rather than looking for the text, because the
+  // text was present the whole time it was unreachable.
+
+  async function viewport(box) {
+    await fetch('/__input', { method: 'POST', body: JSON.stringify({ kind: 'viewport', ...box }) });
+  }
+
+  async function detailsAtPhoneWidth() {
+    await viewport({ width: 360, height: 800, mobile: true });
+    mountPage();
+    await waitFor(() => byText('Upload'), 'chooser');
+    await setFile(pngFile);
+    await waitFor(() => document.querySelector('img[alt="preview"]'), 'details page');
+    await sleep(250);
+  }
+
+  await test('the Post button is fully on screen at 360px', async () => {
+    try {
+      await detailsAtPhoneWidth();
+      const post = all('button').find((b) => /^Post\b/.test(b.textContent.trim()));
+      assert(post, 'no Post button');
+      const box = post.getBoundingClientRect();
+
+      assert(box.width > 0 && box.height > 0, 'the Post button has no size');
+      assert(
+        box.right <= window.innerWidth + 1,
+        `the Post button is cut off: right ${Math.round(box.right)} > width ${window.innerWidth}`,
+      );
+      assert(box.left >= 0, 'the Post button starts off the left edge');
+
+      const hit = document.elementFromPoint(
+        Math.round(box.left + box.width / 2),
+        Math.round(box.top + box.height / 2),
+      );
+      assert(post === hit || post.contains(hit), 'a tap on Post lands elsewhere');
+      return `Post at ${Math.round(box.left)}-${Math.round(box.right)} of ${window.innerWidth}px`;
+    } finally {
+      await viewport({ reset: true });
+    }
+  });
+
+  await test('the top bar does not push the page sideways at 360px', async () => {
+    try {
+      await detailsAtPhoneWidth();
+      assert(
+        document.documentElement.scrollWidth <= window.innerWidth + 1,
+        `the page scrolls sideways: ${document.documentElement.scrollWidth}px in ${window.innerWidth}px`,
+      );
+      return 'no sideways scroll';
+    } finally {
+      await viewport({ reset: true });
+    }
+  });
+
+  await test('the cost is still told to the author before they post', async () => {
+    try {
+      await detailsAtPhoneWidth();
+      const card = await waitFor(() => document.querySelector('[data-post-cost]'), 'the cost card');
+      const box = card.getBoundingClientRect();
+
+      assert(/Post cost: 2 coins/.test(card.innerText), `card reads: ${card.innerText}`);
+      assert(box.right <= window.innerWidth + 1 && box.width > 0, 'the cost card runs off the side');
+
+      return card.innerText.replace(/\s+/g, ' ').slice(0, 40);
+    } finally {
+      await viewport({ reset: true });
+    }
+  });
+
   await test('no uncaught errors from the page', async () => {
     assert(!pageErrors.length, pageErrors.join('\n'));
   });

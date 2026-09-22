@@ -930,7 +930,13 @@ async function main() {
     }
     if (route === '/drafts/') return json(200, req.method === 'GET' ? [] : { id: 1 });
     if (route === '/coins/balance/') return json(200, { balance: 1000 });
-    if (route === '/wallet/config/') return json(200, { cost_post_create_non_campaign: 0 });
+    if (route === '/wallet/config/') {
+      // The price list the create screen reads, shaped as
+      // api/views/wallet.py publishes it (api/services/post_pricing.py).
+      return json(200, {
+        post_costs: { image: 2, video_short: 2, video_long: 100, long_video_seconds: 60 },
+      });
+    }
     if (route === '/posts/create/') {
       const upload = summariseMultipart(req.headers['content-type'], body);
       state.uploads.push(upload);
