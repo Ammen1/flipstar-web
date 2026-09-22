@@ -19,6 +19,7 @@ import { useLockoutTimer } from "../../utils/useLockoutTimer";
 import { ForgotPasswordPhone } from "./ForgotPasswordPhone";
 import { FaqModal, TermsModal } from "./LoginFaqTermsModals";
 import { SubscriptionRegisterModal } from "./SubscriptionRegisterModal";
+import { useBodyScrollLock } from "../../utils/useBodyScrollLock";
 import {
   sanitizePhoneInput,
   toE164,
@@ -61,6 +62,11 @@ export function PhoneLoginModal({
   const [focusPhone, setFocusPhone] = useState(false);
   const [focusPwd, setFocusPwd] = useState(false);
   const [activeModal, setActiveModal] = useState(null); // 'faq' | 'terms' | 'superapp-phone' | 'superapp-otp' | 'superapp-register'
+
+  // A sheet sits over this page. Without holding the page still, dragging
+  // anywhere on the dimmed backdrop scrolls the login form behind it, which
+  // is how two screens end up visible at once.
+  useBodyScrollLock(Boolean(activeModal));
   const [superappPhone, setSuperappPhone] = useState("");
   const [superappOtp, setSuperappOtp] = useState("");
   const [superappSetupOtp, setSuperappSetupOtp] = useState("");

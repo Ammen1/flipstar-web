@@ -28,7 +28,7 @@ import { build } from 'esbuild';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const TIMEOUT_MS = Number(process.env.BROWSER_TEST_TIMEOUT_MS || 240000);
-const SUITES = ['camera', 'explorer', 'media', 'reels', 'subscription', 'coins', 'faq', 'streak', 'feed'];
+const SUITES = ['camera', 'explorer', 'media', 'reels', 'subscription', 'coins', 'faq', 'streak', 'feed', 'login'];
 
 // ── Real input ──────────────────────────────────────────────────────────────
 // A harness that needs a genuine tap, click or swipe -- hit-tested by the

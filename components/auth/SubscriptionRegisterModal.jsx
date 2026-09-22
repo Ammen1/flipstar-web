@@ -15,6 +15,8 @@ import { ForgotPasswordPhone } from './ForgotPasswordPhone';
 import { TermsModal } from './LoginFaqTermsModals';
 import logoG from '../../assets/70x20 (2).png';
 import { sanitizePhoneInput, toE164, PHONE_MAX_DIGITS, INVALID_PHONE_MESSAGE } from '../../utils/phone';
+import { missingStep } from '../../utils/registrationForm';
+import { useBodyScrollLock } from '../../utils/useBodyScrollLock';
 
 const GOLD =
   'linear-gradient(to bottom, #8fc441 0%, #b5dd8f 50%, #6ba835 100%)';
@@ -53,7 +55,8 @@ function OtpInput({ value, onChange }) {
         display: 'flex',
         gap: 6,
         justifyContent: 'center',
-        margin: '16px 0 24px',
+        gap: 8,
+        margin: '14px 0 10px',
       }}
     >
       {digits.map((d, i) => (
@@ -65,19 +68,24 @@ function OtpInput({ value, onChange }) {
           maxLength={1}
           value={d.trim()}
           onChange={(e) => handle(i, e)}
+          onFocus={(e) => e.target.select()}
           style={{
-            width: 32,
-            height: 40,
-            borderRadius: 6,
+            // Wider and taller, and sized in the available space rather than
+            // fixed, so six of them fit a 360px screen without crowding.
+            width: 44,
+            maxWidth: '15%',
+            height: 52,
+            borderRadius: 10,
             textAlign: 'center',
-            fontSize: 16,
+            fontSize: 20,
             fontWeight: 800,
             color: '#fff',
-            background: '#1A1A1A',
-            border: `2px solid ${d.trim() ? '#8fc441' : '#262626'}`,
+            background: d.trim() ? '#14210a' : '#1A1A1A',
+            border: `2px solid ${d.trim() ? '#8fc441' : '#2f2f2f'}`,
             outline: 'none',
             caretColor: '#8fc441',
-            flex: '0 0 auto',
+            flex: '1 1 0',
+            transition: 'border-color 0.15s, background 0.15s',
           }}
         />
       ))}
@@ -117,6 +125,31 @@ export function SubscriptionRegisterModal({
   const [resendTimer, setResendTimer] = useState(0);
   const [termsAgreed, setTermsAgreed] = useState(false);
   const [activeModal, setActiveModal] = useState(null); // 'terms'
+
+  // This covers the whole screen, so nothing behind it should move.
+  useBodyScrollLock();
+
+  // The number the code was sent to, shown in the subtitle. Read from what
+  // was typed rather than restated, so it cannot disagree with where the SMS
+  // actually went.
+  const sentTo = (() => {
+    const digits = String(phone || '').replace(/\D/g, '');
+    if (digits.length < 9) return '';
+    return `+251 ${digits.slice(-9)}`;
+  })();
+
+  // Why the button is grey. Every one of these was previously invisible: the
+  // button simply sat there, and the commonest support question was "why can
+  // I not press Login". The rules live in utils/registrationForm.js, tested
+  // against handleRegister's own checks so the two cannot drift.
+  const missing = missingStep({
+    otp,
+    pin: password,
+    confirm,
+    username,
+    existingUser,
+    termsAgreed,
+  });
 
   useEffect(() => {
     console.log('[SUBSCRIPTION REGISTRATION MODAL] Component mounted');
@@ -254,17 +287,32 @@ export function SubscriptionRegisterModal({
   };
 
   return (
+    /* A screen of its own, not a block in the page.
+       It used to render inline with minHeight: 100vh, so the login form it
+       was opened from sat directly underneath: scrolling down from the OTP
+       boxes landed on a second login page. Fixed and opaque, it covers what
+       it replaces, and useBodyScrollLock holds that page still underneath.
+
+       alignItems is flex-start with `margin: auto` on the card rather than
+       `center`, because a centred flex item taller than the viewport has its
+       top cut off with no way to scroll back up to it -- which on a small
+       phone is the OTP boxes themselves. */
     <div
+      data-signin-screen
       style={{
-        minHeight: '100vh',
+        position: 'fixed',
+        inset: 0,
+        zIndex: 10000,
         background: '#0D0D0D',
         display: 'flex',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         justifyContent: 'center',
-        padding: '20px 16px',
+        overflowY: 'auto',
+        WebkitOverflowScrolling: 'touch',
+        padding: 'max(20px, env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom))',
       }}
     >
-      <div style={{ width: '100%', maxWidth: 420 }}>
+      <div style={{ width: '100%', maxWidth: 420, margin: 'auto' }}>
         {/* Logo Header */}
         <div
           style={{
@@ -319,16 +367,47 @@ export function SubscriptionRegisterModal({
             border: '1px solid #8fc44130',
           }}
         >
+          {/* What this screen is for.
+              It used to say "Subscription Renewed" to anybody who already had
+              an account -- which is not what is happening here. A subscriber
+              arriving from the SuperApp is verifying their number and choosing
+              a PIN so they can sign in; nothing is being renewed, and reading
+              that they had just been charged again was alarming as well as
+              wrong. The subtitle names the number the code went to, because
+              the commonest reason for being stuck on this screen is that it
+              went somewhere else. */}
           <div style={{ textAlign: 'center', marginBottom: 20 }}>
             <div
               style={{
                 fontSize: 20,
                 fontWeight: 900,
                 color: '#8fc441',
-                marginBottom: 4,
+                marginBottom: 6,
+                letterSpacing: 0.2,
               }}
             >
-              {existingUser ? 'Subscription Renewed' : 'Complete Registration'}
+              {existingUser ? 'Verify & Set Your PIN' : 'Complete Registration'}
+            </div>
+            <div
+              style={{
+                fontSize: 13,
+                lineHeight: 1.5,
+                color: '#9a9a9a',
+                maxWidth: 300,
+                margin: '0 auto',
+              }}
+            >
+              {existingUser
+                ? 'Enter the code we sent by SMS, then choose a PIN to sign in.'
+                : 'Enter the code we sent by SMS and pick a username and PIN.'}
+              {sentTo && (
+                <>
+                  {' '}
+                  <span style={{ color: '#d6d6d6', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                    {sentTo}
+                  </span>
+                </>
+              )}
             </div>
           </div>
 
@@ -469,6 +548,9 @@ export function SubscriptionRegisterModal({
                 }}
               >
                 {existingUser ? 'Set New PIN *' : 'New PIN *'}
+                <span style={{ color: '#7d7d7d', fontWeight: 600, marginLeft: 6 }}>
+                  6 digits
+                </span>
               </label>
               <div style={{ position: 'relative' }}>
                 <div
@@ -572,6 +654,33 @@ export function SubscriptionRegisterModal({
                 </button>
               </div>
             </div>
+
+            {/* What is still missing. The button used to sit grey with no
+                explanation, which is the commonest way to be stuck here. */}
+            {!loading && missing && (
+              <div
+                data-submit-hint
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '10px 12px',
+                  marginBottom: 10,
+                  borderRadius: 10,
+                  background: 'rgba(143,196,65,0.08)',
+                  border: '1px solid rgba(143,196,65,0.25)',
+                  color: '#c9d8b5',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  lineHeight: 1.4,
+                }}
+              >
+                <span aria-hidden="true" style={{ color: '#8fc441', fontWeight: 900 }}>
+                  i
+                </span>
+                {missing}
+              </div>
+            )}
 
             <button
               type="submit"
