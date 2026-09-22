@@ -13,6 +13,7 @@ import config from '../../config';
 import { useTheme } from '../../contexts/ThemeContext';
 import realtimeService from '../../services/RealtimeService';
 import { InsufficientCoinsModal } from '../../components/common/InsufficientCoinsModal';
+import { costFor, costLabel, readPostCosts } from '../../utils/postCost';
 import { MediaLoadingLogo } from '../../components/common/MediaLoadingLogo';
 import { VIDEO_FILTERS, getFilter, isNeutralFilter, resolveFilterId } from '../../components/camera/filters/registry';
 import { availableFilters, createFilterRenderer } from '../../components/camera/filters/createRenderer';
@@ -41,10 +42,17 @@ function readableOn(hex) {
   const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
   return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#0B0F07' : '#FFFFFF';
 }
-const MAX_REC = 90;
+// The longest video that may be posted, matching the backend's
+// MEDIA_MAX_VIDEO_SECONDS. The recorder stops here and a chosen file longer
+// than this is refused before it is uploaded -- the server measures the file
+// itself and refuses it too, so this saves the upload rather than being the
+// rule.
+const MAX_REC = 120;
+const PAID_LIMIT = 120;
+// Where the long-video price starts (api/services/post_pricing.py). The
+// amount charged is the server's; this is only which side of the line a
+// recording is on.
 const FREE_LIMIT = 60;
-const PAID_LIMIT = 90;
-const EXTENDED_RECORDING_COST = 200;
 
 // Module-level helper to send logs to backend for server-side debugging
 const logToBackend = (message, level = 'info', source = 'recording') => {
@@ -192,6 +200,20 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
   const [uploadProgress, setUploadProgress] = useState(0);
   const [showInsufficientCoins, setShowInsufficientCoins] = useState(false);
   const [postCost, setPostCost] = useState(0);
+  // The server's price list (/wallet/config/ post_costs), so the figure shown
+  // above the Post button is the one the server will charge rather than a
+  // number written down here.
+  const [postCosts, setPostCosts] = useState(null);
+  // What the browser measured of the clip about to be uploaded. Used only to
+  // pick which band to *show*: the server measures the file itself and prices
+  // from that, so a wrong guess here mislabels, it never mischarges.
+  const [clipSeconds, setClipSeconds] = useState(null);
+  // What a long video costs, for the gate before recording past 60 seconds.
+  // A ref because the recording timer and the balance poll read it from
+  // callbacks that would otherwise close over a stale value. Null until the
+  // price list arrives, and a null price gates nothing: the server is what
+  // charges and what refuses.
+  const longVideoCostRef = useRef(null);
   const [showErrorModal, setShowErrorModal] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   // Empty keeps the modal's historical "Upload Error" heading; camera and
@@ -209,6 +231,21 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
     console.log('[INSUFFICIENT_COINS] Modal state changed:', showInsufficientCoins);
   }, [showInsufficientCoins]);
 
+  // The price list, once. Failing leaves it null, which shows no price rather
+  // than a wrong one -- the server still charges and still refuses.
+  useEffect(() => {
+    let alive = true;
+    api.request('/wallet/config/')
+      .then((config) => {
+        if (!alive) return;
+        const costs = readPostCosts(config);
+        setPostCosts(costs);
+        longVideoCostRef.current = costs.video_long || null;
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
   // Reload coins and resume recording after purchase
   useEffect(() => {
     if (showExtendedInsufficientModal && isRecordingPaused) {
@@ -217,8 +254,9 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
           .then(data => {
             const balance = data.balance || 0;
             setCoinBalance(balance);
-            console.log('[INSUFFICIENT_COINS] Polling balance:', balance, 'required:', EXTENDED_RECORDING_COST);
-            if (balance >= EXTENDED_RECORDING_COST) {
+            const needed = longVideoCostRef.current || 0;
+            console.log('[INSUFFICIENT_COINS] Polling balance:', balance, 'required:', needed);
+            if (balance >= needed) {
               console.log('[INSUFFICIENT_COINS] Balance sufficient, closing modal and resuming');
               setShowExtendedInsufficientModal(false);
               // Small delay to ensure modal closes before resuming
@@ -1054,7 +1092,7 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
             .then(data => {
               const balance = data.balance || 0;
               setCoinBalance(balance);
-              if (balance < EXTENDED_RECORDING_COST) {
+              if (longVideoCostRef.current && balance < longVideoCostRef.current) {
                 // Insufficient coins - pause recording and show modal
                 const mr = mediaRecorderRef.current;
                 if (mr && mr.state === 'recording') {
@@ -1280,6 +1318,10 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
 
       const checkDuration = (duration) => {
         URL.revokeObjectURL(videoUrl);
+        // Already measured here for the duration limit; keeping it is what
+        // lets the Post button show 100 coins for a long clip instead of 2.
+        // The server measures the file again and charges from that.
+        setClipSeconds(isFinite(duration) && duration > 0 ? duration : null);
 
         if (duration > PAID_LIMIT) {
           setErrorMessage(`Video duration exceeds ${PAID_LIMIT} seconds limit`);
@@ -1293,7 +1335,7 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
           api.request('/coins/balance/')
             .then(data => {
               const balance = data.balance || 0;
-              if (balance < EXTENDED_RECORDING_COST) {
+              if (longVideoCostRef.current && balance < longVideoCostRef.current) {
                 setCoinBalance(balance);
                 setShowExtendedInsufficientModal(true);
                 setSelectedFile(null);
@@ -1323,6 +1365,7 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
       };
     } else {
       // For images, use object URL as before
+      setClipSeconds(null);
       const url = URL.createObjectURL(file);
       setPreview(url);
       setStage('details');
@@ -1702,6 +1745,14 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
   };
 
   // ── Post / upload ───────────────────────────────────────────────────────
+  // What this post costs, by what is being posted. A recording knows its own
+  // length from the timer; an uploaded file is measured when it is chosen.
+  const plannedCost = costFor({
+    isVideo: isVideoFile,
+    durationSeconds: clipSeconds != null ? clipSeconds : recTime || null,
+    costs: postCosts,
+  });
+
   const handlePost = async () => {
     if (!preview || isUploading) return;
 
@@ -1740,9 +1791,9 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
         withTimeout(
           api.request('/wallet/config/').catch(err => {
             console.error('Wallet config error:', err);
-            return { cost_post_create_non_campaign: 0 };
+            return {};
           }),
-          { cost_post_create_non_campaign: 0 }
+          {}
         ),
         withTimeout(
           api.request('/coins/balance/').catch(err => {
@@ -1753,7 +1804,15 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
         ),
       ]);
       
-      const cost = walletConfig.cost_post_create_non_campaign || 0;
+      // Was `walletConfig.cost_post_create_non_campaign`, which the public
+      // config endpoint does not return -- so this read undefined, priced
+      // every post at 0 and never warned anybody. The price list is what the
+      // server publishes and what it charges from.
+      const cost = costFor({
+        isVideo: isVideoFile,
+        durationSeconds: clipSeconds != null ? clipSeconds : recTime || null,
+        costs: readPostCosts(walletConfig),
+      });
       const balance = coinBalance.balance || 0;
       
       console.log('[POST] Coin check:', { cost, balance, sufficient: balance >= cost });
@@ -2665,6 +2724,19 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
                 style={{ background: 'rgba(218,155,42,0.2)', borderRadius: 20, padding: '8px', color: T.txt, display: 'flex', alignItems: 'center' }}>
                 <Bookmark size={17} />
               </button>
+              {costLabel(plannedCost) && (
+                <span
+                  data-post-cost
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                    fontSize: 13, fontWeight: 700, color: T.sub || '#b5b5b5',
+                    marginRight: 2, whiteSpace: 'nowrap',
+                  }}
+                >
+                  <Coins size={14} color={T.pri} aria-hidden="true" />
+                  {costLabel(plannedCost)}
+                </span>
+              )}
               <button className="ep-btn" onClick={handlePost} disabled={isUploading}
                 style={{
                   background: isUploading ? 'rgba(218,155,42,0.4)' : T.pri,
@@ -3139,7 +3211,7 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
           </div>
           <div style={{ fontSize: 22, fontWeight: 800, color: T.white }}>Extended Recording</div>
           <div style={{ fontSize: 15, color: T.sub, textAlign: 'center', maxWidth: 300, padding: '0 20px' }}>
-            You need {EXTENDED_RECORDING_COST} coins to record beyond {FREE_LIMIT} seconds. Your current balance: {coinBalance} coins.
+            You need {longVideoCostRef.current || 0} coins to record beyond {FREE_LIMIT} seconds. Your current balance: {coinBalance} coins.
           </div>
           <div style={{ display: 'flex', gap: 12, marginTop: 10 }}>
             <button
