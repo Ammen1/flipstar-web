@@ -505,9 +505,7 @@ export function SubscriptionPage({
         // is charged and gets nothing. The API leaves it out for a request
         // with no user (api/views/subscription.py); this applies the same rule
         // to the cached and offline paths, and changes nothing once signed in.
-        let filteredTiers = offerablePlans(tiersData, user, {
-          excludeOnDemand: inSuperApp,
-        });
+        let filteredTiers = offerablePlans(tiersData);
         console.log("[SubscriptionPage] Plans offered:", filteredTiers);
 
         // Don't filter out daily tier in SuperApp - show it with mandate details
@@ -524,9 +522,7 @@ export function SubscriptionPage({
     } catch (error) {
       console.error("Error loading subscription data:", error);
       // Same rule when the API could not be reached.
-      let fallbackTiers = offerablePlans(getFallbackTiers(), user, {
-        excludeOnDemand: telebirrH5.isInSuperApp(),
-      });
+      let fallbackTiers = offerablePlans(getFallbackTiers());
       // Don't filter out daily tier in SuperApp - show it with mandate details
       setTiers(fallbackTiers);
     }

@@ -17,6 +17,8 @@
 // The filter ran on every load and removed nothing, and nothing said so. The
 // rule now keys on what the plan *is*.
 
+import telebirrH5 from "../services/TelebirrH5Service";
+
 /** A plan bought on top of a subscription rather than as one. */
 export const ON_DEMAND = "ondemand";
 
@@ -27,17 +29,18 @@ export const ON_DEMAND = "ondemand";
  * @param user  the signed-in account, or null/undefined for a visitor
  * @param options  channel-specific offer rules
  */
-export function isOfferable(tier, user, { excludeOnDemand = false } = {}) {
+export function isOfferable(tier) {
   if (!tier) return false;
-  if (excludeOnDemand) {
-    return String(tier.duration_type || "").toLowerCase() !== ON_DEMAND;
+  if (String(tier.duration_type || "").toLowerCase() === ON_DEMAND) {
+    if (telebirrH5.isInSuperApp()) {
+      return false;
+    }
   }
-  if (user) return true;
-  return String(tier.duration_type || "").toLowerCase() !== ON_DEMAND;
+  return true;
 }
 
 /** The plans to show, in the order they arrived. */
-export function offerablePlans(tiers, user, options) {
+export function offerablePlans(tiers) {
   if (!Array.isArray(tiers)) return [];
-  return tiers.filter((tier) => isOfferable(tier, user, options));
+  return tiers.filter((tier) => isOfferable(tier));
 }
