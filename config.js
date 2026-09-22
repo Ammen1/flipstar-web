@@ -3,9 +3,9 @@
 const getApiConfig = () => {
   return {
     API_BASE_URL:
-      import.meta.env.VITE_API_BASE_URL || 'https://api.uat.flipstar.et/api/v1',
+      (import.meta.env && import.meta.env.VITE_API_BASE_URL) || 'https://api.uat.flipstar.et/api/v1',
     ENVIRONMENT:
-      import.meta.env.VITE_ENVIRONMENT || 'development',
+      (import.meta.env && import.meta.env.VITE_ENVIRONMENT) || 'development',
   };
 };
 

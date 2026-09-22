@@ -12,8 +12,8 @@
 //   const r = await telebirrH5.purchasePackage(packageId);
 //   if (r.success) { ... coins credited / pending ... }
 
-import api from '../api';
-import { PENDING, SUCCESS, readState } from '../utils/paymentStatus';
+import api from '../api.js';
+import { PENDING, SUCCESS, readState } from '../utils/paymentStatus.js';
 
 // Client logger - sends logs to server for production visibility
 function logToServer(level, message, context = {}) {
