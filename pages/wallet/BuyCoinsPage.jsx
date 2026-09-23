@@ -8,8 +8,6 @@ import telebirrH5 from '../../services/TelebirrH5Service';
 import { sanitizePhoneInput, toE164, PHONE_MAX_DIGITS, INVALID_PHONE_MESSAGE } from '../../utils/phone';
 import { readPricing, quoteCoins, formatBirr } from '../../utils/coinPricing';
 import { allowedPayMethods } from '../../utils/payMethods';
-import UssdOtpStep from '../../components/payment/UssdOtpStep';
-import { VERIFIED as OTP_VERIFIED, canPay as otpAllowsPayment } from '../../utils/paymentOtp';
 import { describePayment, SUCCESS as PAYMENT_SUCCESS, PENDING as PAYMENT_PENDING } from '../../utils/paymentStatus';
 
 /**
@@ -384,10 +382,6 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(null);
-  // The verified session id the push endpoint requires. Held here rather
-  // than inside the step so that changing package, amount or method clears
-  // it: a verification is for one payment, and the server agrees.
-  const [otpSessionId, setOtpSessionId] = useState(null);
   const [payMethod, setPayMethod] = useState(null);   // 'telebirr' | 'airtime' | null            // null | 'telebirr' | 'airtime'
   const [awaitingUssd, setAwaitingUssd] = useState(false);
   // The payment being waited on, by its telebirr conversation id. Replaces
@@ -757,21 +751,10 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
       // for. The server prices it and credits its own figure either way.
       const response = await api.request('/wallet/telebirrUssdPurchase/', {
         method: 'POST',
-        // verification_session_id is what actually authorises this push. The
-        // server re-checks it against this user, this number and this exact
-        // package or amount, and spends it -- so it buys one payment, once.
         body: JSON.stringify(
           selected._isCustom
-            ? {
-                amount_etb: String(selected._priceEtb),
-                phone_number: toE164(phoneNumber),
-                verification_session_id: otpSessionId,
-              }
-            : {
-                package_id: selected.id,
-                phone_number: toE164(phoneNumber),
-                verification_session_id: otpSessionId,
-              },
+            ? { amount_etb: String(selected._priceEtb), phone_number: toE164(phoneNumber) }
+            : { package_id: selected.id, phone_number: toE164(phoneNumber) },
         ),
       });
 
@@ -843,14 +826,6 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
       })
     : [];
   const showAirtime = payMethods.includes('airtime');
-
-  // A USSD Push may only be asked for once the payer has answered the SMS
-  // code. Airtime does not use USSD Push, and inside the SuperApp telebirr
-  // has already authenticated the payer, so neither waits on this.
-  const telebirrReady =
-    payMethod !== 'telebirr' ||
-    isInSuperApp ||
-    otpAllowsPayment({ step: OTP_VERIFIED, sessionId: otpSessionId, busy: false });
 
   // With one method there is nothing to choose, so it is preselected. With
   // two the user must pick, and Pay stays disabled until they do.
@@ -1231,32 +1206,12 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
               </>
             )}
 
-            {/* USSD Push asks the payer to approve a PIN prompt on their
-                handset, so the handset has to be theirs. Airtime is charged
-                against the account's own verified number and the SuperApp
-                does its own authentication, so neither goes through this. */}
-            {payMethod === 'telebirr' && !isInSuperApp && (
-              <div style={{ marginTop: 16 }}>
-                <UssdOtpStep
-                  purpose="coin_purchase"
-                  reference={
-                    selected._isCustom
-                      ? { amount_etb: String(selected._priceEtb) }
-                      : { package_id: selected.id }
-                  }
-                  onVerified={setOtpSessionId}
-                  onReset={() => setOtpSessionId(null)}
-                  disabled={Boolean(busy)}
-                />
-              </div>
-            )}
-
             <div style={{ display: 'grid', gap: 10, marginTop: 18 }}>
               <button
                 className="bc-primary"
                 type="button"
                 style={{ width: '100%' }}
-                disabled={Boolean(busy) || !payMethod || !telebirrReady}
+                disabled={Boolean(busy) || !payMethod}
                 onClick={payMethod === 'airtime' ? handleAirtimePurchase : handleTelebirrPurchase}
               >
                 {busy
