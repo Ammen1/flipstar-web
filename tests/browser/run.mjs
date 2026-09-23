@@ -725,6 +725,11 @@ async function main() {
       return json(200, {});
     }
     // What the coin page's payment is doing, and what the wallet says.
+    // Whether the stubbed server offers airtime, as /wallet/config/ does.
+    if (url.pathname === '/__coins/airtime') {
+      state.allowsAirtime = url.searchParams.get('allows') === 'true';
+      return json(200, { allows_airtime: state.allowsAirtime });
+    }
     if (url.pathname === '/__coins/payment') {
       state.payment = {
         state: url.searchParams.get('state') || 'PENDING',
@@ -786,6 +791,11 @@ async function main() {
         return json(200, {
           currency: 'ETB',
           currency_label: 'Birr',
+          // Whether the server would take an airtime payment right now: the
+          // policy flag AND the charging credentials
+          // (api/services/airtime_purchase.py). The suite moves it with
+          // /__coins/airtime.
+          allows_airtime: state.allowsAirtime,
           coins_per_birr: 100,
           custom_purchase: {
             enabled: true,
@@ -979,6 +989,8 @@ async function main() {
       // A payment nobody has confirmed yet, which is where every one starts.
       payment: { state: 'PENDING', reason: null, message: 'Still confirming.' },
       coinBalance: 120,
+      // Off by default, as every environment is until it is switched on.
+      allowsAirtime: false,
     };
     const script = await bundle(name, `${origin}/api/v1`);
     html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name} e2e</title></head><body style="margin:0"><div id="root"></div><script>${script.replace(/<\/script>/gi, '<\\/script>')}</script></body></html>`;

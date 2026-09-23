@@ -373,6 +373,11 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
   const [customAmount, setCustomAmount] = useState('');
   const [customTouched, setCustomTouched] = useState(false);
   const [pricing, setPricing] = useState(null);
+  // Whether the server will actually take an airtime payment right now.
+  // It answers this from the policy flag *and* the charging credentials
+  // (api/services/airtime_purchase.py), so the option appears only when a
+  // purchase would go through rather than answering 403.
+  const [airtimeAvailable, setAirtimeAvailable] = useState(false);
   const [isInSuperApp, setIsInSuperApp] = useState(false);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -417,6 +422,7 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
     }
 
     setPricing(readPricing(cfg.value));
+    setAirtimeAvailable(Boolean(cfg.value && cfg.value.allows_airtime));
     const list = normalizePackages(cfg.value && cfg.value.packages);
     setPackages(list);
     setSelectedId((prev) => (list.some((p) => p._id === prev) ? prev : null));
@@ -450,18 +456,6 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
     });
   }, [packages]);
 
-  // Whether airtime is on at all, as the packages report it.
-  //
-  // /charging/coin-purchase/ currently returns 403 for everyone ("Ethio
-  // Telecom SIM cards are only accessible for SMS OTP verification"), and
-  // /wallet/config/ sends no allows_airtime flag, so this is false today and
-  // the airtime option stays off the screen -- the price rule above decides
-  // nothing until the API starts advertising it again.
-  const airtimeAvailable = useMemo(
-    () => packages.some((p) => Boolean(p.allows_airtime)),
-    [packages],
-  );
-
   // A custom amount is offered only outside the SuperApp: in there, purchases
   // go through /wallet/telebirr/initiate/, which takes a package id and has no
   // amount form. Showing the card there would offer something that cannot be
@@ -486,13 +480,8 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
       _priceEtb: customQuote.amount,
       _totalCoins: customQuote.coins,
       _bonusCoins: 0,
-      // A custom amount has no package row, so there is no server flag to
-      // read. It follows whether airtime is on at all, which is what the
-      // packages' own flag says -- otherwise a 5 ETB custom purchase would be
-      // refused a method the rule allows it, purely for want of a row.
-      allows_airtime: airtimeAvailable,
     };
-  }, [customQuote, airtimeAvailable]);
+  }, [customQuote]);
 
   const selected = useMemo(
     () =>
@@ -788,15 +777,17 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
     if (el && el.focus) el.focus();
   };
 
-  // Which methods this package permits. The backend's `allows_airtime` flag
-  // stays in the condition deliberately: /charging/coin-purchase/ currently
-  // returns 403 for everyone ("Ethio Telecom SIM cards are only accessible
-  // for SMS OTP verification"), so the flag is what keeps a
-  // guaranteed-failing option off the screen. If that endpoint is
-  // re-enabled, this lights up on its own.
+  // Which methods this purchase permits: the price decides (airtime is capped
+  // at 10 ETB), and `airtimeAvailable` is the server's own answer to whether
+  // it would take an airtime payment at all.
+  //
+  // It used to read `selected.allows_airtime`, a per-package field the API has
+  // never sent -- so the option was invisible no matter how the server was
+  // configured. One answer for the whole page, from /wallet/config/, applies
+  // to a package and to a custom amount alike.
   const payMethods = selected
     ? allowedPayMethods(selected._priceEtb, {
-        allowsAirtime: Boolean(selected.allows_airtime),
+        allowsAirtime: airtimeAvailable,
         inSuperApp: isInSuperApp,
       })
     : [];

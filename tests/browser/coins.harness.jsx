@@ -394,6 +394,105 @@ async function run() {
     return 'still waiting, saying nothing it does not know';
   });
 
+  // ── paying with airtime ─────────────────────────────────────────────────
+  //
+  // The option is offered only when the server says it would take the
+  // payment: /wallet/config/ answers `allows_airtime` from the policy flag
+  // AND the charging credentials (api/services/airtime_purchase.py). Before
+  // this the page guessed from a per-package field the API never sent, so the
+  // option was invisible whatever the server was configured to do.
+
+  async function openWithAirtime(allows) {
+    await fetch(`/__coins/airtime?allows=${allows}`);
+    // /wallet/config/ is cached for 60s by api.js, so a second mount in the
+    // same session would read the previous answer rather than the new one.
+    // A real user meets this as "the change appears after a refresh".
+    (await import('../../api')).default.invalidateCache('/wallet/config/');
+    await openPage();
+    const card = await waitFor(
+      () => Array.from(document.querySelectorAll('.bc-card')).find(
+        (c) => /100\s*COINS/i.test(c.innerText || ''),
+      ),
+      'the 10 ETB package card',
+    );
+    await bringIntoView(card);
+    await tap(card);
+    await sleep(200);
+
+    const cont = await waitFor(
+      () => Array.from(document.querySelectorAll('button.bc-primary')).find(
+        (b) => (b.textContent || '').trim() === 'Continue' && !b.disabled,
+      ),
+      'Continue',
+    );
+    await bringIntoView(cont);
+    await tap(cont);
+    await waitFor(() => /Confirm purchase/i.test(pageText()), 'the payment sheet');
+    await sleep(200);
+  }
+
+  const methodButtons = () =>
+    Array.from(document.querySelectorAll('button.bc-method, button')).filter((b) =>
+      /^(telebirr|Airtime balance)$/.test((b.textContent || '').trim()),
+    );
+
+  await test('airtime is not offered when the server does not take it', async () => {
+    await openWithAirtime('false');
+
+    const labels = methodButtons().map((b) => b.textContent.trim());
+    assert(!labels.includes('Airtime balance'), `offered airtime anyway: ${labels.join(', ')}`);
+    // One method left, so the page picks it and the button names the price.
+    assert(/with telebirr/.test(pageText()), 'telebirr went missing too');
+    return 'telebirr only';
+  });
+
+  await test('airtime is offered when the server takes it', async () => {
+    await openWithAirtime('true');
+
+    const labels = methodButtons().map((b) => b.textContent.trim());
+    assert(labels.includes('Airtime balance'), `no airtime option: ${labels.join(', ')}`);
+    assert(labels.includes('telebirr'), 'telebirr was replaced rather than joined');
+    return labels.join(' + ');
+  });
+
+  await test('the 10 ETB package can be paid with airtime', async () => {
+    await openWithAirtime('true');
+
+    const airtime = methodButtons().find((b) => b.textContent.trim() === 'Airtime balance');
+    assert(airtime && !airtime.disabled, 'the airtime option cannot be chosen');
+    await tap(airtime);
+    await sleep(200);
+
+    const pay = Array.from(document.querySelectorAll('button')).find((b) =>
+      /from airtime/.test(b.textContent || ''),
+    );
+    assert(pay, `no airtime pay button: ${pageText().slice(0, 140)}`);
+    assert(/10/.test(pay.textContent), `the price is not 10 ETB: ${pay.textContent}`);
+    return pay.textContent.trim();
+  });
+
+  await test('telebirr is unaffected either way', async () => {
+    await openWithAirtime('true');
+    let labels = methodButtons().map((b) => b.textContent.trim());
+    assert(labels.includes('telebirr'), 'telebirr disappeared when airtime was enabled');
+
+    // Choosing it still produces the telebirr payment button it always did.
+    await tap(methodButtons().find((b) => b.textContent.trim() === 'telebirr'));
+    await sleep(200);
+    assert(/with telebirr/.test(pageText()), 'telebirr cannot be paid with');
+
+    // With airtime off there is nothing to choose between, so the page skips
+    // the method buttons entirely and goes straight to paying -- which is the
+    // behaviour it has always had.
+    await openWithAirtime('false');
+    assert(
+      !methodButtons().some((b) => b.textContent.trim() === 'Airtime balance'),
+      'airtime is still offered after being switched off',
+    );
+    assert(/with telebirr/.test(pageText()), 'telebirr is not offered when alone');
+    return 'telebirr offered in both';
+  });
+
   await test('no uncaught errors from the page', async () => {
     assert(!pageErrors.length, pageErrors.join('\n'));
   });
