@@ -726,6 +726,11 @@ async function main() {
     }
     // What the coin page's payment is doing, and what the wallet says.
     // Whether the stubbed server offers airtime, as /wallet/config/ does.
+    if (url.pathname === '/__coins/requests') {
+      const list = state.airtimeRequests.slice();
+      if (url.searchParams.get('clear') === '1') state.airtimeRequests.length = 0;
+      return json(200, list);
+    }
     if (url.pathname === '/__coins/airtime') {
       state.allowsAirtime = url.searchParams.get('allows') === 'true';
       return json(200, { allows_airtime: state.allowsAirtime });
@@ -826,6 +831,17 @@ async function main() {
           message: 'Request accepted for processing',
           purchase: { amount_etb: '10.00', total_coins: 100, is_custom: false },
         });
+      }
+      // Buying coins with airtime. Records what the page sent, so the suite
+      // can check the request carries what api/views/charging.py requires --
+      // a package to price the charge from and a key that makes a retry one
+      // charge. The page used to send {phone_number, coins}, which that
+      // endpoint answers 400 to.
+      if (route === '/charging/coin-purchase/') {
+        let payload = {};
+        try { payload = JSON.parse(body.toString('utf8') || '{}'); } catch (_) { payload = {}; }
+        state.airtimeRequests.push(payload);
+        return json(200, { success: true, coins_added: 100, balance: 220 });
       }
       // The payment's own state, as api/services/payment_status.py shapes it.
       // The suite moves it with /__coins/payment.
@@ -991,6 +1007,7 @@ async function main() {
       coinBalance: 120,
       // Off by default, as every environment is until it is switched on.
       allowsAirtime: false,
+      airtimeRequests: [],
     };
     const script = await bundle(name, `${origin}/api/v1`);
     html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name} e2e</title></head><body style="margin:0"><div id="root"></div><script>${script.replace(/<\/script>/gi, '<\\/script>')}</script></body></html>`;

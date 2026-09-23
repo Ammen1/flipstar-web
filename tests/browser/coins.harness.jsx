@@ -493,6 +493,110 @@ async function run() {
     return 'telebirr offered in both';
   });
 
+  // ── the amount decides which methods are offered ────────────────────────
+  //
+  //     up to 10 ETB   telebirr or airtime
+  //     over 10 ETB    telebirr only
+  //
+  // The cap lives in utils/payMethods.js and is mirrored by
+  // common/validators/payment.py, which refuses an airtime charge above it
+  // whatever the page allowed.
+
+  async function chooseCard(match) {
+    const card = await waitFor(
+      () => Array.from(document.querySelectorAll('.bc-card')).find(
+        (c) => match.test(c.innerText || ''),
+      ),
+      `a card matching ${match}`,
+    );
+    await bringIntoView(card);
+    await tap(card);
+    await sleep(200);
+    const cont = await waitFor(
+      () => Array.from(document.querySelectorAll('button.bc-primary')).find(
+        (b) => (b.textContent || '').trim() === 'Continue' && !b.disabled,
+      ),
+      'Continue',
+    );
+    await bringIntoView(cont);
+    await tap(cont);
+    await waitFor(() => /Confirm purchase/i.test(pageText()), 'the payment sheet');
+    await sleep(200);
+  }
+
+  await test('a 25 ETB package is telebirr only, even with airtime on', async () => {
+    await fetch('/__coins/airtime?allows=true');
+    (await import('../../api')).default.invalidateCache('/wallet/config/');
+    await openPage();
+    await chooseCard(/275\s*COINS|25 ETB/);
+
+    const labels = methodButtons().map((b) => b.textContent.trim());
+    assert(!labels.includes('Airtime balance'), `airtime offered above the cap: ${labels}`);
+    assert(/with telebirr/.test(pageText()), 'telebirr is not offered');
+    return 'telebirr only above 10 ETB';
+  });
+
+  await test('a 10 ETB purchase by airtime sends a package and a key', async () => {
+    await fetch('/__coins/requests?clear=1');
+    await openWithAirtime('true');
+
+    await tap(methodButtons().find((b) => b.textContent.trim() === 'Airtime balance'));
+    await sleep(200);
+    await tap(
+      Array.from(document.querySelectorAll('button')).find((b) => /from airtime/.test(b.textContent || '')),
+    );
+    await sleep(900);
+
+    const sent = await (await fetch('/__coins/requests')).json();
+    assert(sent.length === 1, `${sent.length} airtime requests were sent`);
+    const [request] = sent;
+    assert(request.package_id, `no package to price the charge from: ${JSON.stringify(request)}`);
+    assert(request.idempotency_key, 'no idempotency key -- a retry would charge twice');
+    assert(!('coins' in request), 'the request named its own coin amount');
+    return `package_id=${request.package_id}`;
+  });
+
+  await test('a custom amount with no package is not offered airtime', async () => {
+    // Airtime is charged against a package row, so 7 Birr -- which is no
+    // package -- cannot be priced that way however small it is.
+    await fetch('/__coins/airtime?allows=true');
+    (await import('../../api')).default.invalidateCache('/wallet/config/');
+    await openPage();
+    await enter('7');
+    const cont = await waitFor(
+      () => (continueBtn() && !continueBtn().disabled ? continueBtn() : null),
+      'Continue to Buy',
+    );
+    await bringIntoView(cont);
+    await tap(cont);
+    await waitFor(() => /Confirm purchase/i.test(pageText()), 'the payment sheet');
+    await sleep(200);
+
+    const labels = methodButtons().map((b) => b.textContent.trim());
+    assert(!labels.includes('Airtime balance'), `offered airtime for 7 Birr: ${labels}`);
+    assert(/with telebirr/.test(pageText()), 'telebirr is not offered either');
+    return 'telebirr only';
+  });
+
+  await test('a custom 10 Birr resolves to the package and may use airtime', async () => {
+    await fetch('/__coins/airtime?allows=true');
+    (await import('../../api')).default.invalidateCache('/wallet/config/');
+    await openPage();
+    await enter('10');
+    const cont = await waitFor(
+      () => (continueBtn() && !continueBtn().disabled ? continueBtn() : null),
+      'Continue to Buy',
+    );
+    await bringIntoView(cont);
+    await tap(cont);
+    await waitFor(() => /Confirm purchase/i.test(pageText()), 'the payment sheet');
+    await sleep(200);
+
+    const labels = methodButtons().map((b) => b.textContent.trim());
+    assert(labels.includes('Airtime balance'), `no airtime for a 10 Birr amount: ${labels}`);
+    return labels.join(' + ');
+  });
+
   await test('no uncaught errors from the page', async () => {
     assert(!pageErrors.length, pageErrors.join('\n'));
   });

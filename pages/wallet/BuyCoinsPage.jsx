@@ -20,7 +20,7 @@ import { describePayment, SUCCESS as PAYMENT_SUCCESS, PENDING as PAYMENT_PENDING
  *
  *   SuperApp   -> telebirrH5.purchasePackage(pkg.id)
  *   Web (USSD) -> POST /wallet/telebirrUssdPurchase/ { package_id, phone_number }
- *   Airtime    -> POST /charging/coin-purchase/      { phone_number, coins }
+ *   Airtime    -> POST /charging/coin-purchase/      { package_id, idempotency_key }
  */
 
 /** The id the custom card selects under; never a real package id. */
@@ -394,6 +394,10 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
   const [result, setResult] = useState(null);
 
   const cardRefs = useRef([]);
+  // The key that makes a retried airtime purchase one charge rather than two.
+  // Kept until the attempt settles, then dropped so the next purchase is a
+  // new one rather than a replay of the last.
+  const airtimeIdempotencyRef = useRef(null);
 
   // ── data ────────────────────────────────────────────────────────────────
   const load = useCallback(async (fresh = false) => {
@@ -480,6 +484,11 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
       _priceEtb: customQuote.amount,
       _totalCoins: customQuote.coins,
       _bonusCoins: 0,
+      // The package this amount resolves to, when it is exactly a package
+      // price. Airtime is charged against a package row (the server prices it
+      // there, never from the request), so an amount with no package -- 7
+      // Birr, say -- cannot be paid that way and is not offered it.
+      _airtimePackageId: (customQuote.matchedPackage && customQuote.matchedPackage.id) || null,
     };
   }, [customQuote]);
 
@@ -612,11 +621,26 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
     setConfirmOpen(false);
     setBusy('airtime');
     try {
+      // What the endpoint requires, and only that:
+      //
+      //   package_id       the price comes from the package row, never from
+      //                    here -- the request cannot name its own price
+      //   idempotency_key  the client is the only one who knows two requests
+      //                    are the same purchase, so a double tap is one
+      //                    charge. Held in a ref until the attempt settles.
+      //
+      // It used to send `{phone_number, coins}`, which the endpoint answers
+      // 400 to twice over: no package and no key. The number charged is the
+      // account's own verified one, chosen by the server -- sending a phone
+      // here implied otherwise and was never read.
+      if (!airtimeIdempotencyRef.current) {
+        airtimeIdempotencyRef.current = `airtime-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      }
       const response = await api.request('/charging/coin-purchase/', {
         method: 'POST',
         body: JSON.stringify({
-          phone_number: toE164(phoneNumber),
-          coins: selected.total_coins,
+          package_id: airtimePackageId,
+          idempotency_key: airtimeIdempotencyRef.current,
         }),
       });
 
@@ -647,6 +671,8 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
     } catch (error) {
       setResult({ tone: 'failure', heading: 'Payment not completed', message: 'Purchase failed. Please try again.' });
     } finally {
+      // Settled either way: the next purchase gets its own key.
+      airtimeIdempotencyRef.current = null;
       setBusy(null);
     }
   };
@@ -777,9 +803,17 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
     if (el && el.focus) el.focus();
   };
 
+  // Which package an airtime charge would be against: the selected one, or
+  // the package a custom amount matches exactly. Null means airtime cannot
+  // price this purchase, whatever the amount is.
+  const airtimePackageId = selected
+    ? (selected._isCustom ? selected._airtimePackageId : selected.id)
+    : null;
+
   // Which methods this purchase permits: the price decides (airtime is capped
-  // at 10 ETB), and `airtimeAvailable` is the server's own answer to whether
-  // it would take an airtime payment at all.
+  // at 10 ETB), `airtimeAvailable` is the server's own answer to whether it
+  // would take an airtime payment at all, and there has to be a package for
+  // the charge to be priced from.
   //
   // It used to read `selected.allows_airtime`, a per-package field the API has
   // never sent -- so the option was invisible no matter how the server was
@@ -787,7 +821,7 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
   // to a package and to a custom amount alike.
   const payMethods = selected
     ? allowedPayMethods(selected._priceEtb, {
-        allowsAirtime: airtimeAvailable,
+        allowsAirtime: airtimeAvailable && Boolean(airtimePackageId),
         inSuperApp: isInSuperApp,
       })
     : [];
