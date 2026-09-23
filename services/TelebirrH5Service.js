@@ -9,7 +9,8 @@
 //
 // Usage:
 //   import telebirrH5 from './services/TelebirrH5Service';
-//   const r = await telebirrH5.purchasePackage(packageId);
+//   const r = await telebirrH5.purchaseCoins({ packageId });        // a package
+//   const r = await telebirrH5.purchaseCoins({ amountEtb: '35' }); // a typed amount
 //   if (r.success) { ... coins credited / pending ... }
 
 import api from '../api.js';
@@ -262,7 +263,14 @@ async function confirmOrder(merchOrderId) {
 
 // End-to-end purchase for a coin package.
 // Returns { success, pending, coins_added, merch_order_id, error }.
-async function purchasePackage(packageId) {
+/**
+ * Buy coins inside the SuperApp: a package, or a typed amount.
+ *
+ * `{ amountEtb }` is priced by the server, never here -- the same rule the
+ * web USSD path follows. The client says how much money; the server says how
+ * many coins, and credits its own figure.
+ */
+async function purchaseCoins({ packageId, amountEtb } = {}) {
   // Instrumented to match purchaseSubscription.
   //
   // This function reported failures only through its return value, and the UI
@@ -272,7 +280,7 @@ async function purchasePackage(packageId) {
   // diagnosable; coin failures never were, which is why one was traceable and
   // the other was not.
   logToServer('info', '[TelebirrH5Service] ========== COIN PURCHASE START ==========');
-  logToServer('info', '[TelebirrH5Service] purchasePackage() called', { packageId });
+  logToServer('info', '[TelebirrH5Service] purchaseCoins() called', { packageId, amountEtb });
 
   if (!isInSuperApp()) {
     logToServer('error', '[TelebirrH5Service] Not in SuperApp, cannot purchase');
@@ -283,7 +291,7 @@ async function purchasePackage(packageId) {
   try {
     order = await api.request('/wallet/telebirr/initiate/', {
       method: 'POST',
-      body: JSON.stringify({ package_id: packageId }),
+      body: JSON.stringify(packageId ? { package_id: packageId } : { amount_etb: String(amountEtb) }),
     });
   } catch (err) {
     // Reaching here without a server-side request line means the call never
@@ -291,6 +299,7 @@ async function purchasePackage(packageId) {
     // /wallet/ is an encrypted prefix.
     logToServer('error', '[TelebirrH5Service] Coin initiate THREW', {
       packageId,
+      amountEtb,
       name: err?.name,
       message: err?.message,
       status: err?.status ?? err?.response?.status,
@@ -302,6 +311,7 @@ async function purchasePackage(packageId) {
   if (!order || !order.success || !order.raw_request) {
     logToServer('error', '[TelebirrH5Service] Coin initiate returned no raw_request', {
       packageId,
+      amountEtb,
       success: order?.success,
       error: order?.error,
       code: order?.code,
@@ -712,8 +722,13 @@ export function clearPendingMandate() {
   try { localStorage.removeItem(PENDING_MANDATE_KEY); } catch (e) {}
 }
 
+/** Back-compatible shorthand for the package case. */
+async function purchasePackage(packageId) {
+  return purchaseCoins({ packageId });
+}
+
 const telebirrH5 = {
-  isInSuperApp, getAccessToken, autoLogin, startPay, confirmOrder, purchasePackage,
+  isInSuperApp, getAccessToken, autoLogin, startPay, confirmOrder, purchaseCoins, purchasePackage,
   purchaseSubscription, getPendingMandate, clearPendingMandate, PENDING_MANDATE_KEY,
   // COMMENTED OUT: signContract (replaced by one-time flow)
 };

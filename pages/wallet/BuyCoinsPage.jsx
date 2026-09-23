@@ -18,7 +18,7 @@ import { describePayment, SUCCESS as PAYMENT_SUCCESS, PENDING as PAYMENT_PENDING
  * from the existing `/wallet/config/` response; the purchase itself still runs
  * through the exact same telebirr / airtime calls the modal used:
  *
- *   SuperApp   -> telebirrH5.purchasePackage(pkg.id)
+ *   SuperApp   -> telebirrH5.purchaseCoins({ packageId })  or { amountEtb }
  *   Web (USSD) -> POST /wallet/telebirrUssdPurchase/ { package_id, phone_number }
  *   Airtime    -> POST /charging/coin-purchase/      { package_id, idempotency_key }
  */
@@ -464,7 +464,10 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
   // go through /wallet/telebirr/initiate/, which takes a package id and has no
   // amount form. Showing the card there would offer something that cannot be
   // paid for.
-  const customAllowed = Boolean(pricing) && !isInSuperApp;
+  // Available inside the SuperApp too. The H5 order endpoint prices a typed
+  // amount the same way the USSD one does, so both buyers get the same choice
+  // and the same answer about what it buys.
+  const customAllowed = Boolean(pricing);
   const customQuote = useMemo(
     // `decorated` goes in so an amount that is exactly a package price
     // previews that package's coins -- the same rule the server applies.
@@ -682,16 +685,14 @@ export default function BuyCoinsPage({ theme, onBack, onDone }) {
     setConfirmOpen(false);
 
     if (telebirrH5.isInSuperApp()) {
-      // The card is hidden in the SuperApp, so this is unreachable rather than
-      // a case to handle -- but it fails loudly here instead of sending a null
-      // package id if that ever stops being true.
-      if (selected._isCustom) {
-        setResult({ tone: 'failure', heading: 'Payment not completed', message: 'Choose a package to pay inside telebirr.' });
-        return;
-      }
       setBusy('telebirr');
       try {
-        const r = await telebirrH5.purchasePackage(selected.id);
+        // A typed amount sends the money; the server decides the coins.
+        const r = await telebirrH5.purchaseCoins(
+          selected._isCustom
+            ? { amountEtb: String(selected._priceEtb) }
+            : { packageId: selected.id },
+        );
         // Three outcomes, from the server's state.
         //
         // The old shape of this branch was `r.success && r.pending` -> "ok",
