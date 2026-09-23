@@ -23,6 +23,7 @@ import api from "../../api";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import telebirrH5 from "../../services/TelebirrH5Service";
+import UssdOtpStep from "../../components/payment/UssdOtpStep";
 import { isSubscriptionActive } from "../../utils/subscription";
 import { offerablePlans } from "../../utils/planOffers";
 import {
@@ -98,6 +99,10 @@ export function SubscriptionPage({
   const [smsSent, setSmsSent] = useState(false);
   const [pendingTier, setPendingTier] = useState(null);
   const [telebirrModalOpen, setTelebirrModalOpen] = useState(false);
+  // The verified session the USSD Push endpoint requires. Cleared whenever
+  // the tier or the number changes, because a verification is for one
+  // payment and the server checks that it is this one.
+  const [otpSessionId, setOtpSessionId] = useState(null);
   const [telebirrPhoneInputOpen, setTelebirrPhoneInputOpen] = useState(false);
   const [telebirrPhone, setTelebirrPhone] = useState("");
   const [telebirrUsername, setTelebirrUsername] = useState("");
@@ -999,6 +1004,9 @@ export function SubscriptionPage({
     try {
       const requestBody = {
         tier_id: selectedTierForTelebirr.id,
+        // What actually authorises this push. The server re-checks it against
+        // this number and this tier, and spends it, so it buys one payment.
+        verification_session_id: otpSessionId,
       };
 
       // Add phone number if user is not authenticated
@@ -2148,28 +2156,51 @@ export function SubscriptionPage({
                 ))}
               </div>
 
+              {/* The USSD Push puts a PIN prompt on this handset, so the
+                  payer proves it is theirs before one is sent. */}
+              <div style={{ marginBottom: 14 }}>
+                <UssdOtpStep
+                  purpose="subscription"
+                  reference={{ tier_id: selectedTierForTelebirr.id }}
+                  phoneNumber={toE164(telebirrPhone) || telebirrPhone}
+                  onVerified={setOtpSessionId}
+                  onReset={() => setOtpSessionId(null)}
+                  disabled={processing}
+                />
+              </div>
+
               <button
                 onClick={handleTelebirrProceed}
-                disabled={processing}
+                disabled={processing || !otpSessionId}
                 style={{
                   width: "100%",
                   minHeight: 52,
                   padding: isMobile ? 15 : 14,
-                  background: processing ? "#2A3320" : BRAND_GREEN,
+                  background:
+                    processing || !otpSessionId ? "#2A3320" : BRAND_GREEN,
                   border: "none",
                   borderRadius: 13,
-                  color: processing ? "#5F6B4F" : "#0B1207",
+                  color: processing || !otpSessionId ? "#5F6B4F" : "#0B1207",
                   fontSize: 16,
                   fontWeight: 800,
-                  cursor: processing ? "wait" : "pointer",
-                  boxShadow: processing
-                    ? "none"
-                    : "0 6px 20px rgba(143,196,65,0.28)",
+                  cursor: processing
+                    ? "wait"
+                    : otpSessionId
+                      ? "pointer"
+                      : "not-allowed",
+                  boxShadow:
+                    processing || !otpSessionId
+                      ? "none"
+                      : "0 6px 20px rgba(143,196,65,0.28)",
                   transition: "background .15s ease, color .15s ease",
                   WebkitTapHighlightColor: "transparent",
                 }}
               >
-                {processing ? "Processing…" : "Proceed"}
+                {processing
+                  ? "Processing…"
+                  : otpSessionId
+                    ? "Proceed"
+                    : "Verify your number first"}
               </button>
 
               <div

@@ -292,6 +292,10 @@ async function run() {
     );
     if (method) { await tap(method); await sleep(150); }
 
+    // A USSD Push cannot be asked for until the payer has answered the SMS
+    // code, so the step is part of paying now rather than something extra.
+    await passOtpStep();
+
     const pay = Array.from(document.querySelectorAll('button')).find(
       (b) => /with telebirr/.test(b.textContent || ''),
     );
@@ -315,6 +319,41 @@ async function run() {
         8000,
       );
     }
+  }
+
+  /** Send a code, type one, verify -- the step a real payer walks. */
+  async function passOtpStep() {
+    const step = document.querySelector('[data-otp-step]');
+    if (!step) return false;
+
+    const send = step.querySelector('[data-otp-send]');
+    if (send) {
+      await bringIntoView(send);
+      await tap(send);
+      await waitFor(
+        () => document.querySelectorAll('[data-otp-step] input[maxlength="1"]').length === 6,
+        'the code boxes',
+      );
+    }
+
+    const boxes = Array.from(document.querySelectorAll('[data-otp-step] input[maxlength="1"]'));
+    for (let i = 0; i < boxes.length; i += 1) {
+      typeInto(boxes[i], String((i + 1) % 10));
+      await sleep(30);
+    }
+    await sleep(120);
+
+    const verify = await waitFor(
+      () => {
+        const b = document.querySelector('[data-otp-verify]');
+        return b && !b.disabled ? b : null;
+      },
+      'the Verify button',
+    );
+    await bringIntoView(verify);
+    await tap(verify);
+    await waitFor(() => document.querySelector('[data-otp-verified]'), 'the verified step');
+    return true;
   }
 
   async function payAndSettle(payment) {
@@ -595,6 +634,162 @@ async function run() {
     const labels = methodButtons().map((b) => b.textContent.trim());
     assert(labels.includes('Airtime balance'), `no airtime for a 10 Birr amount: ${labels}`);
     return labels.join(' + ');
+  });
+
+  // ── the SMS check in front of a USSD Push ───────────────────────────────
+  //
+  // The push puts a PIN prompt on the payer's handset. Before this step,
+  // reaching the endpoint was enough to raise that prompt. The server is the
+  // thing that enforces it -- these cover the half the payer sees, and that
+  // the page sends the session the server issued rather than a claim.
+
+  async function openTelebirrSheet() {
+    await fetch('/__coins/otp?clear=1');
+    await fetch('/__coins/airtime?allows=false');
+    (await import('../../api')).default.invalidateCache('/wallet/config/');
+    await openPage();
+    // The 10 ETB package: one method on offer, so telebirr is preselected.
+    await chooseCard(/100\s*COINS|10 ETB/);
+  }
+
+  const payButton = () =>
+    Array.from(document.querySelectorAll('button')).find((b) =>
+      /with telebirr/.test(b.textContent || ''),
+    );
+
+  await test('the sheet asks to verify the number before paying', async () => {
+    await openTelebirrSheet();
+
+    const step = document.querySelector('[data-otp-step]');
+    assert(step, 'no verification step in the payment sheet');
+    assert(/Verify your phone number/i.test(step.innerText), `step reads: ${step.innerText}`);
+    assert(step.querySelector('[data-otp-send]'), 'no way to ask for a code');
+    return 'Send code offered';
+  });
+
+  await test('Pay is dead until the code has been verified', async () => {
+    await openTelebirrSheet();
+
+    const pay = payButton();
+    assert(pay, 'no telebirr button');
+    assert(pay.disabled, 'Pay was live before the number was verified');
+
+    await passOtpStep();
+    await sleep(150);
+
+    assert(!payButton().disabled, 'Pay is still dead after verifying');
+    return 'disabled, then live';
+  });
+
+  await test('the code boxes appear only after a code is asked for', async () => {
+    await openTelebirrSheet();
+
+    assert(
+      document.querySelectorAll('[data-otp-step] input[maxlength="1"]').length === 0,
+      'the code boxes were showing before a code was sent',
+    );
+
+    await tap(document.querySelector('[data-otp-send]'));
+    await waitFor(
+      () => document.querySelectorAll('[data-otp-step] input[maxlength="1"]').length === 6,
+      'the six code boxes',
+    );
+    return '6 boxes after Send';
+  });
+
+  await test('the push carries the session the server issued', async () => {
+    await openTelebirrSheet();
+    await passOtpStep();
+
+    await fetch('/__coins/payment?' + new URLSearchParams({ status: 'success', coins: '100' }));
+    await tap(payButton());
+    await waitFor(
+      () => /check your phone/i.test(pageText()) || document.querySelector('[data-payment-tone]'),
+      'the payment to start',
+      8000,
+    );
+
+    const sent = await (await fetch('/__coins/requests')).json();
+    const otp = await (await fetch('/__coins/otp')).json();
+    assert(otp.requests.length >= 1, 'no code was ever requested');
+    assert(otp.verifies.length >= 1, 'the code was never verified');
+    // The page must not invent the id: it is the one the server handed back.
+    const issued = 'sess-' + otp.requests.length;
+    assert(
+      otp.verifies[otp.verifies.length - 1].session_id === issued,
+      `verified ${otp.verifies[otp.verifies.length - 1].session_id}, server issued ${issued}`,
+    );
+    return `session ${issued}`;
+  });
+
+  await test('the request names the package it is verifying', async () => {
+    await openTelebirrSheet();
+    await tap(document.querySelector('[data-otp-send]'));
+    await sleep(400);
+
+    const otp = await (await fetch('/__coins/otp')).json();
+    const [first] = otp.requests;
+    assert(first, 'nothing was requested');
+    assert(first.purpose === 'coin_purchase', `purpose is ${first.purpose}`);
+    assert(first.package_id, `no package on the request: ${JSON.stringify(first)}`);
+    return `purpose=${first.purpose} package=${first.package_id}`;
+  });
+
+  await test('an SMS that could not be sent says so and pays nothing', async () => {
+    await openTelebirrSheet();
+    await fetch('/__coins/otp?sendFails=true');
+
+    await tap(document.querySelector('[data-otp-send]'));
+    await sleep(500);
+
+    const hint = document.querySelector('[data-otp-hint]');
+    assert(hint && /could not send/i.test(hint.innerText), `hint reads: ${hint && hint.innerText}`);
+    assert(payButton().disabled, 'Pay went live after a failed SMS');
+    assert(
+      document.querySelectorAll('[data-otp-step] input[maxlength="1"]').length === 0,
+      'the code boxes opened for a code that was never sent',
+    );
+    await fetch('/__coins/otp?sendFails=false');
+    return 'error shown, Pay stays dead';
+  });
+
+  await test('a wrong code says so and leaves Pay dead', async () => {
+    await openTelebirrSheet();
+    await fetch('/__coins/otp?verifyCode=OTP_INVALID&remaining=4');
+
+    await tap(document.querySelector('[data-otp-send]'));
+    await waitFor(
+      () => document.querySelectorAll('[data-otp-step] input[maxlength="1"]').length === 6,
+      'the code boxes',
+    );
+    const boxes = Array.from(document.querySelectorAll('[data-otp-step] input[maxlength="1"]'));
+    boxes.forEach((b, i) => typeInto(b, String((i + 1) % 10)));
+    await sleep(150);
+    await tap(document.querySelector('[data-otp-verify]'));
+    await sleep(500);
+
+    const hint = document.querySelector('[data-otp-hint]');
+    assert(hint && /not correct/i.test(hint.innerText), `hint reads: ${hint && hint.innerText}`);
+    assert(!document.querySelector('[data-otp-verified]'), 'a wrong code was accepted');
+    assert(payButton().disabled, 'Pay went live on a wrong code');
+    await fetch('/__coins/otp?verifyCode=');
+    return 'refused, Pay stays dead';
+  });
+
+  await test('paying from airtime asks for no code', async () => {
+    // Airtime charges the account's own verified number and sends no USSD
+    // Push, so the step would be asking for something it does not need.
+    await fetch('/__coins/otp?clear=1');
+    await openWithAirtime('true');
+    await tap(methodButtons().find((b) => b.textContent.trim() === 'Airtime balance'));
+    await sleep(250);
+
+    assert(!document.querySelector('[data-otp-step]'), 'airtime was made to verify a code');
+    const airtimeButton = Array.from(document.querySelectorAll('button')).find((b) =>
+      /from airtime/.test(b.textContent || ''),
+    );
+    assert(airtimeButton && !airtimeButton.disabled, 'the airtime button is dead');
+    return 'no step, button live';
   });
 
   await test('no uncaught errors from the page', async () => {

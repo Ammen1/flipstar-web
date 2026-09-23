@@ -731,6 +731,35 @@ async function main() {
       if (url.searchParams.get('clear') === '1') state.airtimeRequests.length = 0;
       return json(200, list);
     }
+    // Drive the OTP step: read what the page asked for, and make the server
+    // refuse, so the page's error handling is exercised rather than described.
+    if (url.pathname === '/__coins/otp') {
+      if (url.searchParams.get('clear') === '1') {
+        state.otpRequests.length = 0;
+        state.otpVerifies.length = 0;
+        state.otpSendFails = false;
+        state.otpVerifyError = null;
+      }
+      if (url.searchParams.has('sendFails')) {
+        state.otpSendFails = url.searchParams.get('sendFails') === 'true';
+      }
+      if (url.searchParams.has('verifyCode')) {
+        const code = url.searchParams.get('verifyCode');
+        state.otpVerifyError = code
+          ? {
+              error: url.searchParams.get('verifyError') || 'refused',
+              code,
+              ...(url.searchParams.has('remaining')
+                ? { attempts_remaining: Number(url.searchParams.get('remaining')) }
+                : {}),
+            }
+          : null;
+      }
+      return json(200, {
+        requests: state.otpRequests,
+        verifies: state.otpVerifies,
+      });
+    }
     if (url.pathname === '/__coins/airtime') {
       state.allowsAirtime = url.searchParams.get('allows') === 'true';
       return json(200, { allows_airtime: state.allowsAirtime });
@@ -837,7 +866,37 @@ async function main() {
       // a package to price the charge from and a key that makes a retry one
       // charge. The page used to send {phone_number, coins}, which that
       // endpoint answers 400 to.
-      if (route === '/charging/coin-purchase/') {
+      // The SMS check in front of a USSD Push. The real server sends a code and
+  // checks it; the stub records what was asked for so the tests can assert
+  // the push carries a session the server issued, and can drive the refusals.
+  if (route === '/charging/ussd-push/request-otp/') {
+    let payload = {};
+    try { payload = JSON.parse(body.toString('utf8') || '{}'); } catch (_) { payload = {}; }
+    state.otpRequests.push(payload);
+    if (state.otpSendFails) {
+      return json(502, { error: 'SMS gateway refused', code: 'SMS_FAILED' });
+    }
+    return json(200, {
+      success: true,
+      session_id: 'sess-' + (state.otpRequests.length),
+      phone_number: '25191****271',
+      expires_in: 300,
+      resend_after: 60,
+      attempts_allowed: 5,
+    });
+  }
+
+  if (route === '/charging/ussd-push/verify-otp/') {
+    let payload = {};
+    try { payload = JSON.parse(body.toString('utf8') || '{}'); } catch (_) { payload = {}; }
+    state.otpVerifies.push(payload);
+    if (state.otpVerifyError) {
+      return json(400, state.otpVerifyError);
+    }
+    return json(200, { success: true, session_id: payload.session_id, verified: true });
+  }
+
+  if (route === '/charging/coin-purchase/') {
         let payload = {};
         try { payload = JSON.parse(body.toString('utf8') || '{}'); } catch (_) { payload = {}; }
         state.airtimeRequests.push(payload);
@@ -1008,6 +1067,10 @@ async function main() {
       // Off by default, as every environment is until it is switched on.
       allowsAirtime: false,
       airtimeRequests: [],
+    otpRequests: [],
+    otpVerifies: [],
+    otpSendFails: false,
+    otpVerifyError: null,
     };
     const script = await bundle(name, `${origin}/api/v1`);
     html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name} e2e</title></head><body style="margin:0"><div id="root"></div><script>${script.replace(/<\/script>/gi, '<\\/script>')}</script></body></html>`;
