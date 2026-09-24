@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import {
   Phone,
-  User,
   Lock,
   Eye,
   EyeOff,
@@ -53,7 +52,12 @@ export function PhoneLoginModal({
   prefillPhone,
   telebirrOtpMode = false, // New prop: enable Telebirr OTP login mode
 }) {
-  const [phone, setPhone] = useState(prefillPhone || "");
+  // Sanitised, because the field renders a fixed "+251" beside it and holds
+  // the nine subscriber digits. A prefill arriving as 251911528271 or
+  // +251911528271 was stored verbatim and drawn as "+251 251911528271" --
+  // the country code twice, which reads as a typo the person cannot correct
+  // without deleting digits they did not enter.
+  const [phone, setPhone] = useState(sanitizePhoneInput(prefillPhone || ""));
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -109,7 +113,9 @@ export function PhoneLoginModal({
       setError("Please fill in all fields");
       return;
     }
-    if (telebirrOtpMode && !toE164(phone)) {
+    // Both modes take a phone number now -- this screen no longer accepts a
+    // username -- so the number is validated the same way either way.
+    if (!toE164(phone)) {
       setError(INVALID_PHONE_MESSAGE);
       return;
     }
@@ -127,15 +133,15 @@ export function PhoneLoginModal({
         data = res.data || res;
         api.setAuthToken(data.token);
       } else {
-        // Normal login accepts either the account username or the registered
-        // phone number. Username login is used from the subscription page;
-        // phone login remains available for existing SMS subscribers.
-        res = toE164(phone)
-          ? await api.post("/auth/login-with-phone/", {
-              phone: toE164(phone),
-              password,
-            })
-          : await api.login(phone.trim(), password);
+        // Phone and PIN. This screen used to accept a username too and pick
+        // the endpoint from whether the text parsed as a number, which made
+        // the one field mean two things and the error messages ambiguous --
+        // a mistyped number fell through to a username lookup and came back
+        // "invalid credentials".
+        res = await api.post("/auth/login-with-phone/", {
+          phone: toE164(phone),
+          password,
+        });
         data = res.data || res;
         api.setAuthToken(data.token);
       }
@@ -765,7 +771,7 @@ export function PhoneLoginModal({
                     letterSpacing: 0.5,
                   }}
                 >
-                  {telebirrOtpMode ? "Phone Number" : "Username or Phone"}
+                  {"Phone Number"}
                 </label>
                 <div style={{ position: "relative" }}>
                   <div
@@ -778,42 +784,24 @@ export function PhoneLoginModal({
                       display: "flex",
                     }}
                   >
-                    {toE164(phone) || telebirrOtpMode ? (
-                      <Phone size={17} />
-                    ) : (
-                      <User size={17} />
-                    )}
-                    {toE164(phone) || telebirrOtpMode ? (
-                      <span
-                        style={{ fontSize: 14, fontWeight: 700, marginLeft: 6 }}
-                      >
-                        +251
-                      </span>
-                    ) : null}
+                    <Phone size={17} />
+                    <span
+                      style={{ fontSize: 14, fontWeight: 700, marginLeft: 6 }}
+                    >
+                      +251
+                    </span>
                   </div>
                   <input
-                    type={telebirrOtpMode ? "tel" : "text"}
+                    type="tel"
                     value={phone}
-                    onChange={(e) =>
-                      setPhone(
-                        telebirrOtpMode
-                          ? sanitizePhoneInput(e.target.value)
-                          : e.target.value.trimStart(),
-                      )
-                    }
-                    placeholder={
-                      telebirrOtpMode ? "9XXXXXXXX" : "Username or 9XXXXXXXX"
-                    }
-                    inputMode={telebirrOtpMode ? "numeric" : "text"}
-                    maxLength={telebirrOtpMode ? PHONE_MAX_DIGITS : 150}
-                    aria-label={
-                      telebirrOtpMode
-                        ? "Ethiopian phone number without country code"
-                        : "Username or phone number"
-                    }
+                    onChange={(e) => setPhone(sanitizePhoneInput(e.target.value))}
+                    placeholder="9XXXXXXXX"
+                    inputMode="numeric"
+                    maxLength={PHONE_MAX_DIGITS}
+                    aria-label="Ethiopian phone number without country code"
                     style={{
                       ...inp(focusPhone),
-                      paddingLeft: toE164(phone) || telebirrOtpMode ? 74 : 46,
+                      paddingLeft: 74,
                     }}
                     onFocus={() => setFocusPhone(true)}
                     onBlur={() => setFocusPhone(false)}

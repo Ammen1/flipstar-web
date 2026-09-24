@@ -1118,11 +1118,21 @@ export function SubscriptionPage({
                     "Redirecting based on is_new_user from status endpoint",
                     { phone, is_new_user },
                   );
-                  if (is_new_user) {
-                    window.location.href = `/?subscription_tp=true&phone=${phone}&from_telebirr=true`;
-                  } else {
-                    window.location.href = `/?login=true&phone=${phone}&telebirr_otp_mode=true`;
-                  }
+                  // Both go to "Verify & Set Your PIN".
+                  //
+                  // An existing subscriber used to be sent to the OTP-only
+                  // login, which verifies a five-minute cache code from
+                  // OTPService -- a different store from the one the webhook
+                  // now writes, and short enough that the SMS often outlived
+                  // it. They paid, waited for the SMS, and were told "OTP
+                  // expired or not found".
+                  //
+                  // The set-PIN screen reads subscription.setup_otp, which is
+                  // what the webhook issues, lasts 30 minutes, and survives a
+                  // restart. existing_user makes it say "Verify & Set Your
+                  // PIN" rather than "Complete Registration".
+                  const existing = is_new_user ? '' : '&existing_user=true';
+                  window.location.href = `/?subscription_tp=true&phone=${phone}&from_telebirr=true${existing}`;
                 } else {
                   clog(
                     "error",
