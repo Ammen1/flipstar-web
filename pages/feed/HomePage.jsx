@@ -3419,6 +3419,8 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
           onFollow={(id) => handleFollow(id)}
           isFollowing={(p) => followStates[p?.user?.id] ?? p?.user?.is_following}
           onNeedMore={() => { if (hasMore && !loading) fetchPosts(postsRef.current.length); }}
+          subscriptionStatus={subscriptionStatus}
+          onShowSubscription={onShowSubscription}
         />
       ) : (
       /* Feed — tight padding so each post fits fully in the viewport. */

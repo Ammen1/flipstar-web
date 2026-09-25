@@ -57,6 +57,29 @@ describe('processing status', () => {
     assert.equal(failureText({ processing_error: 'something_new' }), 'Please try posting it again.');
     assert.doesNotMatch(failureText({ processing_error: 'Traceback (most recent call last)' }), /Traceback/);
   });
+
+  it("prefers the server's sentence, because some limits differ per account", () => {
+    // A video is refused at 60 seconds for a standard subscriber and at 120
+    // for somebody who has bought coins. Only the server knows which applied,
+    // so its sentence wins over the generic one for the code.
+    const refused = {
+      processing_error: 'video_too_long',
+      processing_error_message:
+        'Videos can be up to 60 seconds on your current plan. Buy coins to post videos up to 120 seconds.',
+    };
+
+    assert.match(failureText(refused), /60 seconds on your current plan/);
+    assert.match(failureText(refused), /Buy coins/);
+  });
+
+  it('falls back to the code when the server sent no sentence', () => {
+    // An older server, or a failure that means the same to everybody.
+    assert.match(failureText({ processing_error: 'video_too_long' }), /longer than allowed/);
+    assert.match(
+      failureText({ processing_error: 'video_too_long', processing_error_message: null }),
+      /longer than allowed/,
+    );
+  });
 });
 
 describe('one video at a time', () => {

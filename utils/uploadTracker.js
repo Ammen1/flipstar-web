@@ -50,6 +50,7 @@ function toEntry(raw) {
     progress: clampPercent(raw.progress),
     queued: Boolean(raw.queued),
     error: raw.error || null,
+    errorMessage: raw.errorMessage || null,
     mediaType: raw.mediaType || null,
     show: Boolean(raw.show),
     thumb: typeof raw.thumb === 'string' && raw.thumb.startsWith('data:image/') ? raw.thumb : null,
@@ -125,7 +126,12 @@ export function createUploadTracker({
   function deliver(entry) {
     const payload = entry.status === 'READY'
       ? entry.post || { id: entry.id, processing_status: 'READY' }
-      : { id: entry.id, processing_status: entry.status, processing_error: entry.error };
+      : {
+          id: entry.id,
+          processing_status: entry.status,
+          processing_error: entry.error,
+          processing_error_message: entry.errorMessage,
+        };
     (watchers.get(String(entry.id)) || new Set()).forEach((cb) => {
       try { cb(payload); } catch { /* a page's handler must not stop the rest */ }
     });
@@ -182,7 +188,12 @@ export function createUploadTracker({
         Object.assign(entry, { status: 'READY', progress: 100, post, doneAt: now() });
         finished.push(entry);
       } else if (status === 'FAILED') {
-        Object.assign(entry, { status: 'FAILED', error: row.processing_error || null, doneAt: now() });
+        Object.assign(entry, {
+          status: 'FAILED',
+          error: row.processing_error || null,
+          errorMessage: row.processing_error_message || null,
+          doneAt: now(),
+        });
         finished.push(entry);
       }
     }
@@ -283,6 +294,7 @@ export function createUploadTracker({
         progress: status === 'READY' ? 100 : post.processing_progress,
         queued: status === 'PROCESSING',
         error: post.processing_error,
+        errorMessage: post.processing_error_message || null,
         mediaType: post.media_type,
         show: show || (existing && existing.show),
         thumb: thumb || (existing && existing.thumb),

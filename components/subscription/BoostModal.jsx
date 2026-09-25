@@ -52,6 +52,13 @@ export function BoostModal({ reelId, onClose, onSuccess }) {
 
   const [config, setConfig] = useState(null);
   const [selectedDuration, setSelectedDuration] = useState(12);
+  // The three named products, from the server (api/services/boost_tiers.py).
+  // Null until /boost/config/ answers; empty means this deployment serves
+  // only the older by-the-hour form, and the tier section stays hidden
+  // rather than inventing prices the server would not charge.
+  const [tiers, setTiers] = useState([]);
+  // Which product is selected, or null for the custom by-the-hour form.
+  const [selectedTier, setSelectedTier] = useState(null);
 
   // Targeting is fixed for now; kept as state so the cost cache is already
   // keyed correctly if the targeting controls are surfaced later.
@@ -86,6 +93,18 @@ export function BoostModal({ reelId, onClose, onSuccess }) {
       return `Insufficient coins. Required: ${requiredMatch[1]}, available: ${availableMatch[1]}.`;
     }
 
+    // A post can hold one live boost at a time. Said plainly, because the
+    // raw refusal reads like a failure when it is really "this is already
+    // running" -- and nothing was charged.
+    if (/already_boosted/i.test(message) || /already has an active boost/i.test(message)) {
+      return 'This post already has an active boost. Wait for it to finish before starting another.';
+    }
+
+    // The post is hidden or removed, so there is no placement to sell.
+    if (/reel_not_boostable/i.test(message)) {
+      return 'This post cannot be boosted.';
+    }
+
     return message;
   };
 
@@ -112,7 +131,15 @@ export function BoostModal({ reelId, onClose, onSuccess }) {
   const loadConfig = useCallback(async () => {
     try {
       const response = await api.request('/boost/config/');
-      if (mountedRef.current) setConfig(response);
+      if (mountedRef.current) {
+        setConfig(response);
+        const list = Array.isArray(response?.tiers) ? response.tiers : [];
+        setTiers(list);
+        // Default to the first product rather than the hourly form: the
+        // tiers are what the product sells, and leaving nothing selected
+        // makes the sheet look like it failed to load.
+        if (list.length) setSelectedTier((current) => current ?? list[0].key);
+      }
     } catch (err) {
       // Non-fatal: pricing falls back to the shared constants.
       console.error('Error loading boost config:', err);
@@ -189,7 +216,10 @@ export function BoostModal({ reelId, onClose, onSuccess }) {
     [calculated, config],
   );
 
-  const boostCost = costs[selectedDuration]?.cost ?? 0;
+  // A tier's price is fixed by the server; the hourly form is priced by
+  // duration as before.
+  const activeTier = tiers.find((t) => t.key === selectedTier) || null;
+  const boostCost = activeTier ? activeTier.coins : (costs[selectedDuration]?.cost ?? 0);
   const balanceKnown = !balanceError && userCoins !== null;
   const shortfall = Math.max(0, boostCost - (userCoins ?? 0));
   // Exactly enough counts as enough.
@@ -216,11 +246,14 @@ export function BoostModal({ reelId, onClose, onSuccess }) {
     try {
       const response = await api.request('/boost/campaigns/', {
         method: 'POST',
-        body: JSON.stringify({
-          reel_id: reelId,
-          duration_hours: selectedDuration,
-          ...targeting,
-        }),
+        body: JSON.stringify(
+          activeTier
+            // A tier fixes cost, duration and placement server-side, so the
+            // request names the product and nothing else. Sending an amount
+            // would be ignored, and sending a duration would contradict it.
+            ? { reel_id: reelId, boost_type: activeTier.key }
+            : { reel_id: reelId, duration_hours: selectedDuration, ...targeting }
+        ),
       });
 
       if (response?.success) {
@@ -383,6 +416,42 @@ export function BoostModal({ reelId, onClose, onSuccess }) {
       display: flex; align-items: center; gap: 8px; margin-bottom: 11px;
       font-size: 11.5px; font-weight: 800; color: ${sub};
       text-transform: uppercase; letter-spacing: .8px;
+    }
+    /* The three products. One per row rather than a grid: each carries a
+       placement and sometimes a guarantee, which need the width to read as
+       sentences instead of wrapping into stubs. */
+    .bm-tiers {
+      display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px;
+    }
+    .bm-tier {
+      position: relative; min-width: 0; width: 100%;
+      display: flex; flex-direction: column; gap: 6px;
+      padding: 13px 14px; border-radius: 15px; cursor: pointer; text-align: left;
+      background: rgba(255,255,255,0.045);
+      border: 1.5px solid transparent;
+      transition: border-color .15s ease, background .15s ease;
+    }
+    .bm-tier.sel { border-color: ${pri}; background: rgba(255,255,255,0.08); }
+    .bm-tier-head {
+      display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    }
+    .bm-tier-name { font-size: 14.5px; font-weight: 800; color: #fff; }
+    .bm-tier-cost { font-size: 13.5px; font-weight: 800; color: ${pri}; white-space: nowrap; }
+    .bm-tier-cost.short { color: #f87171; }
+    .bm-tier-meta {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px;
+      font-size: 11.5px; font-weight: 600; color: ${sub};
+    }
+    .bm-tier-meta span { display: inline-flex; align-items: center; gap: 4px; }
+    .bm-tier-guarantee {
+      font-size: 11.5px; font-weight: 700; color: ${pri};
+    }
+    .bm-tier-short { font-size: 11.5px; font-weight: 700; color: #f87171; }
+    .bm-custom-toggle {
+      align-self: flex-start; margin-bottom: 16px; padding: 0;
+      background: none; border: none; cursor: pointer;
+      font-size: 12px; font-weight: 700; color: ${sub};
+      text-decoration: underline; text-underline-offset: 3px;
     }
     .bm-grid {
       display: grid;
@@ -675,10 +744,74 @@ export function BoostModal({ reelId, onClose, onSuccess }) {
             )}
           </div>
 
-          {/* Durations */}
+          {/* The three products. Hidden entirely when the server offers
+              none, so an older deployment shows the hourly form exactly as
+              it did. */}
+          {tiers.length > 0 && (
+            <>
+              <div className="bm-label">
+                <Zap size={13} color={pri} /> Choose a boost
+              </div>
+              <div className="bm-tiers">
+                {tiers.map((tier) => {
+                  const isSelected = selectedTier === tier.key;
+                  const affordable = !balanceKnown || userCoins >= tier.coins;
+                  return (
+                    <button
+                      key={tier.key}
+                      type="button"
+                      className={isSelected ? 'bm-tier sel' : 'bm-tier'}
+                      onClick={() => setSelectedTier(tier.key)}
+                      aria-pressed={isSelected}
+                    >
+                      {isSelected && (
+                        <span className="bm-tick"><Check size={11} strokeWidth={3.5} /></span>
+                      )}
+                      <div className="bm-tier-head">
+                        <span className="bm-tier-name">{tier.label}</span>
+                        <span className={affordable ? 'bm-tier-cost' : 'bm-tier-cost short'}>
+                          {formatCoins(tier.coins)} coins
+                        </span>
+                      </div>
+                      <div className="bm-tier-meta">
+                        <span><Clock size={11} /> {tier.duration_hours}h</span>
+                        <span>{tier.placement_label}</span>
+                      </div>
+                      {/* Only a tier that actually carries a guarantee says
+                          so. The server omits the field for the others
+                          rather than sending 0, so nothing here can render
+                          "0 guaranteed impressions". */}
+                      {tier.guaranteed_impressions ? (
+                        <div className="bm-tier-guarantee">
+                          {tier.guaranteed_impressions.toLocaleString()} guaranteed impressions
+                        </div>
+                      ) : null}
+                      {!affordable && (
+                        <div className="bm-tier-short">
+                          {formatCoins(tier.coins - userCoins)} more coins needed
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                type="button"
+                className="bm-custom-toggle"
+                onClick={() => setSelectedTier(selectedTier ? null : tiers[0]?.key)}
+              >
+                {selectedTier ? 'Or choose your own duration' : 'Back to boost packages'}
+              </button>
+            </>
+          )}
+
+          {/* Durations — the by-the-hour form, for a custom run. */}
+          {!selectedTier && (
           <div className="bm-label">
             <Clock size={13} color={pri} /> Select Duration
           </div>
+          )}
+          {!selectedTier && (
           <div className="bm-grid">
             {BOOST_DURATIONS.map((option) => {
               const isSelected = selectedDuration === option.hours;
@@ -704,6 +837,7 @@ export function BoostModal({ reelId, onClose, onSuccess }) {
               );
             })}
           </div>
+          )}
 
           {/* Cost summary */}
           <div className={showBuyCoins ? 'bm-cost short' : 'bm-cost'}>

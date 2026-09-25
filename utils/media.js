@@ -98,9 +98,19 @@ const FAILURE_TEXT = {
 };
 
 /** A sentence explaining a FAILED post to its author -- a reason they can act
- * on, never the exception behind it. */
+ * on, never the exception behind it.
+ *
+ * The server's own sentence wins when it sent one. Some limits differ between
+ * accounts -- a video may be refused at 60 seconds for one person and 120 for
+ * another -- so the text has to come from whoever knows which applied. The map
+ * above stays as the fallback for older servers and for codes that mean the
+ * same thing to everybody. */
 export function failureText(post) {
-  return FAILURE_TEXT[post?.processing_error] || 'Please try posting it again.';
+  return (
+    post?.processing_error_message
+    || FAILURE_TEXT[post?.processing_error]
+    || 'Please try posting it again.'
+  );
 }
 
 /**

@@ -11,9 +11,11 @@ const MAX_SHOWN = 3;
 
 const COLORS = { PROCESSING: '#8fc441', READY: '#22c55e', FAILED: '#f87171' };
 
-// A tracker entry keeps the server's code as `error`; the sentence for it
-// is the same one the post page shows.
-const reasonOf = (item) => failureText({ processing_error: item.error });
+// A tracker entry keeps the server's code as `error` and, when the server
+// sent one, its own sentence as `errorMessage` -- which is what a limit that
+// differs between accounts needs. The same text the post page shows.
+const reasonOf = (item) =>
+  failureText({ processing_error: item.error, processing_error_message: item.errorMessage });
 
 /**
  * The uploads being processed, in the top corner of every page.

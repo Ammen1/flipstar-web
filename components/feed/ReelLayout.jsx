@@ -2221,6 +2221,12 @@ export const ReelLayout = memo(function ReelLayout({
             commentsOpen={!!showComments}
             onOpenComments={(p) => setShowComments((cur) => (cur === p.id ? null : p.id))}
             onFollow={(id) => handleFollow(id)}
+            // Liking is subscriber-only and DesktopReelViewer checks it, so
+            // without these two it refused every like -- subscribers
+            // included -- and showed nothing to say why. Every other
+            // engagement surface in this file already gets them.
+            subscriptionStatus={subscriptionStatus}
+            onShowSubscription={onShowSubscription}
           />
         ) : (
           <div

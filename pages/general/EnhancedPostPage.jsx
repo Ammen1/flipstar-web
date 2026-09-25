@@ -214,6 +214,13 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
   // price list arrives, and a null price gates nothing: the server is what
   // charges and what refuses.
   const longVideoCostRef = useRef(null);
+  // How long a video this account may post: 60 seconds on a subscription,
+  // 120 once coins have been bought. From the server
+  // (api/services/video_limits.py) rather than assumed here, because it
+  // differs between users. A ref alongside the state for the same reason as
+  // the price above -- the recording timer reads it from a callback.
+  const [videoLimits, setVideoLimits] = useState(null);
+  const maxVideoSecondsRef = useRef(PAID_LIMIT);
   const [showErrorModal, setShowErrorModal] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   // Empty keeps the modal's historical "Upload Error" heading; camera and
@@ -241,6 +248,15 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
         const costs = readPostCosts(config);
         setPostCosts(costs);
         longVideoCostRef.current = costs.video_long || null;
+        // The account's own duration limit. Left at the wider default when
+        // the call fails: the server measures the file and refuses it
+        // anyway, so a failed lookup must not lock somebody out of a length
+        // they are entitled to.
+        const limits = config && config.video_limits;
+        if (limits && Number(limits.max_video_seconds) > 0) {
+          setVideoLimits(limits);
+          maxVideoSecondsRef.current = Number(limits.max_video_seconds);
+        }
       })
       .catch(() => {});
     return () => { alive = false; };
@@ -1083,7 +1099,10 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
       }
       setRecTime(t => {
         const next = t + 1;
-        setRecProgress((next / MAX_REC) * 100);
+        // The account's own ceiling, not a fixed 120: a standard subscriber
+        // records up to 60 seconds and the bar fills over that range.
+        const ceiling = maxVideoSecondsRef.current || MAX_REC;
+        setRecProgress((next / ceiling) * 100);
 
         // Check if crossing the free limit (60 seconds)
         if (next === FREE_LIMIT + 1 && !hasExtendedRef.current) {
@@ -1120,7 +1139,7 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
             });
         }
 
-        if (next >= MAX_REC) stopRecording();
+        if (next >= ceiling) stopRecording();
         return next;
       });
     }, 1000);
@@ -1209,13 +1228,17 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
       setIsRecordingPaused(false);
       setHasExtendedRecording(true);
 
-      // Resume timer
+      // Resume timer. The same ceiling startRecTimer uses -- a resumed
+      // recording is the same recording, and reverting to MAX_REC here let
+      // a standard subscriber who paused carry on to 120 seconds and be
+      // refused after uploading.
       timerRef.current = setInterval(() => {
         setRecTime(t => {
           const next = t + 1;
-          setRecProgress((next / MAX_REC) * 100);
+          const ceiling = maxVideoSecondsRef.current || MAX_REC;
+          setRecProgress((next / ceiling) * 100);
 
-          if (next >= MAX_REC) stopRecording();
+          if (next >= ceiling) stopRecording();
           return next;
         });
       }, 1000);
@@ -1323,8 +1346,17 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
         // The server measures the file again and charges from that.
         setClipSeconds(isFinite(duration) && duration > 0 ? duration : null);
 
-        if (duration > PAID_LIMIT) {
-          setErrorMessage(`Video duration exceeds ${PAID_LIMIT} seconds limit`);
+        // The account's own limit, not a fixed 120: a standard subscriber
+        // may post 60 seconds, and telling them here saves an upload that
+        // the server would reject after processing. The server measures the
+        // file itself and decides -- this only saves the wait.
+        const allowed = maxVideoSecondsRef.current || PAID_LIMIT;
+        if (duration > allowed) {
+          setErrorMessage(
+            videoLimits && !videoLimits.extended_unlocked
+              ? `Videos can be up to ${allowed} seconds on your current plan. Buy coins to post videos up to ${videoLimits.extended_max_seconds} seconds.`
+              : `Videos can be up to ${allowed} seconds long.`
+          );
           setShowErrorModal(true);
           setSelectedFile(null);
           return;
@@ -2332,7 +2364,7 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
                       animation: userPaused || isRecordingPaused ? 'none' : 'ep-pulse 1s infinite',
                     }} />
                     <span style={{ fontWeight: 700, fontSize: 15, fontVariantNumeric: 'tabular-nums', color: hasExtendedRecording ? '#F59E0B' : '#fff' }}>
-                      {fmtTime(recTime)} / {fmtTime(MAX_REC)}
+                      {fmtTime(recTime)} / {fmtTime((videoLimits && videoLimits.max_video_seconds) || MAX_REC)}
                     </span>
                     {(userPaused || isRecordingPaused) && (
                       <span style={{ fontSize: 11.5, fontWeight: 800, color: '#FCD34D', letterSpacing: '.06em', textTransform: 'uppercase' }}>Paused</span>
@@ -2612,7 +2644,7 @@ export function EnhancedPostPage({ user, onBack, onPostSuccess, onNavHome, onNav
                     <div>
                       <div style={{ fontSize: 21, fontWeight: 800, letterSpacing: '-0.015em' }}>Record a video</div>
                       <div style={{ fontSize: 13, fontWeight: 500, opacity: 0.8, marginTop: 4 }}>
-                        Up to {FREE_LIMIT}s · music, filters &amp; text
+                        Up to {(videoLimits && videoLimits.max_video_seconds) || FREE_LIMIT}s · music, filters &amp; text
                       </div>
                     </div>
                     <div aria-hidden="true" style={{ width: 36, height: 36, borderRadius: '50%', background: `${heroText}1F`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>

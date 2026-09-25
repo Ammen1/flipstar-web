@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import {
   X, User, Bell, Lock, Globe, HelpCircle, LogOut, ChevronRight, Moon, Sun, Wallet,
   ChevronLeft, MessageCircle, Heart, Users as UsersIcon, Mail, Eye, EyeOff, Activity,
-  Trash2, Check, Crown, ChevronUp, ChevronDown, Zap
+  Trash2, Check, Crown, ChevronUp, ChevronDown, Zap, AtSign, Gift
 } from "lucide-react";
 import api from "../../api";
 import config from "../../config";
@@ -10,6 +10,7 @@ import { useTheme } from "../../contexts/ThemeContext";
 import { useLanguage } from "../../contexts/LanguageContext";
 import { BoostDashboard } from "../../components/subscription/BoostDashboard";
 import telebirrH5 from "../../services/TelebirrH5Service";
+import { mergeNotificationPrefs, readStoredPrefs } from '../../utils/notificationPrefs.js';
 
 const FAQ_ITEMS = [
   { q: "What is FlipStar?", a: "FlipStar is a premium, subscription-based gamified social media platform by Ethio Telecom and Skykin Technologies PLC. Upload short videos and photos ('Flips'), compete in campaigns, earn coins, and participate in a creator economy powered by telebirr." },
@@ -227,23 +228,22 @@ export function SettingsPage({ user, onClose, onLogout, onShowWallet, onShowSubs
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const [notifications, setNotifications] = useState(() => {
-    const saved = localStorage.getItem('notifications');
-    if (saved) return JSON.parse(saved);
-    return { likes: true, comments: true, follows: true, messages: true };
-  });
+  // readStoredPrefs merges over the defaults rather than replacing them:
+  // a set saved before a switch existed has no key for it, and reading
+  // that as `undefined` would render a switch the user never touched as
+  // off -- then send that `false` back on the next save.
+  const [notifications, setNotifications] = useState(() =>
+    readStoredPrefs(localStorage.getItem('notifications'))
+  );
 
   useEffect(() => {
     // Fetch notification settings from server
     if (user) {
       api.getNotificationSettings().then(data => {
         if (data) {
-          setNotifications({
-            likes: data.likes ?? true,
-            comments: data.comments ?? true,
-            follows: data.follows ?? true,
-            messages: data.messages ?? true,
-          });
+          // Server last: it corrects a stale local copy, and a switch it
+          // does not mention keeps whatever is already shown.
+          setNotifications((current) => mergeNotificationPrefs(current, data));
         }
       }).catch(() => {
         // Keep localStorage values if fetch fails - silent fail
@@ -592,10 +592,14 @@ export function SettingsPage({ user, onClose, onLogout, onShowWallet, onShowSubs
           {/* Notifications */}
           <SectionLabel>{t('notificationsSettings')}</SectionLabel>
           <SectionCard>
+            <Row icon={Bell} title={t('pushNotifications') || 'Push notifications'} type="switch" value={notifications.push_notifications} onToggle={() => handleNotificationToggle('push_notifications')} />
             <Row icon={Heart} title={t('likes') || 'Likes'} type="switch" value={notifications.likes} onToggle={() => handleNotificationToggle('likes')} />
             <Row icon={MessageCircle} title={t('comments') || 'Comments'} type="switch" value={notifications.comments} onToggle={() => handleNotificationToggle('comments')} />
             <Row icon={UsersIcon} title={t('follows') || 'Follows'} type="switch" value={notifications.follows} onToggle={() => handleNotificationToggle('follows')} />
             <Row icon={Mail} title={t('messages') || 'Messages'} type="switch" value={notifications.messages} onToggle={() => handleNotificationToggle('messages')} />
+            <Row icon={AtSign} title={t('mentions') || 'Mentions'} type="switch" value={notifications.mentions} onToggle={() => handleNotificationToggle('mentions')} />
+            <Row icon={Gift} title={t('gifts') || 'Gifts'} type="switch" value={notifications.gifts} onToggle={() => handleNotificationToggle('gifts')} />
+            <Row icon={Crown} title={t('systemNotifications') || 'Subscription & prizes'} type="switch" value={notifications.system} onToggle={() => handleNotificationToggle('system')} />
           </SectionCard>
 
           {/* Privacy */}

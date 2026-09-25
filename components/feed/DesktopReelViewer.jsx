@@ -3,6 +3,7 @@ import {
   Heart, MessageCircle, Bookmark, Share2, Plus,
   ChevronUp, ChevronDown, Volume2, VolumeX, Play,
 } from 'lucide-react';
+import { canEngage } from '../../utils/engagementGate';
 import api from '../../api';
 import { PostCaptionOverlay } from './PostCaptionOverlay';
 import { isVideoUrl, isVideoPost } from '../../utils/media';
@@ -51,6 +52,12 @@ export function DesktopReelViewer({
   // When the comments panel is docked, the stage shifts left so the video is
   // never hidden behind it.
   commentsOpen = false,
+  // Liking is subscriber-only. This viewer was the one engagement surface
+  // that never checked: it optimistically filled the heart, the server
+  // refused with 403, and the rollback left it empty with nothing said. The
+  // other surfaces all go through canEngage; so does this one now.
+  subscriptionStatus,
+  onShowSubscription,
 }) {
   const [muted, setMuted] = useState(true);
   const [paused, setPaused] = useState(false);
@@ -220,6 +227,12 @@ export function DesktopReelViewer({
 
   const handleLike = async () => {
     if (!post) return;
+    // Asked before the optimistic update, so a refusal never shows as a
+    // like that then quietly undoes itself.
+    if (!canEngage(subscriptionStatus)) {
+      onShowSubscription?.();
+      return;
+    }
     const { liked, likes } = eng(post);
     patch(post.id, { liked: !liked, likes: likes + (liked ? -1 : 1) });
     try {

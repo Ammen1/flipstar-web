@@ -44,6 +44,36 @@ function bonusFrom(balance) {
   return balance?.bonus ?? 0;
 }
 
+/**
+ * The contribution-limit refusal, or null for any other failure.
+ *
+ * A contributor may give one creator 500 coins in a rolling 24 hours
+ * (api/services/contribution_limits.py). The server answers with a
+ * CONTRIBUTION_LIMIT_REACHED code and the figures; this pulls them out of
+ * whichever shape the error arrives in -- a parsed body when the client has
+ * one, the raw message when it does not.
+ */
+function parseContributionLimit(err, errorData) {
+  if (errorData?.code === 'CONTRIBUTION_LIMIT_REACHED') return errorData;
+
+  const raw = typeof err?.message === 'string' ? err.message : '';
+  if (!raw.includes('CONTRIBUTION_LIMIT_REACHED')) return null;
+
+  // The body is embedded in the thrown message; take the figures directly
+  // rather than guessing at them.
+  const number = (name) => {
+    const found = raw.match(new RegExp('"' + name + '":\\s*(\\d+)'));
+    return found ? Number(found[1]) : null;
+  };
+  return {
+    code: 'CONTRIBUTION_LIMIT_REACHED',
+    limit_coins: number('limit_coins'),
+    contributed_coins: number('contributed_coins'),
+    remaining_coins: number('remaining_coins'),
+    window_hours: number('window_hours') || 24,
+  };
+}
+
 export default function GiftPage({ username, reelId, onClose, onShowWallet, onShowCoinPurchase }) {
   const { colors: T } = useTheme();
   const { openTopUpModal } = useAuth();
@@ -66,6 +96,9 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
   const [rechargeError, setRechargeError] = useState(null);
   const [walletConfig, setWalletConfig] = useState(null);
   const [showInsufficientModal, setShowInsufficientModal] = useState(false);
+  // How much of the 24-hour allowance for this creator is left, when the
+  // server has refused for that reason. Null the rest of the time.
+  const [limitError, setLimitError] = useState(null);
 
   useEffect(() => {
     loadGifts();
@@ -213,6 +246,7 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
       return;
     }
 
+    setLimitError(null);
     setLoading(true);
     try {
       try {
@@ -300,7 +334,15 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
         });
       } catch (e) {}
 
-      if (errorData.needs_recharge) {
+      // One contributor may give one creator 500 coins in 24 hours. Shown
+      // in the sheet rather than an alert: the number that matters is how
+      // much is left and when, which an alert cannot hold on screen while
+      // somebody adjusts the amount.
+      const limit = parseContributionLimit(err, errorData);
+
+      if (limit) {
+        setLimitError(limit);
+      } else if (errorData.needs_recharge) {
         setShowInsufficientModal(true);
         setRechargeError(errorData);
         setShowRechargeDialog(true);
@@ -492,6 +534,24 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
               placeholder="Add a message (optional)..."
               style={{ ...inputStyle, padding: '10px 12px', fontSize: 13, marginBottom: 10 }}
             />
+
+            {limitError && (
+              <div
+                role="alert"
+                style={{
+                  marginBottom: 10, padding: '10px 12px', borderRadius: 10,
+                  background: 'rgba(248,113,113,0.12)',
+                  border: '1.5px solid rgba(248,113,113,0.4)',
+                  color: '#fca5a5', fontSize: 12.5, fontWeight: 600, lineHeight: 1.45,
+                }}
+              >
+                You can send {limitError.limit_coins ?? 500} coins to one creator every{' '}
+                {limitError.window_hours ?? 24} hours.
+                {limitError.remaining_coins
+                  ? ` You have ${limitError.remaining_coins} left for @${username} today.`
+                  : ` You have reached the limit for @${username} today — try again later.`}
+              </div>
+            )}
 
             {/* Send Button */}
             <button
