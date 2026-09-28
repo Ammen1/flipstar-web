@@ -8,6 +8,8 @@ let _serverPublicKey = null;
 let _clientKeypair = null;
 let _initialized = false;
 let _initPromise = null;
+// Kept so the server key can be re-fetched later without re-running init.
+let _apiBaseUrl = null;
 
 function b64Encode(bytes) {
   return naclUtil.encodeBase64(bytes);
@@ -75,6 +77,7 @@ export async function initCrypto(apiBaseUrl) {
 
   if (_initPromise) return _initPromise;
 
+  _apiBaseUrl = apiBaseUrl;
   _initPromise = (async () => {
     try {
       _clientKeypair = loadKeypair();
@@ -95,6 +98,29 @@ export async function initCrypto(apiBaseUrl) {
   })();
 
   return _initPromise;
+}
+
+export async function refreshServerPublicKey() {
+  // The server holds its keypair in Redis, so it generates a new one whenever
+  // that store is lost -- a pod reschedule on a non-persistent volume is
+  // enough to do it. This tab caches the old public key for the life of the
+  // page, so from that moment every encrypted response fails to open and the
+  // only cure is a manual reload. Re-fetching just the server key recovers in
+  // place; the client keypair is untouched because it is still perfectly good.
+  //
+  // Returns true only when the key actually changed, so a caller retrying a
+  // failed decryption does not repeat itself for nothing.
+  if (!_apiBaseUrl) return false;
+  try {
+    const fresh = await fetchServerPublicKey(_apiBaseUrl);
+    if (!fresh || fresh === _serverPublicKey) return false;
+    _serverPublicKey = fresh;
+    console.warn('[E2E] Server public key had changed; refreshed it');
+    return true;
+  } catch (e) {
+    console.error('[E2E] Could not refresh server public key:', e);
+    return false;
+  }
 }
 
 export function getClientPublicKey() {

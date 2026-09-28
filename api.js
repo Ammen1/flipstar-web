@@ -6,6 +6,7 @@ import {
   waitForCrypto,
   encryptPayload,
   decryptPayload,
+  refreshServerPublicKey,
 } from "./crypto.js";
 
 const API_BASE_URL = config.API_BASE_URL;
@@ -122,9 +123,23 @@ const ENCRYPTED_ENDPOINT_PREFIXES = [
 // route alone and not, say, /messages/conversations/.
 const MULTIPART_MESSAGE_ROUTE = /^\/messages\/conversations\/\d+\/messages\/?$/;
 
+// GET /users/<id>/follow-stats/ carries @encrypted_endpoint on the backend
+// (audit finding N-01), but "/users/" cannot go in the prefix list above: it
+// would wrongly encrypt every other /users/ route, none of which the backend
+// decrypts. Anchored and digit-bounded, the same shape as the multipart route.
+//
+// Missing it produced exactly the silent failure the prefix list's own comment
+// warns about: the server encrypted the reply, isEncryptedEndpoint() said the
+// route was plaintext, the envelope was never unwrapped, and ProfilePage read
+// `followers_count` off {encrypted, nonce, checksum} -- undefined, with no
+// error anywhere. A profile with 5 followers and 8 following showed 0 and 0.
+const FOLLOW_STATS_ROUTE = /^\/users\/\d+\/follow-stats\/?$/;
+
 function isEncryptedEndpoint(endpoint) {
   // Admin endpoints are never encrypted
   if (endpoint.startsWith("/admin/")) return false;
+  // Encrypted despite living under a prefix that is not.
+  if (FOLLOW_STATS_ROUTE.test(endpoint)) return true;
   // Public subscription endpoints without @encrypted_endpoint on backend
   if (endpoint.startsWith("/subscription/check-superapp/")) return false;
   // /leaderboard/ is encrypted but /leaderboard/global/ is not, and
@@ -423,28 +438,72 @@ const api = {
         // Read body once as text to avoid "body stream already read" error
         const responseText = await response.text();
         if (responseText) {
+          let parsedJson = true;
           try {
             data = JSON.parse(responseText);
-            // --- E2E: decrypt encrypted response envelope ---
-            if (
-              _e2eEnabled &&
-              isCryptoReady() &&
-              shouldEncrypt &&
-              data &&
-              data.encrypted &&
-              data.nonce &&
-              data.checksum
-            ) {
-              try {
-                data = await decryptPayload(data);
-              } catch (decErr) {
-                throw new Error(`E2E decryption failed: ${decErr.message}`);
-              }
-            }
           } catch (e) {
+            parsedJson = false;
             data = response.ok
               ? { success: true }
               : { error: responseText || "Failed to parse response" };
+          }
+          // --- E2E: decrypt encrypted response envelope ---
+          // Deliberately OUTSIDE the JSON.parse try above. It used to sit
+          // inside it, so a failed decryption was swallowed by that catch and
+          // turned into `{ success: true }`: a 200 whose body could not be
+          // opened looked like an empty success, callers read undefined off
+          // it, and nothing was logged anywhere. That is how a stale server
+          // key surfaced as blank follower counts rather than as an error --
+          // and how `undefined` got written into the 30-minute follow cache.
+          if (
+            parsedJson &&
+            _e2eEnabled &&
+            isCryptoReady() &&
+            shouldEncrypt &&
+            data &&
+            data.encrypted &&
+            data.nonce &&
+            data.checksum
+          ) {
+            const envelope = data;
+            try {
+              data = await decryptPayload(envelope);
+            } catch (decErr) {
+              // Nearly always the server rotated its keypair (it lives in
+              // Redis, so losing that store regenerates it) while this page
+              // kept the old public key. Re-fetch the key and try once more,
+              // so the tab heals itself instead of every user reloading.
+              const refreshed = await refreshServerPublicKey();
+              if (!refreshed) {
+                throw new Error(`E2E decryption failed: ${decErr.message}`);
+              }
+              try {
+                data = await decryptPayload(envelope);
+              } catch (retryErr) {
+                throw new Error(
+                  `E2E decryption failed after key refresh: ${retryErr.message}`
+                );
+              }
+            }
+          } else if (
+            parsedJson &&
+            data &&
+            data.encrypted &&
+            data.nonce &&
+            data.checksum
+          ) {
+            // The body IS an envelope, but this client did not treat the route
+            // as encrypted -- so nothing unwrapped it and the caller is about
+            // to read undefined off {encrypted, nonce, checksum}. That is a
+            // route-registration bug, and it is silent by nature: no throw, no
+            // warning, just empty data. It cost a profile with 5 followers and
+            // 8 following showing 0 and 0. Say so loudly instead.
+            console.error(
+              `[E2E] ${endpoint} returned an encrypted envelope but is not ` +
+                `registered as an encrypted route. Add it to ` +
+                `ENCRYPTED_ENDPOINT_PREFIXES or a route pattern, otherwise ` +
+                `callers read undefined fields.`
+            );
           }
         } else {
           data = response.ok
@@ -919,6 +978,23 @@ const api = {
     return api.request(`/follows/?following=${encodeURIComponent(userId)}`, {
       noCache: true,
     });
+  },
+
+  // Follower/following counts and the caller's follow state, without pulling
+  // the whole follower list down to count it (audit finding N-01). Two COUNTs
+  // and one EXISTS server-side, fixed cost whatever the follower count is.
+  //
+  // Use this instead of getFollowers()/getFollowing() whenever you want a
+  // number or a yes/no. Those two are for *displaying* a list, and the list is
+  // bounded server-side -- their length is a page, not a total.
+  getFollowStats: (userId) => {
+    if (!api.getToken() || userId === undefined || userId === null) {
+      return Promise.resolve(null);
+    }
+    return api.request(
+      `/users/${encodeURIComponent(userId)}/follow-stats/`,
+      { noCache: true },
+    );
   },
 
   getFollowing: (userId) => {

@@ -62,6 +62,13 @@ function readFollowCache(userId) {
 }
 
 function writeFollowCache(userId, data) {
+  // Refuse to store a count that is not a number. A decryption failure used to
+  // resolve as `{ success: true }`, so `stats.followers_count` was undefined
+  // and that undefined was cached for the full 30-minute TTL -- which is why
+  // the profile kept showing blanks even after the underlying call recovered.
+  if (!Number.isFinite(data?.followersCount) || !Number.isFinite(data?.followingCount)) {
+    return;
+  }
   try {
     localStorage.setItem(FOLLOW_CACHE_KEY(userId), JSON.stringify({ ts: Date.now(), data }));
   } catch {}
@@ -412,42 +419,41 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
       setIsFollowing(cachedData.isFollowing);
       // Refresh in background
       setTimeout(() => {
-        api.getFollowers(targetUserId).then(followersRaw => {
-          const followers = Array.isArray(followersRaw) ? followersRaw : (followersRaw.results || []);
-          api.getFollowing(targetUserId).then(followingRaw => {
-            const following = Array.isArray(followingRaw) ? followingRaw : (followingRaw.results || []);
-            setFollowersCount(followers.length);
-            setFollowingCount(following.length);
-            if (!isOwnProfile && user) {
-              const isFollowingUser = followers.some(f => f.follower?.id === user.id);
-              setIsFollowing(isFollowingUser);
-            }
-            writeFollowCache(targetUserId, {
-              followersCount: followers.length,
-              followingCount: following.length,
-              isFollowing: isFollowingUser,
-            });
-          }).catch(() => {});
+        api.getFollowStats(targetUserId).then(stats => {
+          if (!stats) return;
+          setFollowersCount(stats.followers_count);
+          setFollowingCount(stats.following_count);
+          const isFollowingUser = isOwnProfile ? false : Boolean(stats.is_following);
+          if (!isOwnProfile) setIsFollowing(isFollowingUser);
+          writeFollowCache(targetUserId, {
+            followersCount: stats.followers_count,
+            followingCount: stats.following_count,
+            isFollowing: isFollowingUser,
+          });
         }).catch(() => {});
       }, 100);
       return;
     }
-    
+
     try {
-      const followersRaw = await api.getFollowers(targetUserId);
-      const followingRaw = await api.getFollowing(targetUserId);
-      const followers = Array.isArray(followersRaw) ? followersRaw : (followersRaw.results || []);
-      const following = Array.isArray(followingRaw) ? followingRaw : (followingRaw.results || []);
-      setFollowersCount(followers.length);
-      setFollowingCount(following.length);
-      
-      const isFollowingUser = !isOwnProfile && user ? followers.some(f => f.follower?.id === user.id) : false;
+      // Audit finding N-01. This used to fetch the entire follower list and the
+      // entire following list, then use `followers.length` as the count and
+      // `followers.some(...)` for the Follow button. At 50,000 followers that
+      // was ~31 MB and ~400,000 queries for two numbers and a boolean -- and it
+      // was also what stopped /follows/ being paginated, because a capped list
+      // would have made both answers wrong.
+      const stats = await api.getFollowStats(targetUserId);
+      if (!stats) return;
+      setFollowersCount(stats.followers_count);
+      setFollowingCount(stats.following_count);
+
+      const isFollowingUser = !isOwnProfile && user ? Boolean(stats.is_following) : false;
       setIsFollowing(isFollowingUser);
-      
+
       // Write to cache
       writeFollowCache(targetUserId, {
-        followersCount: followers.length,
-        followingCount: following.length,
+        followersCount: stats.followers_count,
+        followingCount: stats.following_count,
         isFollowing: isFollowingUser,
       });
     } catch (error) {
@@ -878,7 +884,7 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
                 onMouseEnter={(e) => e.currentTarget.style.opacity = "0.7"}
                 onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
               >
-                <div style={{ fontSize: 18, fontWeight: 700, color: T.txt || '#8fc441' }}>{followersCount}</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: T.txt || '#8fc441' }}>{followersCount ?? 0}</div>
                 <div style={{ fontSize: 13, color: T.sub || '#8fc441' }}>Followers</div>
               </button>
               <button
@@ -895,7 +901,7 @@ export function ProfilePage({ user, userId, onBack, onEditProfile, onShowFollowe
                 onMouseEnter={(e) => e.currentTarget.style.opacity = "0.7"}
                 onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
               >
-                <div style={{ fontSize: 18, fontWeight: 700, color: T.txt || '#8fc441' }}>{followingCount}</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: T.txt || '#8fc441' }}>{followingCount ?? 0}</div>
                 <div style={{ fontSize: 13, color: T.sub || '#8fc441' }}>Following</div>
               </button>
             </div>

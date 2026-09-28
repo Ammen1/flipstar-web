@@ -19,7 +19,13 @@ export function LandingPage({ onLogin, onRegister, onShowCampaigns }) {
   const fetchPosts = async () => {
     try {
       const data = await api.getReels();
-      setPosts(data.slice(0, 6)); // Show first 6 posts
+      // Accept either shape. /reels/ returns a bare array today, but it is
+      // paginated server-side (audit C-01) and returns
+      // {count, page, results} whenever a caller asks with ?page= or
+      // ?page_size=. `data.slice` on that object is a TypeError that takes the
+      // landing page down, so this no longer assumes an array.
+      const rows = Array.isArray(data) ? data : (data?.results ?? []);
+      setPosts(rows.slice(0, 6)); // Show first 6 posts
     } catch (error) {
       console.error("Failed to fetch posts:", error);
     } finally {

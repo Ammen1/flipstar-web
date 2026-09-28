@@ -67,7 +67,13 @@ export function NotificationsPage({ user, onUserClick, onBack, onShowPostPage, o
     try {
       if (!silent) setLoading(true); else setRefreshing(true);
       const data = await api.getUserNotifications();
-      setNotifications(transform(Array.isArray(data) ? data : []));
+      // `Array.isArray(data) ? data : []` was silently correct only while
+      // /notifications/ returned a bare array. It is paginated server-side now
+      // (audit C-01), so a caller that asks with ?page= gets
+      // {count, page, results} -- and the old expression would have rendered an
+      // empty notification list rather than failing visibly, which is worse.
+      const rows = Array.isArray(data) ? data : (data?.results ?? []);
+      setNotifications(transform(rows));
     } catch (err) {
       console.error("Failed to fetch notifications:", err);
     } finally {
