@@ -142,6 +142,17 @@ const CaptionWithLessMore = ({ caption, maxLength = 100 }) => {
 // overlay so the two never drift apart. The Home page is untouched.
 // `gestureProps` carries the feed's stopControlGestures helpers when the bar
 // is drawn over a video (mobile); on desktop it can stay empty.
+// Swallow touch/pointer gestures on the control strip so they do not reach the
+// feed's swipe handler. These close over nothing, so the object is built once at
+// module scope: as a fresh literal inside the component it gave ReelFeedTabs --
+// the only memo() boundary inside ReelLayout -- a new prop identity on every
+// render, which defeated the memo entirely.
+const STOP_CONTROL_GESTURES = {
+  onTouchStart: (e) => e.stopPropagation(),
+  onTouchEnd: (e) => e.stopPropagation(),
+  onPointerDown: (e) => e.stopPropagation(),
+};
+
 const ReelFeedTabs = memo(function ReelFeedTabs({ activeTab, T, onSelect, gestureProps }) {
   const tabs = [
     { id: 'reels', label: 'For You' },
@@ -1152,12 +1163,16 @@ export const ReelLayout = memo(function ReelLayout({
 
   // The Reels top tabs ("For You"/"Following") switch the feed and snap back
   // to the first reel, so a deep scroll on one tab never bleeds into another.
-  const switchFeedTab = (value) => {
+  // useCallback because this is the other prop reaching ReelFeedTabs. Both it
+  // and STOP_CONTROL_GESTURES had to become stable together -- with either one
+  // changing per render the memo boundary stayed defeated and neither fix paid.
+  // Depends only on activeTab; setActiveTab and feedContainerRef are stable.
+  const switchFeedTab = useCallback((value) => {
     if (String(value) === String(activeTab)) return;
     setActiveTab(value);
     const container = feedContainerRef.current || document.querySelector('.video-feed-container');
     container?.scrollTo?.({ top: 0, behavior: 'auto' });
-  };
+  }, [activeTab]);
 
   useEffect(() => {
     Object.entries(videoRefs.current).forEach(([id, el]) => {
@@ -1570,7 +1585,7 @@ export const ReelLayout = memo(function ReelLayout({
     setShareSent(null);
 
     // Check for insufficient coins before opening share modal for campaign posts
-    if (video?.is_campaign_post && video.user?.id !== currentUser?.id) {
+    if (video?.is_campaign_post && video.user?.id !== user?.id) {
       try {
         const walletData = await api.request('/wallet/');
         const balance = walletData?.balance?.total || 0;
@@ -1608,16 +1623,19 @@ export const ReelLayout = memo(function ReelLayout({
     if (!silent) setLoadingShareUsers(true);
     try {
       // Get users the current user is following
-      const followingRes = await api.getFollowing(currentUser?.id);
+      const followingRes = await api.getFollowing(user?.id);
       const followingUsers = Array.isArray(followingRes) ? followingRes : (followingRes.results || []);
 
       // Build map from followed users only (no suggestions)
       // FollowSerializer returns {id, follower, following, created_at} — unwrap .following
       const userMap = new Map();
       followingUsers.forEach(rel => {
-        const user = rel.following || rel;
-        if (user.id !== currentUser?.id) {
-          userMap.set(user.id, { ...user, isFollowing: true });
+        // Named `followedUser`, not `user`: a local `user` here shadowed the
+        // ReelLayout `user` prop, which is exactly what the comparison below
+        // needs in order to leave you out of your own share list.
+        const followedUser = rel.following || rel;
+        if (followedUser.id !== user?.id) {
+          userMap.set(followedUser.id, { ...followedUser, isFollowing: true });
         }
       });
       
@@ -1759,12 +1777,6 @@ export const ReelLayout = memo(function ReelLayout({
 
   // Same idea for the raw touch/pointer phases, spread onto a control or the
   // container that holds a group of them.
-  const stopControlGestures = {
-    onTouchStart: (e) => e.stopPropagation(),
-    onTouchEnd: (e) => e.stopPropagation(),
-    onPointerDown: (e) => e.stopPropagation(),
-  };
-
   const handleLongPressStart = (videoId, e) => {
     longPressFired.current = false;
     longPressTimer.current = setTimeout(() => {
@@ -2270,7 +2282,7 @@ export const ReelLayout = memo(function ReelLayout({
                     </div>
                     <div
                       data-control
-                      {...stopControlGestures}
+                      {...STOP_CONTROL_GESTURES}
                       style={{ position: 'absolute', bottom: 80, right: 12, display: 'flex', flexDirection: 'column', gap: 20, alignItems: 'center' }}
                     >
                       {[0,1,2].map(j => (
@@ -2383,13 +2395,13 @@ export const ReelLayout = memo(function ReelLayout({
                         activeTab={activeTab}
                         T={T}
                         onSelect={switchFeedTab}
-                        gestureProps={stopControlGestures}
+                        gestureProps={STOP_CONTROL_GESTURES}
                       />
                       <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                       <button
                         data-control
                         aria-label="Notifications"
-                        {...stopControlGestures}
+                        {...STOP_CONTROL_GESTURES}
                         onClick={controlTap(() => {
                           if (!user) { onRequireAuth(); return; }
                           onShowNotifications?.();
@@ -2423,7 +2435,7 @@ export const ReelLayout = memo(function ReelLayout({
                           data-control
                           data-reel-action="menu"
                           aria-label="More options"
-                          {...stopControlGestures}
+                          {...STOP_CONTROL_GESTURES}
                           onClick={controlTap(() => setShowMenu(showMenu === video.id ? null : video.id))}
                           style={{
                             background: 'none',
@@ -2450,7 +2462,7 @@ export const ReelLayout = memo(function ReelLayout({
                             <div
                               data-control
                               data-reel-menu-backdrop
-                              {...stopControlGestures}
+                              {...STOP_CONTROL_GESTURES}
                               onClick={controlTap(() => setShowMenu(null))}
                               style={{
                                 position: 'fixed',
@@ -2465,7 +2477,7 @@ export const ReelLayout = memo(function ReelLayout({
                             <div
                               data-reel-menu
                               data-control
-                              {...stopControlGestures}
+                              {...STOP_CONTROL_GESTURES}
                               onClick={(e) => e.stopPropagation()}
                               style={{
                                 position: 'absolute',
@@ -2573,7 +2585,7 @@ export const ReelLayout = memo(function ReelLayout({
                     <div
                       data-control
                       data-reel-sheet="long-press"
-                      {...stopControlGestures}
+                      {...STOP_CONTROL_GESTURES}
                       onClickCapture={(e) => {
                         // The click of the finger that opened this sheet.
                         if (Date.now() < longPressLiftUntil.current) {
@@ -3000,7 +3012,7 @@ export const ReelLayout = memo(function ReelLayout({
                   {!isMobile && (
                     <div
                       data-control
-                      {...stopControlGestures}
+                      {...STOP_CONTROL_GESTURES}
                       style={{
                         position: 'absolute',
                         top: 10,
@@ -3230,7 +3242,7 @@ export const ReelLayout = memo(function ReelLayout({
                       badge, caption "more" and hashtags -- a control group. */}
                   <div
                     data-control
-                    {...stopControlGestures}
+                    {...STOP_CONTROL_GESTURES}
                     style={{
                       position: 'absolute',
                       bottom: 20,
@@ -3380,7 +3392,7 @@ export const ReelLayout = memo(function ReelLayout({
                       card's long-press nor anything else listening above. */}
                   <div
                     data-control
-                    {...stopControlGestures}
+                    {...STOP_CONTROL_GESTURES}
                     style={{
                       position: 'absolute',
                       right: isMobile ? 8 : 20,
@@ -3679,7 +3691,7 @@ export const ReelLayout = memo(function ReelLayout({
             onClose={() => setShowComments(null)}
             onCommentPosted={handleCommentPosted}
             onShowProfile={(userId) => {
-              handleShowProfile(userId);
+              onShowProfile?.(userId);
             }}
             onShowCoinPurchase={onShowCoinPurchase}
             subscriptionStatus={subscriptionStatus}

@@ -40,6 +40,12 @@ export function VideoCard({ video, onLike, onComment, onShare, onGift, currentUs
   const [showComments, setShowComments] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
+  // Boost modal visibility. BoostModal is imported above and rendered at the
+  // bottom of this component, and two handlers call setShowBoostModal, but the
+  // state itself was missing -- so `handleBoost` and `handleDropdownBoost` both
+  // threw ReferenceError the moment a user tapped Boost. Declared alongside the
+  // other modal flags it sits with.
+  const [showBoostModal, setShowBoostModal] = useState(false);
   const [toast, setToast] = useState('');
   const longPressTimer = useRef(null);
 

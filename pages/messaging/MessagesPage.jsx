@@ -1445,10 +1445,10 @@ export function MessagesPage({ user, onShowProfile, onRequireAuth, onShowPostPag
     }
   }, [user, onRequireAuth]);
   
-  if (!user) {
-    return null; // Don't render while redirecting
-  }
-  
+  // NOTE: the `if (!user) return null` guard used to sit here, above every
+  // hook below it. That made 16 hooks conditional -- React saw one hook while
+  // logged out and seventeen once a user appeared, which corrupts hook order.
+  // The guard now runs after all hooks, immediately before the JSX return.
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 1024);
   const [conversations, setConversations] = useState([]);
   const [filteredConversations, setFilteredConversations] = useState([]);
@@ -1465,6 +1465,10 @@ export function MessagesPage({ user, onShowProfile, onRequireAuth, onShowPostPag
 
   // Stable fetcher — never re-created, so polling interval stays stable.
   const fetchConversations = useCallback(async (silent = false) => {
+    // No user means no conversations to ask for. Before the hook-order fix the
+    // early return above stopped these effects mounting at all; declining here
+    // keeps the same "no requests while logged out" behaviour.
+    if (!user) return;
     try {
       if (!silent) setLoading(true);
       
@@ -1516,7 +1520,7 @@ export function MessagesPage({ user, onShowProfile, onRequireAuth, onShowPostPag
     } finally {
       if (!silent) setLoading(false);
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => { fetchConversations(false); }, [fetchConversations]);
   useEffect(() => {
@@ -1701,6 +1705,11 @@ export function MessagesPage({ user, onShowProfile, onRequireAuth, onShowPostPag
       </div>
     </div>
   );
+
+  // Every hook above has now run, so hook order is identical on every
+  // render. Rendering nothing while the auth redirect happens, exactly as
+  // the early return at the top of this component used to do.
+  if (!user) return null;
 
   return (
     <div style={{

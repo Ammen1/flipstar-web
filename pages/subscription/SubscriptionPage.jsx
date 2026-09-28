@@ -1234,37 +1234,12 @@ export function SubscriptionPage({
   //   }
   // };
 
-  const handlePayment = async () => {
-    if (!selectedTier) return;
-
-    setProcessing(true);
-    try {
-      const response = await api.request("/subscriptions/subscribe/", {
-        method: "POST",
-        body: JSON.stringify({
-          tier_id: selectedTier.id,
-          payment_method: paymentMethod,
-        }),
-      });
-
-      if (response.status === "success" || response.status === "pending") {
-        if (response.payment_url) {
-          // Redirect to payment URL for telebirr
-          window.open(response.payment_url, "_blank");
-        }
-        alert(response.message || "Subscription initiated successfully");
-        setShowPaymentModal(false);
-        loadSubscriptionData();
-      } else {
-        alert(response.error || "Failed to subscribe");
-      }
-    } catch (error) {
-      console.error("Subscription error:", error);
-      alert("Failed to process subscription");
-    } finally {
-      setProcessing(false);
-    }
-  };
+  // `handlePayment` was removed here: it was unreachable dead code.
+  // Nothing in pages/, components/ or admin/ referenced it, and it read two
+  // identifiers -- `paymentMethod` and `setShowPaymentModal` -- that no longer
+  // exist in this component, so invoking it would have thrown ReferenceError.
+  // The live subscribe path is `handleSubscribe` above, called from the tier
+  // selection UI. Recoverable from git history if it was meant to be wired up.
 
   const handleUnsubscribe = async () => {
     if (confirm("Are you sure you want to cancel your subscription?")) {

@@ -255,7 +255,7 @@ export default function GiftPage({ username, reelId, onClose, onShowWallet, onSh
           body: JSON.stringify({
             level: 'info',
             message: '[GiftPage] Calling /gifts/send/ API',
-            context: { gift_id: selectedGift.id, recipient_username: username, quantity, message, reel_id }
+            context: { gift_id: selectedGift.id, recipient_username: username, quantity, message, reel_id: reelId }
           }),
         });
       } catch (e) {}

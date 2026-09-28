@@ -5,6 +5,10 @@ import {
   TrendingUp, TrendingDown, User, Save, AlertTriangle, ChevronRight, Gift, Trophy
 } from 'lucide-react';
 import api from '../../../api';
+// Needed by AdjustTab to build an absolute profile-photo URL. The `config`
+// state in the parent component is the wallet config from
+// /admin/wallet/config/ -- a different thing, and out of scope there.
+import config from '../../../config';
 
 /**
  * Admin Coin Management Page

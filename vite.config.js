@@ -91,7 +91,15 @@ export default defineConfig({
         pure_funcs: [],
         passes: 1,
       },
-      mangle: false,
+      // Identifier mangling. Previously disabled, which kept every local
+      // name at full length in the shipped bundle for no runtime benefit.
+      // Enabled with keep_classnames/keep_fnames so anything that reads a
+      // constructor or function name at runtime still works -- React
+      // component displayNames in particular.
+      mangle: {
+        keep_classnames: true,
+        keep_fnames: true,
+      },
       format: {
         comments: false,
       },

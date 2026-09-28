@@ -10,6 +10,14 @@ import { HorizontalUserSuggestions } from '../../components/profile/HorizontalUs
 import { UserSuggestions } from '../../components/profile/UserSuggestions';
 import { SidebarCampaigns } from '../../components/campaign/SidebarCampaigns';
 import { HorizontalCampaignSuggestions } from '../../components/campaign/HorizontalCampaignSuggestions';
+
+// A single shared no-op. PostCard is memo()-wrapped, so passing a fresh
+// `() => {}` per render gave it a new prop identity every time and defeated
+// the shallow comparison outright -- every card in the feed re-rendered on
+// any HomePage state change. Declared at module scope rather than via
+// useCallback: it closes over nothing, so one instance serves every render
+// of every HomePage.
+const NOOP = () => {};
 import { SearchBar } from '../../components/common/SearchBar';
 import { BoostModal } from '../../components/subscription/BoostModal';
 import { InsufficientCoinsModal } from '../../components/common/InsufficientCoinsModal';
@@ -3242,6 +3250,14 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
     onShowVideoDetail?.(postId);
   }, [rememberPosition, onShowVideoDetail]);
 
+  // Stable identity for PostCard's onHashtagClick. PostCard calls it with no
+  // arguments (see the onHashtagClick/onMentionClick pair inside PostCard), and
+  // the inline arrow this replaces took none either -- so the contract is
+  // unchanged, only the identity is now stable across renders.
+  const handlePostHashtagClick = useCallback(() => {
+    onShowExplorer?.();
+  }, [onShowExplorer]);
+
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: T?.bg || '#0D0D0D' }}>
       <style>{`
@@ -3471,10 +3487,10 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
                   onShowProfile={onShowProfile}
                   onRequireAuth={onRequireAuth}
                   onNavigateToReel={openPost}
-                  onCommentAdded={() => {}}
-                  onVoteAdded={() => {}}
+                  onCommentAdded={NOOP}
+                  onVoteAdded={NOOP}
                   onShowVideoDetail={openPost}
-                  onHashtagClick={() => onShowExplorer?.()}
+                  onHashtagClick={handlePostHashtagClick}
                   videoObserver={videoObserverRef.current}
                   onShowWallet={onShowWallet}
                   onShowCoinPurchase={onShowCoinPurchase}

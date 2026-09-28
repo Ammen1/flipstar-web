@@ -122,9 +122,29 @@ async function recordClip(color, ms = 1500) {
   const type = MediaRecorder.isTypeSupported('video/webm;codecs=vp8') ? 'video/webm;codecs=vp8' : 'video/webm';
   const recorder = new MediaRecorder(stream, { mimeType: type });
   const chunks = [];
-  recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  // Synchronise on a real media event, not on wall-clock time.
+  //
+  // `recorder.start()` returning does NOT mean the canvas capture track has
+  // produced a frame. captureStream only emits when the canvas actually paints,
+  // so under CPU load the draw loop and the capture pipeline are both starved,
+  // MediaRecorder emits no dataavailable at all, and the Blob below came out
+  // EMPTY -- the intermittent `recorded clips are 0,...` failure, which bit the
+  // first clip most often because page startup contends hardest.
+  //
+  // Waiting for the first non-empty dataavailable makes the recording
+  // deterministic. The clip still runs for `ms` after that, so its length and
+  // the test's semantics are unchanged.
+  let sawFirstChunk;
+  const firstChunk = new Promise((resolve) => { sawFirstChunk = resolve; });
+  recorder.ondataavailable = (e) => {
+    if (e.data && e.data.size) { chunks.push(e.data); sawFirstChunk(); }
+  };
   const timer = setInterval(draw, 33);
   recorder.start(250);
+  // Capped so a genuinely dead source still reaches the size assertion and
+  // fails loudly, rather than hanging the suite forever. The cap is a safety
+  // net, not the synchronisation mechanism.
+  await Promise.race([firstChunk, sleep(10000)]);
   await sleep(ms);
   await new Promise((resolve) => { recorder.onstop = resolve; recorder.stop(); });
   clearInterval(timer);

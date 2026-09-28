@@ -266,7 +266,10 @@ const synth = (() => {
 const md = navigator.mediaDevices;
 const gumCalls = [];
 /** Route getUserMedia to the synthetic camera; `decide` may fail a request. */
-function useCamera(decide = () => null) {
+// Renamed from `useCamera`: it installs a getUserMedia stub, it is not a
+// React hook. The `use` prefix made eslint-plugin-react-hooks treat every
+// call site as a conditional hook, which buried a real violation elsewhere.
+function stubCamera(decide = () => null) {
   gumCalls.length = 0;
   md.getUserMedia = async (constraints) => {
     gumCalls.push(constraints);
@@ -453,7 +456,7 @@ async function run() {
   });
 
   // 2. The page with a camera ---------------------------------------------
-  useCamera();
+  stubCamera();
   mountPage();
   let normal;
   let bwTakeUrl;
@@ -747,7 +750,7 @@ async function run() {
 
   // 3. Failures -----------------------------------------------------------
   await test('camera refused: one prompt, the required message, and a retry', async () => {
-    useCamera(() => 'NotAllowedError');
+    stubCamera(() => 'NotAllowedError');
     try {
       mountPage();
       click(await waitFor(() => byText('Record a video'), 'chooser'), 'Record a video');
@@ -759,12 +762,12 @@ async function run() {
       click(byText('Close camera'), 'Close camera');
       await waitFor(() => /What will you/.test(pageText()), 'back on the chooser');
     } finally {
-      useCamera();
+      stubCamera();
     }
   });
 
   await test('microphone refused: records without sound and says so', async () => {
-    useCamera((c) => (c.audio ? 'NotAllowedError' : null));
+    stubCamera((c) => (c.audio ? 'NotAllowedError' : null));
     try {
       mountPage();
       await openCameraFromChooser();
@@ -773,31 +776,31 @@ async function run() {
       const v = await inspectVideo(url);
       assert(v.duration > 1, 'no recording');
     } finally {
-      useCamera();
+      stubCamera();
     }
   });
 
   await test('no camera: says so and offers the gallery', async () => {
-    useCamera((c) => (c.video ? 'NotFoundError' : null));
+    stubCamera((c) => (c.video ? 'NotFoundError' : null));
     try {
       mountPage();
       click(await waitFor(() => byText('Record a video'), 'chooser'), 'Record a video');
       await waitFor(() => /No camera found/.test(pageText()), 'no-camera message');
       assert(byText('Upload from gallery'), 'no gallery option');
     } finally {
-      useCamera();
+      stubCamera();
     }
   });
 
   await test('camera busy: says so and retries once after a pause', async () => {
-    useCamera((c) => (c.video ? 'NotReadableError' : null));
+    stubCamera((c) => (c.video ? 'NotReadableError' : null));
     try {
       mountPage();
       click(await waitFor(() => byText('Record a video'), 'chooser'), 'Record a video');
       await waitFor(() => /Camera is in use/.test(pageText()), 'camera-busy message');
       assert(gumCalls.length === 3, `asked ${gumCalls.length} times, expected 3`);
     } finally {
-      useCamera();
+      stubCamera();
     }
   });
 
@@ -809,7 +812,7 @@ async function run() {
       await waitFor(() => /Camera isn't supported here/.test(pageText()), 'unsupported message');
       assert(!byText('Try again'), 'offers a retry that cannot work');
     } finally {
-      useCamera();
+      stubCamera();
     }
   });
 
@@ -875,7 +878,7 @@ async function run() {
       assert(v.duration > 1, 'no recording');
       return `${v.width}x${v.height}`;
     } finally {
-      useCamera();
+      stubCamera();
     }
   });
 
