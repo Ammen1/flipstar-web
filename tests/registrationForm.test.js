@@ -1,7 +1,7 @@
 // What the sign-in form tells somebody is still missing.
 //
 // The screen a SuperApp subscriber reaches after "Send OTP" asks for a code, a
-// PIN, a confirmation and — for a new account — a username, and its button
+// PIN and a confirmation, and its button
 // greys out until all of them are right. It used to give no reason, so five
 // digits of a six-digit PIN looked identical to a form that was ready.
 //
@@ -66,17 +66,20 @@ test('the PIN is checked before the confirmation', () => {
 });
 
 // ── the username ─────────────────────────────────────────────────────────────
+//
+// The form no longer asks for one. The server generates a handle when the
+// field is absent, so nobody is held at the door to invent a name that
+// authenticates nothing -- sign-in is by phone and PIN.
 
-test('a new account needs a username', () => {
-  assert.match(missingStep({ ...complete, username: '' }), /username/);
+test('nobody is asked for a username any more', () => {
+  assert.equal(missingStep({ ...complete, username: '' }), '');
 });
 
-test('a username of spaces is no username', () => {
-  assert.match(missingStep({ ...complete, username: '   ' }), /username/);
-});
-
-test('a username must reach the minimum length', () => {
-  assert.match(missingStep({ ...complete, username: 'am' }), /at least 3/);
+test('a username sent by an older client is ignored rather than judged', () => {
+  // A client that still posts the field must not be refused for a value the
+  // rule no longer has an opinion about.
+  assert.equal(missingStep({ ...complete, username: 'am' }), '');
+  assert.equal(missingStep({ ...complete, username: '   ' }), '');
 });
 
 test('somebody who already has an account is not asked for one', () => {

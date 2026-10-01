@@ -7,7 +7,14 @@
       type="image/png"
       href="./static/images/Flip_Star_Final_Logo_v3_side__2_-removebg-preview.png"
     />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover is what makes env(safe-area-inset-*) resolve to
+         anything other than 0 on a notched iPhone. Without it the insets
+         are silently zero and content sits under the home indicator and
+         the landscape notch. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
 
     <!--
       Inter, actually loaded.
