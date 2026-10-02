@@ -11,6 +11,18 @@ import { useLanguage } from "../../contexts/LanguageContext";
 import { BoostDashboard } from "../../components/subscription/BoostDashboard";
 import telebirrH5 from "../../services/TelebirrH5Service";
 import { mergeNotificationPrefs, readStoredPrefs } from '../../utils/notificationPrefs.js';
+import {
+  accentOf,
+  button as btn,
+  DANGER,
+  ensureUiKitStyles,
+  field as fieldStyle,
+  label as labelStyle,
+  RADIUS,
+  TAP,
+} from '../../components/common/uiKit';
+
+ensureUiKitStyles();
 
 const FAQ_ITEMS = [
   { q: "What is FlipStar?", a: "FlipStar is a premium, subscription-based gamified social media platform by Ethio Telecom and Skykin Technologies PLC. Upload short videos and photos ('Flips'), compete in campaigns, earn coins, and participate in a creator economy powered by telebirr." },
@@ -808,6 +820,42 @@ const STG_CSS = (T) => `
   }
   .stg-main input, .stg-main select, .stg-main textarea{ max-width:100%; }
 
+  /* The content panel ran edge to edge of a 1100px shell, so two short fields
+     sat alone across ~800px of empty row. Capping the measure keeps a form
+     readable on a wide monitor without wasting the panel -- the cards below
+     fill the width, the inputs inside them do not. */
+  .stg-stack{
+    display:flex; flex-direction:column; gap:18px;
+    width:100%; max-width:720px;
+  }
+
+  .stg-card{
+    background:${T.bg};
+    border:1px solid ${T.border};
+    border-radius:16px;
+    padding:20px;
+  }
+  .stg-card-title{
+    margin:0 0 16px; font-size:12px; font-weight:800;
+    letter-spacing:.9px; text-transform:uppercase;
+  }
+  .stg-fields{ display:flex; flex-direction:column; gap:16px; max-width:460px; }
+
+  /* Nav items: one definition rather than three ternaries on isMobile. */
+  .stg-item{
+    width:100%; display:flex; align-items:center; gap:12px;
+    padding:12px 16px; margin:0 8px; width:calc(100% - 16px);
+    border:none; background:transparent; cursor:pointer;
+    border-radius:12px; font:inherit; font-size:14px; font-weight:600;
+    text-align:left; transition:background .18s ease, color .18s ease;
+  }
+  @media (hover:hover){ .stg-item:hover{ background:${T.cardBg}; } }
+  .stg-item-label{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  @media (prefers-reduced-motion: reduce){
+    .stg-item{ transition:none; }
+  }
+
   /* A flex child defaults to min-height:auto, so this list would not shrink
      below its content and pushed the logout button past the clipped edge. */
   .stg-nav{ flex:1 1 auto; min-height:0; overflow-y:auto; padding:12px 0; }
@@ -828,6 +876,33 @@ const STG_CSS = (T) => `
     .stg-main{
       padding:20px 16px calc(60px + 24px + env(safe-area-inset-bottom, 0px));
     }
+    .stg-stack{ max-width:none; }
+    .stg-fields{ max-width:none; }
+    .stg-card{ padding:16px; }
+
+    /* The nav becomes a single scrolling rail rather than nine stacked rows
+       sitting above every panel -- on a phone that meant scrolling past the
+       whole menu to reach the setting you had just chosen. One line, the
+       selected item stays visible, and the panel below gets the screen. */
+    .stg-nav{
+      display:flex; flex-direction:row; gap:8px;
+      padding:10px 12px; overflow-x:auto; overflow-y:hidden;
+      scrollbar-width:none; -ms-overflow-style:none;
+      -webkit-overflow-scrolling:touch;
+      scroll-snap-type:x proximity;
+    }
+    .stg-nav::-webkit-scrollbar{ display:none; }
+    .stg-item{
+      width:auto; margin:0; flex:0 0 auto;
+      scroll-snap-align:start; padding:9px 14px;
+      border-radius:999px; font-size:13px;
+      border:1px solid ${T.border};
+    }
+    .stg-item-label{ overflow:visible; }
+    /* The chevron points into a panel that is now below, not beside. */
+    .stg-item svg:last-of-type{ display:none; }
+
+    .stg-foot{ padding:12px 16px calc(12px + env(safe-area-inset-bottom, 0px)); }
   }
 `;
 
@@ -883,26 +958,32 @@ const STG_CSS = (T) => `
                     }
                     setActiveSection(section.id);
                   }}
+                  className="stg-item fs-focus"
+                  aria-current={isActive ? 'page' : undefined}
                   style={{
-                    width: "100%",
-                    padding: isSmallMobile ? "8px 4px" : (isMobile ? "12px 8px" : "14px 20px"),
-                    border: "none",
-                    background: isActive ? T.cardBg : "transparent",
-                    cursor: "pointer",
-                    display: "flex",
-                    flexDirection: isMobile ? "column" : "row",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: isSmallMobile ? 2 : (isMobile ? 4 : 12),
-                    color: isActive ? T.pri : T.txt,
-                    fontWeight: isActive ? 600 : 500,
-                    borderLeft: isActive ? `3px solid ${T.pri}` : "3px solid transparent",
+                    // A filled pill instead of a 3px rule hanging off the
+                    // panel edge, and the icon takes the accent so the
+                    // selected row is not signalled by colour alone.
+                    background: isActive ? `${accentOf(T)}1a` : 'transparent',
+                    color: isActive ? accentOf(T) : T.txt,
+                    fontWeight: isActive ? 800 : 600,
+                    boxShadow: isActive ? `inset 0 0 0 1px ${accentOf(T)}3a` : 'none',
+                    minHeight: TAP,
                   }}
                 >
-                  <Icon size={isSmallMobile ? 18 : (isMobile ? 22 : 20)} />
-                  {!isMobile && <span style={{ flex: 1, textAlign: "left" }}>{section.label}</span>}
-                  {isMobile && <span style={{ fontSize: isSmallMobile ? 8 : 10, textAlign: "center", lineHeight: 1.2 }}>{section.label}</span>}
-                  {!isMobile && <ChevronRight size={16} style={{ opacity: 0.5 }} />}
+                  <Icon
+                    size={19}
+                    strokeWidth={isActive ? 2.5 : 2}
+                    color={isActive ? accentOf(T) : T.sub}
+                    aria-hidden="true"
+                    style={{ flexShrink: 0 }}
+                  />
+                  <span className="stg-item-label">{section.label}</span>
+                  <ChevronRight
+                    size={15}
+                    aria-hidden="true"
+                    style={{ flexShrink: 0, opacity: isActive ? 0.8 : 0.35 }}
+                  />
                 </button>
               );
             })}
@@ -910,28 +991,18 @@ const STG_CSS = (T) => `
 
           {/* Logout - hide in SuperApp since it auto-logs in */}
           {!telebirrH5.isInSuperApp() && (
-          <div className="stg-foot" style={{ padding: 16, borderTop: `1px solid ${T.border}` }}>
+          <div className="stg-foot" style={{ padding: 14, borderTop: `1px solid ${T.border}` }}>
+            {/* Destructive, but no longer a solid red slab louder than the
+                settings it sits under. An outlined treatment still reads as
+                "careful" -- the icon and the colour both say so -- without
+                being the first thing the eye lands on. */}
             <button
+              type="button"
               onClick={onLogout}
-              style={{
-                width: "100%",
-                padding: isSmallMobile ? "8px 4px" : (isMobile ? "10px 8px" : "12px 16px"),
-                background: "#EF4444",
-                color: "#fff",
-                border: "none",
-                borderRadius: 8,
-                cursor: "pointer",
-                display: "flex",
-                flexDirection: isMobile ? "column" : "row",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: isSmallMobile ? 2 : (isMobile ? 4 : 8),
-                fontSize: isSmallMobile ? 8 : (isMobile ? 10 : 14),
-                fontWeight: 600,
-                lineHeight: 1.2,
-              }}
+              className="fs-press fs-focus"
+              style={{ ...btn(T, 'danger'), fontSize: 13.5 }}
             >
-              <LogOut size={isSmallMobile ? 14 : 18} />
+              <LogOut size={17} strokeWidth={2.3} aria-hidden="true" />
               {t('logout')}
             </button>
           </div>
@@ -942,111 +1013,142 @@ const STG_CSS = (T) => `
         <div className="stg-main">
           {activeSection === "account" && (
             <div>
-              <h2 style={{ fontSize: isSmallMobile ? 18 : 24, fontWeight: 700, marginBottom: 8, color: T.txt }}>{t('accountSettings')}</h2>
-              <p style={{ fontSize: isSmallMobile ? 12 : 14, color: T.sub, marginBottom: isSmallMobile ? 20 : 32 }}>{t('manageAccount')}</p>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
-                {/* Basic Info */}
-                <div>
-                  <h3 style={{ fontSize: isSmallMobile ? 14 : 16, fontWeight: 600, color: T.txt, marginBottom: 16 }}>{t('basicInfo')}</h3>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                    <div>
-                      <label style={{ fontSize: isSmallMobile ? 12 : 14, fontWeight: 600, color: T.txt, marginBottom: 8, display: "block" }}>
-                        {t('username')}
-                      </label>
-                      <input
-                        type="text"
-                        value={user?.username || ""}
-                        disabled
-                        style={{
-                          width: "100%",
-                          padding: "12px 16px",
-                          border: `1px solid ${T.border}`,
-                          borderRadius: 8,
-                          fontSize: 14,
-                          background: T.bg,
-                          color: T.sub,
-                        }}
-                      />
-                    </div>
-
-                    <div>
-                      <label style={{ fontSize: isSmallMobile ? 12 : 14, fontWeight: 600, color: T.txt, marginBottom: 8, display: "block" }}>
-                        {t('email')}
-                      </label>
-                      <input
-                        type="email"
-                        value={user?.email || ""}
-                        disabled
-                        style={{
-                          width: "100%",
-                          padding: "12px 16px",
-                          border: `1px solid ${T.border}`,
-                          borderRadius: 8,
-                          fontSize: 14,
-                          background: T.bg,
-                          color: T.sub,
-                        }}
-                      />
-                    </div>
-                  </div>
+              <header style={{ display: 'flex', alignItems: 'center', gap: 13, marginBottom: 24 }}>
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: 46, height: 46, flexShrink: 0,
+                    borderRadius: RADIUS.md,
+                    display: 'grid', placeItems: 'center',
+                    background: `${accentOf(T)}1a`,
+                    border: `1px solid ${accentOf(T)}3a`,
+                  }}
+                >
+                  <User size={21} color={accentOf(T)} strokeWidth={2.3} />
+                </span>
+                <div style={{ minWidth: 0 }}>
+                  <h2 style={{
+                    margin: 0,
+                    fontSize: 'clamp(20px, 4.4vw, 26px)',
+                    fontWeight: 900,
+                    letterSpacing: '-0.02em',
+                    lineHeight: 1.15,
+                    color: T.txt,
+                  }}>
+                    {t('accountSettings')}
+                  </h2>
+                  <p style={{ margin: '3px 0 0', fontSize: 13, color: T.sub }}>
+                    {t('manageAccount')}
+                  </p>
                 </div>
+              </header>
+
+              <div className="stg-stack">
+                {/* Basic Info */}
+                <section className="stg-card">
+                  <h3 className="stg-card-title" style={{ color: T.txt }}>{t('basicInfo')}</h3>
+                  <div className="stg-fields">
+                    {[
+                      { id: 'acct-username', type: 'text', label: t('username'), value: user?.username || '' },
+                      { id: 'acct-email', type: 'email', label: t('email'), value: user?.email || '' },
+                    ].map((f) => (
+                      <div key={f.id}>
+                        <label htmlFor={f.id} style={labelStyle(T)}>{f.label}</label>
+                        <div style={{ position: 'relative' }}>
+                          <input
+                            id={f.id}
+                            type={f.type}
+                            value={f.value}
+                            disabled
+                            // Unchanged: these were read-only before and still
+                            // are. What changed is that it now LOOKS read-only
+                            // rather than looking like a field that ignores you.
+                            style={{ ...fieldStyle(T, { readOnly: true }), paddingRight: 86 }}
+                          />
+                          <span
+                            style={{
+                              position: 'absolute', right: 10, top: '50%',
+                              transform: 'translateY(-50%)',
+                              padding: '3px 8px', borderRadius: RADIUS.pill,
+                              background: T.bg, border: `1px solid ${T.border}`,
+                              fontSize: 10, fontWeight: 700, letterSpacing: '0.4px',
+                              textTransform: 'uppercase', color: T.sub,
+                              pointerEvents: 'none',
+                            }}
+                          >
+                            Read only
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
 
                 {/* Password Change */}
-                <div>
-                  <h3 style={{ fontSize: isSmallMobile ? 14 : 16, fontWeight: 600, color: T.txt, marginBottom: 16 }}>{t('changePassword')}</h3>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                    {['current', 'new', 'confirm'].map((k) => (
-                      <div key={k} style={{ position: 'relative' }}>
-                        <input
-                          type={passVisible[k] ? 'text' : 'password'}
-                          inputMode="numeric"
-                          maxLength={6}
-                          placeholder="••••••"
-                          value={password[k]}
-                          onChange={(e) => setPassword({ ...password, [k]: e.target.value.replace(/\D/g, "").slice(0, 6) })}
-                          style={{
-                            width: "100%",
-                            padding: isSmallMobile ? "10px 12px" : "12px 16px",
-                            paddingRight: 44,
-                            border: `1px solid ${T.border}`,
-                            borderRadius: 8,
-                            fontSize: isSmallMobile ? 12 : 14,
-                            boxSizing: 'border-box',
-                          }}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setPassVisible(v => ({ ...v, [k]: !v[k] }))}
-                          style={{
-                            position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
-                            background: 'none', border: 'none', cursor: 'pointer', color: T.sub || '#888',
-                            padding: 6, display: 'flex', alignItems: 'center',
-                          }}
-                          aria-label={passVisible[k] ? 'Hide password' : 'Show password'}
-                        >
-                          {passVisible[k] ? <EyeOff size={18} /> : <Eye size={18} />}
-                        </button>
+                <section className="stg-card">
+                  <h3 className="stg-card-title" style={{ color: T.txt }}>{t('changePassword')}</h3>
+                  <div className="stg-fields">
+                    {/* These three set NO background and NO color, so they
+                        fell back to the browser default -- white boxes with
+                        black text sitting in a dark page. That is the "three
+                        white fields floating" problem; they now use the same
+                        field style as every other input in the app.
+
+                        Each also gets a real <label>. They had only a
+                        placeholder of six dots, so a screen reader announced
+                        three identical unnamed password boxes, and anyone who
+                        started typing lost the only clue as to which was
+                        which. */}
+                    {[
+                      { k: 'current', label: 'Current PIN' },
+                      { k: 'new', label: 'New PIN' },
+                      { k: 'confirm', label: 'Confirm new PIN' },
+                    ].map(({ k, label }) => (
+                      <div key={k}>
+                        <label htmlFor={`pin-${k}`} style={labelStyle(T)}>{label}</label>
+                        <div style={{ position: 'relative' }}>
+                          <input
+                            id={`pin-${k}`}
+                            type={passVisible[k] ? 'text' : 'password'}
+                            inputMode="numeric"
+                            autoComplete={k === 'current' ? 'current-password' : 'new-password'}
+                            maxLength={6}
+                            placeholder="••••••"
+                            value={password[k]}
+                            onChange={(e) => setPassword({ ...password, [k]: e.target.value.replace(/\D/g, "").slice(0, 6) })}
+                            style={{ ...fieldStyle(T), paddingRight: TAP + 6, letterSpacing: '0.18em' }}
+                          />
+                          <button
+                            type="button"
+                            className="fs-press fs-focus"
+                            onClick={() => setPassVisible(v => ({ ...v, [k]: !v[k] }))}
+                            aria-label={passVisible[k] ? `Hide ${label}` : `Show ${label}`}
+                            aria-pressed={!!passVisible[k]}
+                            style={{
+                              position: 'absolute', right: 2, top: '50%',
+                              transform: 'translateY(-50%)',
+                              width: TAP, height: TAP,
+                              display: 'grid', placeItems: 'center',
+                              background: 'none', border: 'none',
+                              borderRadius: RADIUS.sm,
+                              cursor: 'pointer', color: T.sub || '#888',
+                            }}
+                          >
+                            {passVisible[k] ? <EyeOff size={18} /> : <Eye size={18} />}
+                          </button>
+                        </div>
                       </div>
                     ))}
                     <button
+                      type="button"
+                      className="fs-press fs-focus"
                       onClick={handlePasswordChange}
-                      style={{
-                        padding: isSmallMobile ? "10px 16px" : "12px 24px",
-                        background: T.pri,
-                        color: "#fff",
-                        border: "none",
-                        borderRadius: 8,
-                        fontSize: isSmallMobile ? 12 : 14,
-                        fontWeight: 600,
-                        cursor: "pointer",
-                        alignSelf: "flex-start",
-                      }}
+                      style={{ ...btn(T, 'primary', { full: false }), alignSelf: 'flex-start', marginTop: 4 }}
                     >
                       {t('updatePassword')}
                     </button>
                   </div>
-                </div>
+                </section>
               </div>
             </div>
           )}

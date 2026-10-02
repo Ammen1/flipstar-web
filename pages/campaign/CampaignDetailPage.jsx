@@ -6,6 +6,20 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { ProcessedImage, ProcessedVideo } from '../../components/feed/ProcessedMedia';
 import { MediaProcessingState } from '../../components/common/MediaProcessingState';
 import { isMediaReady, isVideoPost } from '../../utils/media';
+import {
+  accentOf,
+  button as btn,
+  ensureUiKitStyles,
+  field as fieldStyle,
+  formatBytes,
+  label as labelStyle,
+  RADIUS,
+  SUCCESS,
+  surfaceOf,
+  TAP,
+} from '../../components/common/uiKit';
+
+ensureUiKitStyles();
 import { formatCampaignDate } from '../../utils/campaignDates';
 import { newUploadId } from '../../utils/uploadId';
 import { usePostProcessing } from '../../hooks/usePostProcessing';
@@ -954,6 +968,21 @@ function SubmitEntryModal({ theme: T, campaign, campaignId, userLevel = 0, onClo
   // after a lost answer gets the post already made (see utils/uploadId.js).
   const uploadIdRef = useRef(null);
   useEffect(() => { uploadIdRef.current = null; }, [newReelFile]);
+
+  // A thumbnail of whatever was chosen, so the person can see they picked the
+  // right clip. Revoked when the selection changes or the modal unmounts: an
+  // object URL keeps the whole blob alive until it is, and a few unreleased
+  // videos is real memory on a phone.
+  const [previewUrl, setPreviewUrl] = useState('');
+  useEffect(() => {
+    if (!newReelFile) {
+      setPreviewUrl('');
+      return undefined;
+    }
+    const url = URL.createObjectURL(newReelFile);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [newReelFile]);
   const [newReelCaption, setNewReelCaption] = useState('');
   const [showCamera, setShowCamera] = useState(false);
   const [stream, setStream] = useState(null);
@@ -1214,52 +1243,106 @@ function SubmitEntryModal({ theme: T, campaign, campaignId, userLevel = 0, onClo
 
   return (
     <div
+      className="fs-modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="submit-entry-title"
       style={{
         position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0,0,0,0.8)',
+        inset: 0,
+        background: 'rgba(0,0,0,0.78)',
+        backdropFilter: 'blur(3px)',
+        WebkitBackdropFilter: 'blur(3px)',
         display: 'flex',
-        alignItems: 'center',
+        // flex-start, not center: a card taller than the viewport that is
+        // centred has its top cut off with no way to scroll back up to it --
+        // on a phone that is the requirements and the header.
+        alignItems: 'flex-start',
         justifyContent: 'center',
         zIndex: 9999,
-        padding: 20,
+        overflowY: 'auto',
+        WebkitOverflowScrolling: 'touch',
+        boxSizing: 'border-box',
+        padding:
+          'max(16px, env(safe-area-inset-top, 0px)) ' +
+          'max(12px, env(safe-area-inset-right, 0px)) ' +
+          'calc(24px + env(safe-area-inset-bottom, 0px)) ' +
+          'max(12px, env(safe-area-inset-left, 0px))',
       }}
       onClick={onClose}
     >
       <div
+        className="fs-modal-card"
         style={{
-          background: T.cardBg || T.bg,
-          borderRadius: 20,
-          padding: 28,
+          background: surfaceOf(T),
+          borderRadius: RADIUS.xl,
+          padding: 'clamp(18px, 5vw, 28px)',
           width: '100%',
           maxWidth: 600,
-          maxHeight: '85vh',
-          overflowY: 'auto',
+          margin: 'auto',
+          boxSizing: 'border-box',
           border: `1px solid ${T.border}`,
-          boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+          boxShadow: '0 24px 70px -20px rgba(0,0,0,0.75)',
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 style={{
-          margin: 0,
-          fontSize: 24,
-          fontWeight: 700,
-          color: T.txt,
-          marginBottom: 8,
-        }}>
-          Submit Your Entry
-        </h2>
-        <p style={{
-          margin: 0,
-          fontSize: 14,
-          color: T.sub,
-          marginBottom: 20,
-        }}>
-          Upload your content to enter this campaign
-        </p>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 20 }}>
+          <span
+            aria-hidden="true"
+            style={{
+              width: 44,
+              height: 44,
+              flexShrink: 0,
+              borderRadius: RADIUS.md,
+              display: 'grid',
+              placeItems: 'center',
+              background: `linear-gradient(135deg, ${accentOf(T)}, ${accentOf(T)}aa)`,
+              boxShadow: `0 8px 20px -10px ${accentOf(T)}`,
+            }}
+          >
+            <Trophy size={21} color="#07130a" strokeWidth={2.5} />
+          </span>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <h2
+              id="submit-entry-title"
+              style={{
+                margin: 0,
+                fontSize: 'clamp(19px, 5vw, 23px)',
+                fontWeight: 900,
+                letterSpacing: '-0.02em',
+                lineHeight: 1.2,
+                color: T.txt,
+              }}
+            >
+              Submit Your Entry
+            </h2>
+            <p style={{ margin: '4px 0 0', fontSize: 13, lineHeight: 1.5, color: T.sub }}>
+              Show your best work and compete for the prize.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="fs-press fs-focus"
+            style={{
+              width: TAP,
+              height: TAP,
+              flexShrink: 0,
+              marginTop: -6,
+              marginRight: -6,
+              display: 'grid',
+              placeItems: 'center',
+              background: 'transparent',
+              border: 'none',
+              borderRadius: RADIUS.sm,
+              color: T.sub,
+              cursor: 'pointer',
+            }}
+          >
+            <X size={20} strokeWidth={2.5} />
+          </button>
+        </div>
 
         {error && (
           <div style={{
@@ -1299,111 +1382,185 @@ function SubmitEntryModal({ theme: T, campaign, campaignId, userLevel = 0, onClo
             {campaign && (
               <div style={{
                 padding: 16,
-                background: `${T.pri}15`,
-                borderRadius: 12,
-                border: `1px solid ${T.pri}40`,
-                marginBottom: 20,
+                background: T.bg,
+                borderRadius: RADIUS.lg,
+                border: `1px solid ${T.border}`,
+                marginBottom: 18,
               }}>
-                <h4 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: T.txt, marginBottom: 12 }}>
-                  📋 Campaign Requirements
+                <h4 style={{
+                  margin: '0 0 12px',
+                  display: 'flex', alignItems: 'center', gap: 7,
+                  fontSize: 11, fontWeight: 800,
+                  letterSpacing: '0.8px', textTransform: 'uppercase',
+                  color: T.sub,
+                }}>
+                  <FileText size={13} color={accentOf(T)} strokeWidth={2.6} aria-hidden="true" />
+                  Campaign Requirements
                 </h4>
-                <div style={{ fontSize: 13, color: T.sub, lineHeight: 1.8 }}>
+
+                {/* Each requirement is a labelled row rather than a run of
+                    bold-prefixed sentences, so the hashtags -- the thing
+                    people come here to copy -- are findable at a glance. */}
+                <dl style={{ margin: 0, display: 'grid', gap: 12 }}>
                   {campaign.required_hashtags && (
-                    <div style={{ marginBottom: 8 }}>
-                      <strong style={{ color: T.txt }}>Required Hashtags:</strong> {campaign.required_hashtags}
+                    <div>
+                      <dt style={{ ...labelStyle(T), marginBottom: 7, fontSize: 11.5 }}>
+                        Required hashtags
+                      </dt>
+                      <dd style={{ margin: 0, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {String(campaign.required_hashtags)
+                          .split(/[\s,]+/)
+                          .filter(Boolean)
+                          .map((tag) => (
+                            <span
+                              key={tag}
+                              style={{
+                                padding: '4px 10px',
+                                borderRadius: RADIUS.pill,
+                                background: `${accentOf(T)}1f`,
+                                border: `1px solid ${accentOf(T)}44`,
+                                color: accentOf(T),
+                                fontSize: 12,
+                                fontWeight: 700,
+                                overflowWrap: 'anywhere',
+                              }}
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                      </dd>
                     </div>
                   )}
+
                   {campaign.min_followers > 0 && (
-                    <div style={{ marginBottom: 8 }}>
-                      <strong style={{ color: T.txt }}>Min Followers:</strong> {campaign.min_followers}
+                    <div>
+                      <dt style={{ ...labelStyle(T), marginBottom: 2, fontSize: 11.5 }}>Minimum followers</dt>
+                      <dd style={{ margin: 0, fontSize: 14, fontWeight: 700, color: T.txt }}>
+                        {campaign.min_followers}
+                      </dd>
                     </div>
                   )}
-                  {campaign.min_level > 0 && (
-                    <div style={{ marginBottom: 8 }}>
-                      <strong style={{ color: T.txt }}>Min Level:</strong> {campaign.min_level}
-                      <div style={{ fontSize: 11, color: T.sub, marginTop: 2 }}>
-                        Your level: {userLevel} (need {Math.max(0, campaign.min_level - userLevel)} more level{campaign.min_level - userLevel > 1 ? 's' : ''})
+
+                  {campaign.min_level > 0 && (() => {
+                    const short = Math.max(0, campaign.min_level - userLevel);
+                    const met = short === 0;
+                    return (
+                      <div>
+                        <dt style={{ ...labelStyle(T), marginBottom: 2, fontSize: 11.5 }}>Minimum level</dt>
+                        <dd style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 14, fontWeight: 700, color: T.txt }}>
+                            Level {campaign.min_level}
+                          </span>
+                          {/* The icon carries the meaning as well as the
+                              colour, so this still reads for anyone who
+                              cannot tell the two greens apart. */}
+                          <span style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 5,
+                            padding: '3px 9px', borderRadius: RADIUS.pill,
+                            background: met ? `${SUCCESS}1f` : `${T.sub}22`,
+                            color: met ? SUCCESS : T.sub,
+                            fontSize: 11, fontWeight: 700,
+                          }}>
+                            {met ? <Check size={11} strokeWidth={3} aria-hidden="true" />
+                                 : <AlertCircle size={11} strokeWidth={2.6} aria-hidden="true" />}
+                            {met
+                              ? `You are level ${userLevel}`
+                              : `You are level ${userLevel} — ${short} to go`}
+                          </span>
+                        </dd>
                       </div>
-                    </div>
-                  )}
+                    );
+                  })()}
+
                   {campaign.min_votes_per_reel > 0 && (
                     <div>
-                      <strong style={{ color: T.txt }}>Min Votes Required:</strong> {campaign.min_votes_per_reel}
+                      <dt style={{ ...labelStyle(T), marginBottom: 2, fontSize: 11.5 }}>Minimum votes</dt>
+                      <dd style={{ margin: 0, fontSize: 14, fontWeight: 700, color: T.txt }}>
+                        {campaign.min_votes_per_reel}
+                      </dd>
                     </div>
                   )}
-                </div>
+                </dl>
               </div>
             )}
             
-            {/* Record Options */}
+            {/* Two equal media actions. Balanced on purpose -- neither is
+                the "real" one, and a phone user is as likely to want either. */}
             <div style={{
-              display: 'flex',
-              gap: 12,
-              marginBottom: 20,
+              display: 'grid',
+              gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+              gap: 10,
+              marginBottom: 18,
             }}>
-              <button
-                onClick={() => {
-                  setCameraMode('video');
-                  startCamera('video');
-                }}
-                style={{
-                  flex: 1,
-                  padding: '14px 16px',
-                  background: T.cardBg || '#fff',
-                  border: `2px solid ${T.border}`,
-                  borderRadius: 12,
-                  color: T.txt,
-                  fontSize: 14,
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
-                }}
-              >
-                <Video size={18} />
-                Record
-              </button>
-              <button
-                onClick={() => {
-                  setCameraMode('photo');
-                  startCamera('photo');
-                }}
-                style={{
-                  flex: 1,
-                  padding: '14px 16px',
-                  background: T.cardBg || '#fff',
-                  border: `2px solid ${T.border}`,
-                  borderRadius: 12,
-                  color: T.txt,
-                  fontSize: 14,
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
-                }}
-              >
-                <Camera size={18} />
-                Photo
-              </button>
+              {[
+                { mode: 'video', Icon: Video, title: 'Record', hint: 'Use your camera' },
+                { mode: 'photo', Icon: Camera, title: 'Photo', hint: 'Take a picture' },
+              ].map(({ mode, Icon, title, hint }) => (
+                <button
+                  key={mode}
+                  type="button"
+                  className="fs-press fs-focus"
+                  onClick={() => {
+                    setCameraMode(mode);
+                    startCamera(mode);
+                  }}
+                  style={{
+                    minHeight: 76,
+                    padding: '12px 10px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 5,
+                    background: T.bg,
+                    border: `1.5px solid ${T.border}`,
+                    borderRadius: RADIUS.lg,
+                    color: T.txt,
+                    fontFamily: 'inherit',
+                    cursor: 'pointer',
+                    minWidth: 0,
+                  }}
+                >
+                  <Icon size={20} color={accentOf(T)} strokeWidth={2.3} aria-hidden="true" />
+                  <span style={{ fontSize: 13.5, fontWeight: 700 }}>{title}</span>
+                  <span style={{ fontSize: 10.5, color: T.sub, fontWeight: 600 }}>{hint}</span>
+                </button>
+              ))}
             </div>
             
             {/* Camera or File Upload Area */}
             <div
+              role={showCamera ? undefined : 'button'}
+              tabIndex={showCamera ? undefined : 0}
+              aria-label={
+                newReelFile
+                  ? `Selected file ${newReelFile.name}. Activate to choose a different one.`
+                  : 'Upload a photo or video'
+              }
               onClick={() => !showCamera && document.getElementById('campaign-file-upload').click()}
+              onKeyDown={(e) => {
+                if (showCamera) return;
+                if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+                  e.preventDefault();
+                  document.getElementById('campaign-file-upload').click();
+                }
+              }}
+              className={showCamera ? undefined : 'fs-focus'}
               style={{
-                marginBottom: 20,
-                padding: 24,
-                border: `2px dashed ${T.border}`,
-                borderRadius: 12,
+                marginBottom: 18,
+                padding: newReelFile && !showCamera ? 14 : 24,
+                // `T.card` is not a theme key -- it resolved to undefined, so
+                // this zone had no background and read as a hole in the card.
+                background: newReelFile ? `${accentOf(T)}12` : T.bg,
+                border: `2px dashed ${newReelFile ? `${accentOf(T)}70` : T.border}`,
+                borderRadius: RADIUS.lg,
                 textAlign: 'center',
-                background: newReelFile ? `${T.pri}15` : T.card,
                 position: 'relative',
-                minHeight: 200,
+                minHeight: showCamera ? 200 : 180,
+                color: accentOf(T),
+                transition: 'background 0.2s ease, border-color 0.2s ease',
                 cursor: !showCamera ? 'pointer' : 'default',
+                boxSizing: 'border-box',
               }}
             >
               {showCamera && stream ? (
@@ -1577,20 +1734,84 @@ function SubmitEntryModal({ theme: T, campaign, campaignId, userLevel = 0, onClo
                   </div>
                 </div>
               ) : newReelFile ? (
-                <div style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  height: '100%',
-                }}>
-                  <Check size={48} color={T.green} style={{ marginBottom: 12 }} />
-                  <p style={{ margin: 0, color: T.txt, fontWeight: 600 }}>
-                    {newReelFile.name}
-                  </p>
-                  <p style={{ margin: 0, fontSize: 12, color: T.sub, marginTop: 4 }}>
-                    Click to change file
-                  </p>
+                /* The chosen file, with a real preview. It was a tick and a
+                   filename, which does not tell you whether the right clip
+                   was picked -- the commonest thing to get wrong here. */
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left' }}>
+                  <div
+                    style={{
+                      width: 76,
+                      height: 76,
+                      flexShrink: 0,
+                      borderRadius: RADIUS.md,
+                      overflow: 'hidden',
+                      background: '#000',
+                      display: 'grid',
+                      placeItems: 'center',
+                      border: `1px solid ${T.border}`,
+                    }}
+                  >
+                    {newReelFile.type?.startsWith('video') ? (
+                      <video
+                        src={previewUrl}
+                        muted
+                        playsInline
+                        preload="metadata"
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                    ) : (
+                      <img
+                        src={previewUrl}
+                        alt=""
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                    )}
+                  </div>
+
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 5,
+                      marginBottom: 4, padding: '2px 8px', borderRadius: RADIUS.pill,
+                      background: `${SUCCESS}1f`, color: SUCCESS,
+                      fontSize: 10.5, fontWeight: 800,
+                      letterSpacing: '0.4px', textTransform: 'uppercase',
+                    }}>
+                      <Check size={11} strokeWidth={3} aria-hidden="true" />
+                      Ready
+                    </div>
+                    <p style={{
+                      margin: 0, fontSize: 13.5, fontWeight: 700, color: T.txt,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>
+                      {newReelFile.name}
+                    </p>
+                    <p style={{ margin: '2px 0 0', fontSize: 11.5, color: T.sub }}>
+                      {formatBytes(newReelFile.size)}
+                      {newReelFile.type ? ` · ${newReelFile.type.split('/')[1]?.toUpperCase()}` : ''}
+                      {' · Tap to change'}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="fs-press fs-focus"
+                    aria-label="Remove selected file"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setNewReelFile(null);
+                    }}
+                    style={{
+                      width: TAP, height: TAP, flexShrink: 0,
+                      display: 'grid', placeItems: 'center',
+                      background: 'transparent',
+                      border: `1px solid ${T.border}`,
+                      borderRadius: RADIUS.md,
+                      color: T.sub,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <X size={17} strokeWidth={2.5} />
+                  </button>
                 </div>
               ) : (
                 <div style={{
@@ -1598,14 +1819,31 @@ function SubmitEntryModal({ theme: T, campaign, campaignId, userLevel = 0, onClo
                   flexDirection: 'column',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  height: '100%',
+                  gap: 4,
+                  minHeight: 132,
                 }}>
-                  <Upload size={48} color={T.sub} style={{ marginBottom: 12 }} />
-                  <p style={{ margin: 0, color: T.txt, fontWeight: 600, marginBottom: 4 }}>
-                    Click to upload photo or video
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      width: 52, height: 52, marginBottom: 6,
+                      borderRadius: '50%', display: 'grid', placeItems: 'center',
+                      background: `${accentOf(T)}1a`,
+                      border: `1px solid ${accentOf(T)}3a`,
+                    }}
+                  >
+                    <Upload size={23} color={accentOf(T)} strokeWidth={2.2} />
+                  </span>
+                  <p style={{ margin: 0, fontSize: 15, fontWeight: 800, color: T.txt }}>
+                    Upload your entry
                   </p>
-                  <p style={{ margin: 0, fontSize: 12, color: T.sub }}>
-                    MP4, MOV, JPG, PNG up to 100MB
+                  <p style={{ margin: 0, fontSize: 12.5, color: T.sub }}>
+                    Tap to choose a photo or video
+                  </p>
+                  <p style={{
+                    margin: '6px 0 0', fontSize: 11, fontWeight: 600,
+                    letterSpacing: '0.4px', color: T.sub, opacity: 0.85,
+                  }}>
+                    MP4 · MOV · JPG · PNG — up to 100MB
                   </p>
                 </div>
               )}
@@ -1619,89 +1857,128 @@ function SubmitEntryModal({ theme: T, campaign, campaignId, userLevel = 0, onClo
               />
             </div>
             
-            <div style={{ marginBottom: 20 }}>
-              <label style={{
-                display: 'block',
-                fontSize: 14,
-                fontWeight: 600,
-                color: T.txt,
-                marginBottom: 8,
-              }}>
-                Caption {campaign?.required_hashtags ? '(Include required hashtags)' : '(optional)'}
+            <div style={{ marginBottom: 4 }}>
+              <label htmlFor="entry-caption" style={labelStyle(T)}>
+                Caption{' '}
+                <span style={{ fontWeight: 600, opacity: 0.8 }}>
+                  {campaign?.required_hashtags ? '— include the required hashtags' : '(optional)'}
+                </span>
               </label>
               <textarea
+                id="entry-caption"
                 value={newReelCaption}
                 onChange={(e) => setNewReelCaption(e.target.value)}
-                placeholder={campaign?.required_hashtags ? `Add caption with: ${campaign.required_hashtags}` : "Add a caption for your entry..."}
+                placeholder={
+                  campaign?.required_hashtags
+                    ? `Say something, then add ${campaign.required_hashtags}`
+                    : 'Add a caption for your entry...'
+                }
                 rows={3}
                 style={{
-                  width: '100%',
-                  padding: 12,
-                  border: `2px solid ${T.border}`,
-                  borderRadius: 8,
-                  fontSize: 14,
-                  outline: 'none',
+                  ...fieldStyle(T),
+                  minHeight: 88,
                   resize: 'vertical',
-                  boxSizing: 'border-box',
-                  background: T.cardBg || T.card || T.bg,
-                  color: T.txt,
                   caretColor: T.txt,
                 }}
               />
+
+              {/* One-tap insert, because the previous "copy and paste" tip
+                  asked people to do by hand the one thing that invalidates an
+                  entry when they get it wrong. Appends only what is missing,
+                  and never replaces what they have written. */}
               {campaign?.required_hashtags && (
-                <div style={{
-                  fontSize: 12,
-                  color: T.sub,
-                  marginTop: 6,
-                }}>
-                  💡 Tip: Copy and paste: {campaign.required_hashtags}
-                </div>
+                <button
+                  type="button"
+                  className="fs-press fs-focus"
+                  onClick={() => {
+                    const required = String(campaign.required_hashtags)
+                      .split(/[\s,]+/)
+                      .filter(Boolean);
+                    const missing = required.filter(
+                      (tag) => !newReelCaption.toLowerCase().includes(tag.toLowerCase())
+                    );
+                    if (!missing.length) return;
+                    setNewReelCaption(
+                      `${newReelCaption.trimEnd()}${newReelCaption.trim() ? ' ' : ''}${missing.join(' ')}`
+                    );
+                  }}
+                  style={{
+                    marginTop: 8,
+                    minHeight: 36,
+                    padding: '0 12px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    background: `${accentOf(T)}14`,
+                    border: `1px solid ${accentOf(T)}3a`,
+                    borderRadius: RADIUS.pill,
+                    color: accentOf(T),
+                    fontSize: 12,
+                    fontWeight: 700,
+                    fontFamily: 'inherit',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <Zap size={12} strokeWidth={2.6} aria-hidden="true" />
+                  Add required hashtags
+                </button>
               )}
             </div>
           </div>
 
         <div style={{
           display: 'flex',
-          gap: 12,
-          paddingTop: 24,
+          gap: 10,
+          marginTop: 20,
+          paddingTop: 18,
           borderTop: `1px solid ${T.border}`,
         }}>
           <button
+            type="button"
             onClick={onClose}
-            style={{
-              flex: 1,
-              padding: 14,
-              background: 'transparent',
-              border: `2px solid ${T.border}`,
-              borderRadius: 8,
-              color: T.txt,
-              fontSize: 15,
-              fontWeight: 600,
-              cursor: 'pointer',
-              transition: 'all 0.2s',
-            }}
+            className="fs-press fs-focus"
+            style={{ ...btn(T, 'ghost'), flex: '0 0 auto', width: 'auto', minWidth: 104 }}
           >
             Cancel
           </button>
           <button
+            type="button"
             onClick={handleSubmit}
             disabled={!newReelFile || submitting}
-            style={{
-              flex: 1,
-              padding: 14,
-              background: (newReelFile && !submitting) ? T.pri : T.sub + '30',
-              border: 'none',
-              borderRadius: 8,
-              color: (newReelFile && !submitting) ? '#fff' : T.sub,
-              fontSize: 15,
-              fontWeight: 600,
-              cursor: (newReelFile && !submitting) ? 'pointer' : 'not-allowed',
-              transition: 'all 0.2s',
-            }}
+            className="fs-press fs-focus"
+            style={{ ...btn(T, 'primary', { disabled: !newReelFile || submitting }), flex: 1 }}
           >
-            {submitting ? 'Submitting...' : 'Submit Entry'}
+            {submitting ? (
+              <>
+                <RotateCw size={15} strokeWidth={2.6} className="fs-spin" aria-hidden="true" />
+                Submitting…
+              </>
+            ) : (
+              <>
+                Submit Entry
+                {newReelFile && (
+                  <span aria-hidden="true" style={{ fontSize: 16, lineHeight: 1 }}>→</span>
+                )}
+              </>
+            )}
           </button>
         </div>
+
+        {/* Says what is still missing instead of leaving a grey button with
+            no reason, which is the commonest way to be stuck on this screen. */}
+        {!submitting && !newReelFile && (
+          <p
+            role="status"
+            style={{
+              margin: '10px 0 0',
+              textAlign: 'center',
+              fontSize: 12,
+              color: T.sub,
+            }}
+          >
+            Choose a photo or video to enable Submit.
+          </p>
+        )}
       </div>
     </div>
   );
