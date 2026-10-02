@@ -3259,7 +3259,11 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
   }, [onShowExplorer]);
 
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: T?.bg || '#0D0D0D' }}>
+    // height:100% fills the scroller AppShell already sized to the viewport.
+    // It was 100vh, which on iOS is the LARGE viewport -- taller than the
+    // 100dvh box scrolling it by exactly the height of Safari's chrome, which
+    // is the blank area that appeared below the feed.
+    <div style={{ display: 'flex', height: '100%', minHeight: 0, overflow: 'hidden', background: T?.bg || '#0D0D0D' }}>
       <style>{`
         @media (max-width: 1024px) {
           .home-right-sidebar { display: none !important; }
@@ -3271,7 +3275,7 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
       style={{
-        flex: 1, minWidth: 0, height: '100vh', overflowX: 'hidden', position: 'relative',
+        flex: 1, minWidth: 0, height: '100%', minHeight: 0, overflowX: 'hidden', position: 'relative',
         overscrollBehaviorY: 'contain', touchAction: 'pan-y',
         scrollbarWidth: 'none', msOverflowStyle: 'none',
         // Desktop hands its height to the viewer instead of scrolling.
@@ -3565,7 +3569,7 @@ export function HomePage({ user, onShowLeaderboard, onShowProfile, onShowPostPag
         width: 320,
         minWidth: 320,
         flexShrink: 0,
-        height: '100vh',
+        height: '100%',
         overflowY: 'auto',
         borderLeft: `1px solid ${T?.border || '#e0e0e0'}`,
         padding: '20px 16px',

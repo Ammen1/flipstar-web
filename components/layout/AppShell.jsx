@@ -160,9 +160,9 @@ export function AppShell({
 
   return (
     <div
+      className="appshell-root"
       style={{
         display: 'flex',
-        height: '100dvh',
         width: '100%',
         background: T.bg,
         overflow: 'hidden',
@@ -170,6 +170,18 @@ export function AppShell({
       }}
     >
       <style>{`
+        /* Two declarations on purpose: Safari below 15.4 drops the dvh line
+           and keeps the vh one, instead of dropping height entirely and
+           collapsing the shell to its content height. */
+        .appshell-root { height: 100vh; height: 100dvh; }
+
+        /* The scroller fills the shell rather than measuring the viewport a
+           second time. Mixing units here is what produced the dead space:
+           100dvh is the CURRENT viewport on iOS and 100vh is the LARGE one,
+           so a 100vh child inside a 100dvh scroller is always taller than the
+           box scrolling it by the height of Safari's chrome. */
+        .appshell-main { height: 100%; }
+
         @media (max-width: 1024px) {
           .appshell-desktop-sidebar {
             display: none !important;
@@ -472,11 +484,16 @@ export function AppShell({
         onTouchEnd={handleMainTouchEnd}
         style={{
           flex: 1,
+          minWidth: 0,
           position: 'relative',
-          height: isMobile ? '100dvh' : '100%',
           overflowY: 'auto',
-          paddingBottom: isMobile ? 70 : 0,
-          paddingTop: isMobile ? 0 : 0,
+          // 70 was a magic number: the nav is 60 tall and then adds its own
+          // safe-area padding, so on a notched iPhone the last ~24px of
+          // content sat underneath it. Derived from the nav now, so the two
+          // cannot drift.
+          paddingBottom: isMobile
+            ? 'calc(60px + env(safe-area-inset-bottom, 0px))'
+            : 0,
           boxSizing: 'border-box',
           WebkitOverflowScrolling: 'touch',
           overscrollBehaviorY: 'contain',
