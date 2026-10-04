@@ -1,4 +1,5 @@
-# Build, scan and ship the FlipStar web SPA.
+# Build, scan and ship the FlipStar web SPA -- and, from the same commit, the
+# private staff dashboard (Dockerfile.dashboard), as a second image.
 #
 # The Kubernetes manifests for this app do NOT live here -- they are in
 # Ammen1/flip-star under k8s/base/web, because that is the repository Argo CD
@@ -32,6 +33,10 @@ concurrency:
 
 env:
   IMAGE_WEB: ghcr.io/ammen1/flipstar-web
+  # The private staff dashboard (Dockerfile.dashboard). Keep this package
+  # PRIVATE in GHCR; the node pulls it with the same registries.yaml
+  # credential it uses for every other ghcr.io image.
+  IMAGE_DASHBOARD: ghcr.io/ammen1/flipstar-dashboard
   GITOPS_REPO: Ammen1/flip-star
   GITOPS_BRANCH: main
   KUSTOMIZE_VERSION: "5.4.3"
@@ -128,9 +133,82 @@ jobs:
         if: github.event_name != 'pull_request'
         run: docker push "${IMAGE_WEB}:${GITHUB_SHA}"
 
+  # The private staff dashboard, from the same commit. Its own job, running
+  # alongside the one above, so neither image can hold the other back -- and
+  # the same gate: built locally, scanned, pushed only if the scan passes.
+  build-scan-push-dashboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-tag: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # /api/v1 is same-origin: the dashboard's Ingress routes /api on its
+      # own host to the backend. Never pass anything secret as a build arg
+      # here -- every VITE_* value is written into the JavaScript that each
+      # browser downloads.
+      - name: Build dashboard image
+        run: |
+          docker build \
+            --file Dockerfile.dashboard \
+            --build-arg VITE_API_BASE_URL=/api/v1 \
+            --build-arg VITE_ENVIRONMENT=staging \
+            --tag "${IMAGE_DASHBOARD}:${GITHUB_SHA}" \
+            .
+
+      - name: Install Trivy
+        # Identical to the step in build-scan-push; its comments apply.
+        run: |
+          version="${TRIVY_VERSION#v}"
+          tarball="trivy_${version}_Linux-64bit.tar.gz"
+          base="https://github.com/aquasecurity/trivy/releases/download/${TRIVY_VERSION}"
+
+          mkdir -p "${RUNNER_TEMP}/trivy" "${RUNNER_TEMP}/bin"
+          cd "${RUNNER_TEMP}/trivy"
+
+          curl -fsSL -o "${tarball}" "${base}/${tarball}"
+          curl -fsSL -o checksums.txt "${base}/trivy_${version}_checksums.txt"
+
+          sha256sum --ignore-missing -c checksums.txt
+
+          tar -xzf "${tarball}" trivy
+          install -m 0755 trivy "${RUNNER_TEMP}/bin/trivy"
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+          "${RUNNER_TEMP}/bin/trivy" --version
+
+      # Same rule as the web scan: no continue-on-error, no `|| true`.
+      - name: Scan dashboard image (Trivy)
+        run: |
+          trivy image \
+            --exit-code 1 \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --scanners vuln \
+            --no-progress \
+            "${IMAGE_DASHBOARD}:${GITHUB_SHA}"
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Push dashboard image
+        if: github.event_name != 'pull_request'
+        run: docker push "${IMAGE_DASHBOARD}:${GITHUB_SHA}"
+
   update-gitops-staging:
-    needs: [build-scan-push]
-    if: github.event_name != 'pull_request'
+    needs: [build-scan-push, build-scan-push-dashboard]
+    # Runs when EITHER image was pushed, and records only the ones that were:
+    # a broken dashboard build must not hold back a public-app release, nor
+    # the reverse. !cancelled() is what lets this job read the two results
+    # instead of being skipped by the first failure.
+    if: >-
+      !cancelled() && github.event_name != 'pull_request' &&
+      (needs.build-scan-push.result == 'success' ||
+       needs.build-scan-push-dashboard.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -156,21 +234,35 @@ jobs:
           echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
 
       - name: Set web image tag in the staging overlay
+        if: needs.build-scan-push.result == 'success'
         working-directory: k8s/overlays/staging
         env:
           SHA: ${{ needs.build-scan-push.outputs.image-tag }}
         run: kustomize edit set image "${IMAGE_WEB}=${IMAGE_WEB}:${SHA}"
 
+      - name: Set dashboard image tag in the staging overlay
+        if: needs.build-scan-push-dashboard.result == 'success'
+        working-directory: k8s/overlays/staging
+        env:
+          SHA: ${{ needs.build-scan-push-dashboard.outputs.image-tag }}
+        run: kustomize edit set image "${IMAGE_DASHBOARD}=${IMAGE_DASHBOARD}:${SHA}"
+
       - name: Commit and push
         env:
-          SHA: ${{ needs.build-scan-push.outputs.image-tag }}
+          SHA: ${{ github.sha }}
+          WEB: ${{ needs.build-scan-push.result }}
+          DASHBOARD: ${{ needs.build-scan-push-dashboard.result }}
         run: |
+          deployed=""
+          if [ "${WEB}" = "success" ]; then deployed="web"; fi
+          if [ "${DASHBOARD}" = "success" ]; then deployed="${deployed:+${deployed}+}dashboard"; fi
+
           git config user.name "flipstar-ci-bot"
           git config user.email "ci-bot@users.noreply.github.com"
           git add k8s/overlays/staging/kustomization.yaml
           if git diff --cached --quiet; then
-            echo "No change -- web image tag already at ${SHA}."
+            echo "No change -- ${deployed} image tag already at ${SHA}."
           else
-            git commit -m "chore(gitops): deploy web ${SHA} to staging"
+            git commit -m "chore(gitops): deploy ${deployed} ${SHA} to staging"
             git push origin "${GITOPS_BRANCH}"
           fi

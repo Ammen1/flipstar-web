@@ -1,0 +1,47 @@
+# The private staff dashboard (dashboard.<domain>): the admin code the public
+# app used to serve at /admin/*, built and deployed on its own. See
+# vite.dashboard.config.js for why it is a separate build.
+#
+# Stage for stage the same as Dockerfile, whose comments explain the choices
+# (npm ci, the unit-test gate, nginx-unprivileged on 8080, the apk upgrade).
+# Two differences, both deliberate:
+#
+#   * Dockerfile.dashboard.dockerignore keeps the committed node_modules/ out
+#     of the build context, so this image is built from package-lock.json and
+#     nothing else. The public Dockerfile still copies it over the `npm ci`
+#     result (hence its chmod on node_modules/.bin); that is left alone here.
+#   * The API base URL defaults to a same-origin path -- see below.
+FROM node:18-alpine AS builder
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+
+RUN npm test
+
+# Same-origin by default. The dashboard's Ingress routes /api on its own host
+# to the backend, so the bundle names no other origin, the CSP in
+# dashboard.default.conf can say connect-src 'self', and the backend's CORS
+# list needs no new entry. Nothing secret belongs in a VITE_* variable: Vite
+# writes its value into the JavaScript every browser downloads.
+ARG VITE_API_BASE_URL=/api/v1
+ARG VITE_ENVIRONMENT=staging
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+ENV VITE_ENVIRONMENT=$VITE_ENVIRONMENT
+
+RUN npm run build:dashboard
+
+FROM nginxinc/nginx-unprivileged:1.27-alpine
+
+USER root
+RUN apk upgrade --no-cache
+USER 101
+
+COPY dashboard.default.conf /etc/nginx/conf.d/default.conf
+
+COPY --from=builder /app/dist-dashboard /usr/share/nginx/html
+
+EXPOSE 8080

@@ -1,0 +1,9 @@
+# Read by BuildKit for `docker build -f Dockerfile.dashboard` only -- the
+# public image's build is unaffected. Everything here is either rebuilt inside
+# the image or never needed by it.
+.git
+.github
+node_modules
+dist
+dist-dashboard
+*.timestamp-*.mjs

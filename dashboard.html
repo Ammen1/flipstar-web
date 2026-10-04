@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- A private staff tool. Not for search engines, and never for framing:
+         the response headers say the same thing (dashboard.default.conf),
+         this is the in-document copy for anything that ignores them. -->
+    <meta name="robots" content="noindex, nofollow, noarchive" />
+    <meta name="referrer" content="same-origin" />
+    <title>Flipstar Dashboard</title>
+    <!-- The same base the admin pages had inside the public app's index.html;
+         they size themselves in 100vw/100vh and rely on it. -->
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        border: none;
+        width: 100%;
+        height: 100%;
+        overflow-x: hidden;
+      }
+      #root {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/dashboard-main.jsx"></script>
+  </body>
+</html>
